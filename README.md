@@ -85,6 +85,18 @@ Cairn will ship as a Docker image. Mount the folder to browse at `/srv` and a fo
 
 [TODO: tested instructions once there is a release]
 
+## Building from source
+
+You need Node 24 and Rust stable.
+
+```bash
+cd web && npm ci && npm run build && cd ..
+cargo build --release
+```
+
+The front-end is built into `web/dist` and embedded in the binary, so build it first. The binary is
+`target/release/cairn`.
+
 ## License
 
 Cairn is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). If you run a modified version for other people over a network, you must offer them its source.

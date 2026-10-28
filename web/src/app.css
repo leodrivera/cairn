@@ -1,0 +1,36 @@
+@import "../../tokens.css";
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--cairn-bg);
+  color: var(--cairn-text);
+  font: var(--cairn-text-body) / 1.5 var(--cairn-font-sans);
+}
+
+.placeholder {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.placeholder h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.placeholder p {
+  margin: 0;
+  color: var(--cairn-muted);
+}
+
+.accent {
+  fill: var(--cairn-accent);
+}

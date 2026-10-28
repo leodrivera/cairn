@@ -1,8 +1,6 @@
-mod cli;
-
 use std::process::ExitCode;
 
-use cli::Command;
+use cairn::cli::{self, Command};
 
 fn main() -> ExitCode {
     let command = match cli::parse(std::env::args_os().skip(1)) {

@@ -78,6 +78,7 @@ Startup checks the whole configuration and exits with one clear message per prob
 | `CAIRN_UPLOAD_MAX` | `0` (no limit) | Largest accepted upload, in bytes. |
 | `CAIRN_EDIT_MAX` | `2097152` | Largest text file the editor opens, in bytes. |
 | `CAIRN_LOG` | `info` | `debug`, `info`, `warn` or `error`. |
+| `CAIRN_THREADS` | `1` | Worker threads, 1 to 64. 1 runs a single-thread runtime. |
 | `CAIRN_DEV_USER` | none | Development only: every request is this user, no sign-in. Refused unless the binary is a debug build. |
 
 ## 4. Sign-in

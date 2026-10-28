@@ -1,0 +1,77 @@
+/* Cairn design tokens. No web fonts, no shadows, no blur, no gradients. */
+
+:root {
+  /* Type: system fonts only */
+  --cairn-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --cairn-font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+  --cairn-text-body: 14px;
+  --cairn-text-small: 13px;
+  --cairn-text-micro: 12px; /* floor: nothing smaller */
+
+  /* Shape and rhythm */
+  --cairn-radius-s: 10px;
+  --cairn-radius-m: 12px;
+  --cairn-radius-l: 16px;
+  --cairn-radius-xl: 20px;
+  --cairn-row-height: 52px;
+  --cairn-target: 44px; /* minimum hit area */
+
+  /* Motion */
+  --cairn-fade: 120ms;
+
+  /* Status colors that do not depend on the theme */
+  color-scheme: dark light;
+}
+
+/* Dark is the home theme */
+:root,
+:root[data-theme="dark"] {
+  --cairn-bg: #141513; /* Basalt */
+  --cairn-surface: #1b1c1a; /* Slate */
+  --cairn-raised: #252622; /* Granite */
+  --cairn-line: #34362f;
+  --cairn-text: #ecebe6; /* Chalk */
+  --cairn-muted: #a6a79d; /* Stone */
+  --cairn-accent: #c5d86d; /* Lichen */
+  --cairn-on-accent: #141513;
+  --cairn-accent-soft: rgba(197, 216, 109, 0.14);
+  --cairn-danger: #f0906b; /* Ember */
+  --cairn-info: #86b9db; /* Tarn */
+}
+
+:root[data-theme="light"] {
+  --cairn-bg: #f4f3ee; /* Paper */
+  --cairn-surface: #fbfaf6;
+  --cairn-raised: #ebeae3;
+  --cairn-line: #d8d6ca;
+  --cairn-text: #1b1c19;
+  --cairn-muted: #5b5d52;
+  --cairn-accent: #4a6600; /* Moss */
+  --cairn-on-accent: #fbfaf6;
+  --cairn-accent-soft: rgba(74, 102, 0, 0.12);
+  --cairn-danger: #b23c14;
+  --cairn-info: #1f6290;
+}
+
+/* Follow the OS when the user has not chosen a theme */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --cairn-bg: #f4f3ee;
+    --cairn-surface: #fbfaf6;
+    --cairn-raised: #ebeae3;
+    --cairn-line: #d8d6ca;
+    --cairn-text: #1b1c19;
+    --cairn-muted: #5b5d52;
+    --cairn-accent: #4a6600;
+    --cairn-on-accent: #fbfaf6;
+    --cairn-accent-soft: rgba(74, 102, 0, 0.12);
+    --cairn-danger: #b23c14;
+    --cairn-info: #1f6290;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --cairn-fade: 0ms;
+  }
+}

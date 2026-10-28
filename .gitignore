@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+secrets/
+/target/
+web/node_modules/
+web/dist/

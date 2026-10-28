@@ -172,3 +172,27 @@ fn health_on_any_address() {
     server.wait().unwrap();
     assert_eq!(up.code(), Some(0));
 }
+
+#[test]
+fn sigterm_with_a_half_sent_request() {
+    let f = folders();
+    let port = free_port();
+    let mut child = cairn(&f, port, &["serve"])
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_healthy(port);
+    let mut open = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    open.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    sigterm(&child);
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "still running 5 s after SIGTERM with an open request"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

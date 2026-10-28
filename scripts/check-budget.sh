@@ -37,6 +37,11 @@ report binary "$(stat -c %s "$work/cairn")" $((binary_mb * 1048576)) 1048576 MB
 # Idle memory, 5 s after start
 docker run -d --name "$name" "$image" >/dev/null
 sleep 5
+if [[ $(docker inspect -f '{{.State.Running}}' "$name") != true ]] || ! docker exec "$name" /cairn health; then
+  echo "memory: the container is not running or not healthy; its log:"
+  docker logs "$name" 2>&1 | tail -20
+  exit 1
+fi
 usage=$(docker stats --no-stream --format '{{.MemUsage}}' "$name" | awk '{ print $1 }')
 bytes=$(awk -v u="$usage" 'BEGIN {
   n = u + 0; s = u; sub(/^[0-9.]+/, "", s)

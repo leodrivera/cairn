@@ -19,5 +19,6 @@ pub fn init(level: LogLevel) {
         .with_span_list(false)
         .with_max_level(level)
         .with_writer(std::io::stdout)
-        .init();
+        .try_init()
+        .ok(); // already set up: keep the first one
 }

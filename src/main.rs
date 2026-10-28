@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 
 use cairn::cli::{self, Command};
+use cairn::config::{Config, vars_from_env};
+use cairn::serve;
 
 fn main() -> ExitCode {
     let command = match cli::parse(std::env::args_os().skip(1)) {
@@ -19,7 +21,10 @@ fn main() -> ExitCode {
             print!("{}", cli::HELP);
             ExitCode::SUCCESS
         }
-        Command::Serve => todo!("cairn serve"),
+        Command::Serve => match Config::from_vars(&vars_from_env()) {
+            Ok(config) => serve::run(config),
+            Err(errors) => serve::report_invalid(&errors),
+        },
         Command::Health => todo!("cairn health"),
     }
 }

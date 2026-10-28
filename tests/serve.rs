@@ -135,3 +135,40 @@ fn serves_health_and_stops_on_sigterm() {
         "not JSON lines:\n{stdout}"
     );
 }
+
+#[test]
+fn health_command() {
+    let f = folders();
+    let port = free_port();
+    let down = cairn(&f, port, &["health"]).status().unwrap();
+    assert_eq!(down.code(), Some(1), "nothing listening yet");
+
+    let mut server = cairn(&f, port, &["serve"])
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_healthy(port);
+    let up = cairn(&f, port, &["health"]).status().unwrap();
+    sigterm(&server);
+    server.wait().unwrap();
+    assert_eq!(up.code(), Some(0));
+}
+
+#[test]
+fn health_on_any_address() {
+    let f = folders();
+    let port = free_port();
+    let mut server = cairn(&f, port, &["serve"])
+        .env("CAIRN_ADDR", format!("0.0.0.0:{port}"))
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_healthy(port);
+    let up = cairn(&f, port, &["health"])
+        .env("CAIRN_ADDR", format!("0.0.0.0:{port}"))
+        .status()
+        .unwrap();
+    sigterm(&server);
+    server.wait().unwrap();
+    assert_eq!(up.code(), Some(0));
+}

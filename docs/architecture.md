@@ -242,6 +242,11 @@ Every path from a client is relative to the user's scope. The server resolves it
    scope even if it is created between the check and the use. Where `openat2` is missing (kernel before 5.6),
    canonicalize and check the prefix, and refuse to follow symlinks at all.
 
+4. Refuse any path whose folder is the data folder seen another way. Two bind mounts can show one host folder at
+   two paths (for example `./files:/srv` and `./files/.cairn:/data`), so `/srv/.cairn` would be the database folder
+   and canonical paths cannot tell. At startup Cairn records the device and inode of `CAIRN_DATA`; `resolve`
+   rejects every path component with the same pair.
+
 Symlinks inside the scope that point inside the scope work. Symlinks that point outside are listed with a "link
 outside your folder" marker and cannot be opened.
 

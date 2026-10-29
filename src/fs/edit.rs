@@ -6,10 +6,10 @@ use std::os::unix::ffi::OsStrExt;
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
-use super::FsError;
 use super::list::TEMP_PREFIX;
 use super::path::RelPath;
 use super::scope::Scope;
+use super::{FsError, MAX_DEPTH};
 
 pub fn mkdir(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
     if path.name().is_some_and(|n| n.starts_with(TEMP_PREFIX)) {
@@ -25,12 +25,15 @@ pub fn mkdir(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
 
 pub fn remove(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
     let (dir, name) = scope.parent(path)?;
-    remove_at(scope, &dir, &name)
+    remove_at(scope, &dir, &name, 0)
 }
 
 /// Removes `name` in `dir`. A folder is emptied level by level, each opened without following links; the data
 /// folder, if met on the way, is left alone (and its parent then cannot be removed).
-fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr) -> Result<(), FsError> {
+fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr, depth: usize) -> Result<(), FsError> {
+    if depth > MAX_DEPTH {
+        return Err(FsError::TooDeep);
+    }
     let st = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
     if scope.data_id() == Some((st.st_dev, st.st_ino)) {
         return Err(FsError::NotFound);
@@ -50,7 +53,7 @@ fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr) -> Result<(), FsError> 
     }
     let mut first_error = None;
     for child in names {
-        if let Err(e) = remove_at(scope, &sub, &child) {
+        if let Err(e) = remove_at(scope, &sub, &child, depth + 1) {
             first_error.get_or_insert(e);
         }
     }

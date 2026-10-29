@@ -27,8 +27,22 @@ pub enum FsError {
     TooLarge(u64),
     Changed,
     NotText,
+    /// Deeper than `MAX_DEPTH` levels.
+    TooDeep,
+    /// Copied, but this many entries were left out; `kept` means a move kept its original.
+    Skipped {
+        count: usize,
+        kept: bool,
+    },
+    Denied,
+    DiskFull,
+    ReadOnly,
+    NotEmpty,
     Io(std::io::Error),
 }
+
+/// Delete, copy and ZIP walk folders level by level; past this depth they stop instead of exhausting the stack.
+pub const MAX_DEPTH: usize = 256;
 
 impl From<std::io::Error> for FsError {
     fn from(e: std::io::Error) -> FsError {
@@ -50,6 +64,22 @@ impl From<std::io::Error> for FsError {
 impl From<rustix::io::Errno> for FsError {
     fn from(e: rustix::io::Errno) -> FsError {
         FsError::from(std::io::Error::from(e))
+    }
+}
+
+fn skipped_message(count: usize, kept: bool) -> String {
+    let (what, verb) = if count == 1 {
+        ("1 item".to_string(), "was")
+    } else {
+        (format!("{count} items"), "were")
+    };
+    let why = "(links that leave your folder, or special files)";
+    if kept {
+        format!(
+            "{what} could not be copied {why}, so the original was kept. The copy holds the rest."
+        )
+    } else {
+        format!("{what} {verb} left out {why}. The rest was copied.")
     }
 }
 
@@ -112,6 +142,37 @@ impl From<FsError> for ApiError {
                 S::UNSUPPORTED_MEDIA_TYPE,
                 "not_text",
                 "This file is not text Cairn can edit.".into(),
+            ),
+            FsError::TooDeep => (
+                S::BAD_REQUEST,
+                "too_deep",
+                format!(
+                    "This folder is nested more than {MAX_DEPTH} levels deep. Cairn stops there; use another tool for it."
+                ),
+            ),
+            FsError::Skipped { count, kept } => {
+                (S::CONFLICT, "skipped", skipped_message(count, kept))
+            }
+            FsError::Denied => (
+                S::FORBIDDEN,
+                "denied",
+                "The server's folder permissions do not allow this. Ask an admin to check them."
+                    .into(),
+            ),
+            FsError::DiskFull => (
+                S::INSUFFICIENT_STORAGE,
+                "disk_full",
+                "The server's disk is full. Free some space, then try again.".into(),
+            ),
+            FsError::ReadOnly => (
+                S::FORBIDDEN,
+                "read_only",
+                "This folder is read-only on the server.".into(),
+            ),
+            FsError::NotEmpty => (
+                S::CONFLICT,
+                "not_empty",
+                "Something inside could not be removed, so the folder stays.".into(),
             ),
             FsError::Io(err) => {
                 tracing::error!(event = "file.io_error", error = %err);

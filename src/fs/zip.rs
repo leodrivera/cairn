@@ -10,9 +10,9 @@ use tokio::sync::mpsc::Sender;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use super::FsError;
 use super::path::RelPath;
 use super::scope::Scope;
+use super::{FsError, MAX_DEPTH};
 
 type Chunk = Result<Bytes, std::io::Error>;
 
@@ -68,7 +68,7 @@ pub fn stream_zip(scope: Scope, path: RelPath) -> axum::body::Body {
             tx,
             buf: Vec::new(),
         });
-        let result = add_folder(&mut zip, &scope, &path, "").and_then(|()| {
+        let result = add_folder(&mut zip, &scope, &path, "", 0).and_then(|()| {
             let mut out = zip.finish().map_err(zip_err)?;
             out.flush().map_err(FsError::from)
         });
@@ -93,7 +93,11 @@ fn add_folder<W: Write + std::io::Seek>(
     scope: &Scope,
     rel: &RelPath,
     prefix: &str,
+    depth: usize,
 ) -> Result<(), FsError> {
+    if depth > MAX_DEPTH {
+        return Err(FsError::TooDeep);
+    }
     let dir = scope.open_dir(rel)?;
     let mut names: Vec<Vec<u8>> = Vec::new();
     for item in rustix::fs::Dir::read_from(&dir)? {
@@ -116,7 +120,7 @@ fn add_folder<W: Write + std::io::Seek>(
             FileType::Directory => {
                 zip.add_directory(format!("{entry}/"), options())
                     .map_err(zip_err)?;
-                add_folder(zip, scope, &child, &format!("{entry}/"))?;
+                add_folder(zip, scope, &child, &format!("{entry}/"), depth + 1)?;
             }
             FileType::RegularFile => add_file(zip, scope, &child, &entry)?,
             // A link is followed only to a file inside the scope; links to folders or outside are left out.
@@ -144,4 +148,33 @@ fn add_file<W: Write + std::io::Seek>(
     zip.start_file(entry, options()).map_err(zip_err)?;
     std::io::copy(&mut std::fs::File::from(fd), zip)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::StreamExt;
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deep_tree_ends_with_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = dir.path().join("deep");
+        for _ in 0..300 {
+            p.push("d");
+        }
+        std::fs::create_dir_all(&p).unwrap();
+        let scope = Scope::new(dir.path(), "/", None).unwrap();
+        let mut stream = stream_zip(scope, RelPath::parse("deep").unwrap()).into_data_stream();
+        let mut failed = false;
+        while let Some(chunk) = stream.next().await {
+            if chunk.is_err() {
+                failed = true;
+            }
+        }
+        assert!(
+            failed,
+            "a tree past the depth limit must end the download with an error"
+        );
+    }
 }

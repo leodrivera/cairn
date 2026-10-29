@@ -654,7 +654,12 @@ async fn copy_skips_outside_links() {
         json!([{ "op": "copy", "from": "src", "to": "dst" }]),
     )
     .await;
-    assert_eq!(res.json["done"], 1, "{}", res.json);
+    // The copy happens, and the left-out link is reported, not silently dropped.
+    assert_eq!(res.json["failed"][0]["error"], "skipped", "{}", res.json);
+    assert_eq!(
+        res.json["failed"][0]["message"],
+        "1 item was left out (links that leave your folder, or special files). The rest was copied."
+    );
     assert!(
         std::fs::symlink_metadata(s.join("dst/in"))
             .unwrap()
@@ -1076,7 +1081,11 @@ async fn fallback_mode_lists_downloads_and_uploads() {
     assert_eq!(names(&list.json), ["a.txt"]);
     let dl = Req::get("/api/raw/sub/a.txt").cookie(&c).send(&h.app).await;
     assert_eq!(dl.body, b"a");
-    let up = Req::put("/api/upload/sub/b.txt").cookie(&c).bytes(b"b").send(&h.app).await;
+    let up = Req::put("/api/upload/sub/b.txt")
+        .cookie(&c)
+        .bytes(b"b")
+        .send(&h.app)
+        .await;
     assert_eq!(up.status, StatusCode::CREATED, "{}", up.json);
     assert_eq!(std::fs::read_to_string(s.join("sub/b.txt")).unwrap(), "b");
 }
@@ -1091,7 +1100,96 @@ async fn fallback_mode_refuses_links() {
     symlink("a.txt", s.join("in")).unwrap();
     symlink("../bo/secret.txt", s.join("leak")).unwrap();
     for link in ["in", "leak"] {
-        let res = Req::get(&format!("/api/raw/{link}")).cookie(&c).send(&h.app).await;
-        assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"), "{link}");
+        let res = Req::get(&format!("/api/raw/{link}"))
+            .cookie(&c)
+            .send(&h.app)
+            .await;
+        assert_eq!(
+            (res.status, res.code()),
+            (StatusCode::FORBIDDEN, "outside"),
+            "{link}"
+        );
     }
+}
+
+#[tokio::test]
+async fn copy_into_itself_through_a_link() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a/x.txt"), "x");
+    symlink("a", s.join("L")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "a", "to": "L/sub" }]),
+    )
+    .await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "into_itself",
+        "{}",
+        res.json
+    );
+    let moved = ops(
+        &h,
+        &c,
+        json!([{ "op": "move", "from": "a", "to": "L/sub" }]),
+    )
+    .await;
+    assert_eq!(
+        moved.json["failed"][0]["error"], "into_itself",
+        "{}",
+        moved.json
+    );
+    assert!(s.join("a/x.txt").exists() && !s.join("a/sub").exists());
+}
+
+#[tokio::test]
+async fn copy_keeps_non_utf8_names() {
+    use std::os::unix::ffi::OsStrExt;
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(
+        &s.join("src")
+            .join(std::ffi::OsStr::from_bytes(b"Report caf\xe9.txt")),
+        "old",
+    );
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "src", "to": "dst" }]),
+    )
+    .await;
+    assert_eq!(res.json, json!({ "done": 1, "failed": [] }));
+    assert!(
+        s.join("dst")
+            .join(std::ffi::OsStr::from_bytes(b"Report caf\xe9.txt"))
+            .exists()
+    );
+}
+
+/// A chain of folders `d/d/d/...`, deeper than Cairn walks.
+fn deep_tree(base: &Path, levels: usize) {
+    let mut p = base.to_path_buf();
+    for _ in 0..levels {
+        p.push("d");
+    }
+    std::fs::create_dir_all(&p).unwrap();
+    std::fs::write(p.join("f.txt"), "f").unwrap();
+}
+
+#[tokio::test]
+async fn deep_tree_delete_and_copy_stop_cleanly() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    deep_tree(&s.join("deep"), 300);
+    let copy = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "deep", "to": "copy" }]),
+    )
+    .await;
+    assert_eq!(copy.json["failed"][0]["error"], "too_deep", "{}", copy.json);
+    let del = delete_paths(&h, &c, &["deep"]).await;
+    assert_eq!(del.json["failed"][0]["error"], "too_deep", "{}", del.json);
+    assert!(s.join("deep").exists());
 }

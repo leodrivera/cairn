@@ -181,6 +181,11 @@ impl Scope {
         self.open(path, OFlags::PATH).is_ok()
     }
 
+    /// Device and inode of the scope folder itself.
+    pub fn root_id(&self) -> Result<(u64, u64), FsError> {
+        Ok(id_of(&rustix::fs::fstat(&self.root)?))
+    }
+
     pub fn data_id(&self) -> Option<(u64, u64)> {
         self.data_id
     }

@@ -32,13 +32,20 @@ pub struct AppState {
     pub hasher: Arc<Hasher>,
     pub limiters: Arc<Limiters>,
     pub captcha: Option<Arc<Captcha>>,
+    /// Device and inode of `CAIRN_DATA`: no path a client sends may pass through it.
+    pub data_id: Option<(u64, u64)>,
 }
 
 impl AppState {
     pub fn new(config: Config, db: Db) -> AppState {
         let captcha =
             Captcha::from_config(&config.captcha, config.public_url.as_ref()).map(Arc::new);
+        let data_id = std::fs::metadata(&config.data).ok().map(|m| {
+            use std::os::unix::fs::MetadataExt;
+            (m.dev(), m.ino())
+        });
         AppState {
+            data_id,
             config: Arc::new(config),
             db: Arc::new(db),
             hasher: Arc::new(Hasher::new()),

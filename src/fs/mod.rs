@@ -1,6 +1,7 @@
 //! Files: paths from clients, resolved beneath the user's scope, and the operations on them.
 
 pub mod path;
+pub mod scope;
 
 use axum::http::StatusCode;
 

@@ -7,7 +7,10 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 
 /// Applied in order; `PRAGMA user_version` holds how many have run.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_users.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_users.sql"),
+    include_str!("migrations/0002_uploads.sql"),
+];
 
 pub struct Db(Mutex<Connection>);
 
@@ -115,7 +118,7 @@ mod tests {
     #[test]
     fn fresh_db_has_tables() {
         let db = Db::open_in_memory();
-        assert_eq!(version(&db), 1);
+        assert_eq!(version(&db), MIGRATIONS.len() as i64);
         let t = tables(&db);
         for name in ["sessions", "settings", "users"] {
             assert!(t.contains(&name.to_string()), "{name} missing in {t:?}");
@@ -128,7 +131,7 @@ mod tests {
         let path = dir.path().join("cairn.db");
         add_user(&Db::open(&path).unwrap());
         let db = Db::open(&path).unwrap();
-        assert_eq!(version(&db), 1);
+        assert_eq!(version(&db), MIGRATIONS.len() as i64);
         let n: i64 = db
             .with(|c| c.query_row("SELECT count(*) FROM users", [], |r| r.get(0)))
             .unwrap();

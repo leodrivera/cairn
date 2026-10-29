@@ -5,6 +5,7 @@ pub mod mime;
 pub mod path;
 pub mod raw;
 pub mod scope;
+pub mod upload;
 
 use axum::http::StatusCode;
 

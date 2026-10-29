@@ -119,6 +119,7 @@ pub struct Req {
     headers: Vec<(String, String)>,
     csrf: bool,
     peer: Option<std::net::SocketAddr>,
+    raw: Option<Vec<u8>>,
 }
 
 pub struct Res {
@@ -162,6 +163,7 @@ impl Req {
             headers: Vec::new(),
             csrf: true,
             peer: None,
+            raw: None,
         }
     }
     pub fn get(path: &str) -> Req {
@@ -178,6 +180,11 @@ impl Req {
     }
     pub fn delete(path: &str) -> Req {
         Req::new(Method::DELETE, path)
+    }
+    /// A raw body, like a file upload or a text save.
+    pub fn bytes(mut self, b: &[u8]) -> Req {
+        self.raw = Some(b.to_vec());
+        self
     }
     pub fn json(mut self, v: Value) -> Req {
         self.body = Some(v);
@@ -211,16 +218,19 @@ impl Req {
         for (k, v) in &self.headers {
             b = b.header(k, v);
         }
-        let body = match self.body {
-            Some(Value::String(s)) if s.starts_with("\u{0}RAW") => {
-                b = b.header("content-type", "application/json");
-                Body::from(s.trim_start_matches("\u{0}RAW").to_string())
-            }
-            Some(v) => {
-                b = b.header("content-type", "application/json");
-                Body::from(v.to_string())
-            }
-            None => Body::empty(),
+        let body = match (self.raw, self.body) {
+            (Some(raw), _) => Body::from(raw),
+            (None, body) => match body {
+                Some(Value::String(s)) if s.starts_with("\u{0}RAW") => {
+                    b = b.header("content-type", "application/json");
+                    Body::from(s.trim_start_matches("\u{0}RAW").to_string())
+                }
+                Some(v) => {
+                    b = b.header("content-type", "application/json");
+                    Body::from(v.to_string())
+                }
+                None => Body::empty(),
+            },
         };
         let mut req = b.body(body).unwrap();
         if let Some(p) = self.peer {

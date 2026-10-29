@@ -34,6 +34,7 @@ pub fn run(config: Config) -> ExitCode {
         Ok(db) => db,
         Err(message) => return report_invalid(&[message]),
     };
+    crate::fs::upload::cleanup_leftovers(&db);
     if crate::users::count(&db).unwrap_or(0) == 0 {
         tracing::warn!(
             event = "startup.no_users",

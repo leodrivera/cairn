@@ -20,6 +20,10 @@ pub fn routes() -> Router<AppState> {
         .route("/files", get(list_root))
         .route("/files/{*path}", get(list_path))
         .route("/raw/{*path}", get(raw))
+        .route(
+            "/upload/{*path}",
+            axum::routing::put(upload).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
 }
 
 /// Files and archives served to the browser may be HTML or SVG from anyone: they must never run script here.
@@ -190,4 +194,43 @@ async fn raw(
         );
     }
     Ok(res)
+}
+
+#[derive(serde::Deserialize)]
+struct UploadQuery {
+    #[serde(default)]
+    replace: Option<String>,
+}
+
+async fn upload(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<UploadQuery>,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+
+    fu.need(false, true)?;
+    let path = RelPath::parse(&raw_path)?;
+    let replace = q.replace.is_some_and(|v| v == "1" || v == "true");
+    let (_, replaced) = crate::fs::upload::upload(
+        &fu.scope,
+        s.db.clone(),
+        &path,
+        body,
+        s.config.upload_max,
+        replace,
+        crate::now(),
+    )
+    .await?;
+    tracing::info!(event = "file.upload", user = fu.user.id, path = %path, replaced);
+    let scope = fu.scope;
+    let entry = blocking(move || list::entry(&scope, &path)).await?;
+    let status = if replaced {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((status, Json(json!({ "entry": entry }))).into_response())
 }

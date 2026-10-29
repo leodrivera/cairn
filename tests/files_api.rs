@@ -291,3 +291,143 @@ async fn outside_link_403() {
     assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
     assert!(!String::from_utf8_lossy(&res.body).contains("secret\""));
 }
+
+fn temps(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(".cairn-upload-"))
+        .collect()
+}
+
+#[tokio::test]
+async fn uploads_new_file() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let res = Req::put(&format!("/api/upload/{}", enc("nova ✓.txt")))
+        .cookie(&c)
+        .bytes(b"content")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
+    assert_eq!(res.json["entry"]["name"], "nova ✓.txt");
+    assert_eq!(res.json["entry"]["size"], 7);
+    assert_eq!(std::fs::read(s.join("nova ✓.txt")).unwrap(), b"content");
+    assert!(temps(&s).is_empty());
+}
+
+#[tokio::test]
+async fn refuses_existing_without_replace() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "old");
+    let res = Req::put("/api/upload/a.txt")
+        .cookie(&c)
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!((res.status, res.code()), (StatusCode::CONFLICT, "exists"));
+    assert_eq!(std::fs::read_to_string(s.join("a.txt")).unwrap(), "old");
+}
+
+#[tokio::test]
+async fn replaces_with_flag() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "old");
+    let res = Req::put("/api/upload/a.txt?replace=1")
+        .cookie(&c)
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert_eq!(std::fs::read_to_string(s.join("a.txt")).unwrap(), "new");
+}
+
+#[tokio::test]
+async fn parent_must_exist() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, _) = maria(&h, &dir, RW).await;
+    let res = Req::put("/api/upload/nope/a.txt")
+        .cookie(&c)
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::NOT_FOUND, "not_found")
+    );
+}
+
+#[tokio::test]
+async fn upload_too_large() {
+    let (h, dir) = harness_with_root(&[("CAIRN_UPLOAD_MAX", "10")]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let res = Req::put("/api/upload/big.bin")
+        .cookie(&c)
+        .bytes(b"01234567890")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::PAYLOAD_TOO_LARGE, "too_large")
+    );
+    assert!(!s.join("big.bin").exists());
+    assert!(temps(&s).is_empty());
+    let ok = Req::put("/api/upload/ok.bin")
+        .cookie(&c)
+        .bytes(b"0123456789")
+        .send(&h.app)
+        .await;
+    assert_eq!(ok.status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn upload_needs_write() {
+    let (h, dir) = harness_with_root(&[]);
+    let ro = Perms {
+        read: true,
+        write: false,
+        share: false,
+        admin: false,
+    };
+    let (c, _) = maria(&h, &dir, ro).await;
+    let res = Req::put("/api/upload/a.txt")
+        .cookie(&c)
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::FORBIDDEN, "forbidden")
+    );
+}
+
+#[tokio::test]
+async fn temp_name_refused() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, _) = maria(&h, &dir, RW).await;
+    let res = Req::put("/api/upload/.cairn-upload-x")
+        .cookie(&c)
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "invalid_path")
+    );
+}
+
+#[tokio::test]
+async fn upload_bigger_than_json_limit() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let big = vec![7u8; 3 << 20];
+    let res = Req::put("/api/upload/big.bin")
+        .cookie(&c)
+        .bytes(&big)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
+    assert_eq!(std::fs::metadata(s.join("big.bin")).unwrap().len(), 3 << 20);
+}

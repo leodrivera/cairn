@@ -281,8 +281,9 @@ outside your folder" marker and cannot be opened.
   them without sorting 50 000 entries. Each entry: name, kind, size, modified time, and a MIME guess from the
   extension only (no file sniffing).
 - Uploads stream to a temporary file next to the target (`.cairn-upload-<random>`), then rename into place.
-  Per-file progress, retry and cancel live in the browser. A cancelled or broken upload removes its temporary file;
-  startup removes leftovers older than a day. Existing names are never overwritten silently: the client asks first
+  Per-file progress, retry and cancel live in the browser. A cancelled or broken upload removes its temporary file.
+  While a temporary file exists its path is recorded in an `uploads` table, so after a crash startup removes exactly
+  those leftovers without walking the whole tree. Existing names are never overwritten silently: the client asks first
   and then sends `?replace=1`.
 - Moves inside one filesystem are renames. Across filesystems they are copy then delete, and the response says how
   many items moved and which ones failed.

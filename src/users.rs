@@ -87,8 +87,10 @@ impl UserError {
 impl From<rusqlite::Error> for UserError {
     fn from(e: rusqlite::Error) -> Self {
         match &e {
-            rusqlite::Error::SqliteFailure(f, _)
-                if f.code == rusqlite::ErrorCode::ConstraintViolation =>
+            // Only the UNIQUE index on users.email means "taken"; any other constraint is a real error.
+            rusqlite::Error::SqliteFailure(f, Some(msg))
+                if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                    && msg.contains("users.email") =>
             {
                 UserError::EmailTaken
             }
@@ -580,5 +582,19 @@ mod tests {
             });
             assert!(admins(&one).unwrap() >= 1, "round {round}: no admin left");
         }
+    }
+
+    #[test]
+    fn other_constraints_are_not_email_taken() {
+        let db = Db::open_in_memory();
+        let err = db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO sessions (id, user_id, method, created_at, expires_at) VALUES (x'02', 999, 'password', 0, 1)",
+                    [],
+                )
+            })
+            .unwrap_err();
+        assert!(matches!(UserError::from(err), UserError::Db(_)));
     }
 }

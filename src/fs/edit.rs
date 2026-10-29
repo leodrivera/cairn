@@ -59,3 +59,50 @@ fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr) -> Result<(), FsError> 
     }
     Ok(rustix::fs::unlinkat(dir, name, AtFlags::REMOVEDIR)?)
 }
+
+/// What the client says it last saw of the file.
+pub enum Expect {
+    /// `If-Match`: the file must still have this ETag.
+    Etag(String),
+    /// `If-None-Match: *`: the file must not exist yet.
+    New,
+}
+
+/// Saves `text` over `path` through a temporary file and a rename, so a failed save never leaves half a file.
+pub async fn save_text(
+    scope: &Scope,
+    db: std::sync::Arc<crate::db::Db>,
+    path: &RelPath,
+    text: Vec<u8>,
+    expect: Expect,
+    now: i64,
+) -> Result<rustix::fs::Stat, FsError> {
+    if std::str::from_utf8(&text).is_err() {
+        return Err(FsError::NotText);
+    }
+    let current = match scope.stat(path) {
+        Ok(st) => Some(st),
+        Err(FsError::NotFound) => None,
+        Err(e) => return Err(e),
+    };
+    match (&expect, &current) {
+        (Expect::New, Some(_)) => return Err(FsError::Exists),
+        (Expect::Etag(_), None) => return Err(FsError::Changed),
+        (Expect::Etag(tag), Some(st)) => {
+            match FileType::from_raw_mode(st.st_mode) {
+                FileType::Directory => return Err(FsError::IsAFolder),
+                // Saving would replace the link with a file; links are edited through their target's own path.
+                FileType::Symlink => return Err(FsError::InvalidPath),
+                _ => {}
+            }
+            if *tag != super::raw::etag(st) {
+                return Err(FsError::Changed);
+            }
+        }
+        (Expect::New, None) => {}
+    }
+    let replace = current.is_some();
+    let body = axum::body::Body::from(text);
+    let (st, _) = super::upload::upload(scope, db, path, body, None, replace, now).await?;
+    Ok(st)
+}

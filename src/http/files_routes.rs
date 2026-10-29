@@ -23,6 +23,10 @@ pub fn routes() -> Router<AppState> {
         .route("/folders/{*path}", axum::routing::post(new_folder))
         .route("/ops", axum::routing::post(run_ops))
         .route(
+            "/text/{*path}",
+            axum::routing::put(save_text).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
             "/upload/{*path}",
             axum::routing::put(upload).layer(axum::extract::DefaultBodyLimit::disable()),
         )
@@ -346,4 +350,57 @@ async fn run_ops(
     })
     .await?;
     Ok(Json(json!({ "done": done, "failed": failed })))
+}
+
+async fn save_text(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    use futures_util::StreamExt;
+
+    use crate::fs::edit::Expect;
+
+    fu.need(false, true)?;
+    let path = RelPath::parse(&raw_path)?;
+    let text_header = |h| {
+        headers
+            .get(h)
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+            .map(str::trim)
+    };
+    let expect = match (
+        text_header(header::IF_MATCH),
+        text_header(header::IF_NONE_MATCH),
+    ) {
+        (Some(tag), _) => Expect::Etag(tag.to_string()),
+        (None, Some("*")) => Expect::New,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::PRECONDITION_REQUIRED,
+                "if_match_required",
+                "Reload the file before saving it.",
+            ));
+        }
+    };
+    let max = s.config.edit_max;
+    let mut text = Vec::new();
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|_| ApiError::bad_request("The request body could not be read."))?;
+        if (text.len() + chunk.len()) as u64 > max {
+            return Err(FsError::TooLarge(max).into());
+        }
+        text.extend_from_slice(&chunk);
+    }
+    let st = crate::fs::edit::save_text(&fu.scope, s.db.clone(), &path, text, expect, crate::now())
+        .await?;
+    let tag = crate::fs::raw::etag(&st);
+    tracing::info!(event = "file.save", user = fu.user.id, path = %path);
+    Ok(([(header::ETAG, tag.clone())], Json(json!({ "etag": tag }))).into_response())
 }

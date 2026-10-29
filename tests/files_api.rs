@@ -741,16 +741,33 @@ async fn non_utf8_name_is_listed_and_usable() {
     let res = Req::get("/api/files").cookie(&c).send(&h.app).await;
     let e = &res.json["entries"][0];
     assert_eq!(e["name"], "Report caf\u{FFFD}.txt");
-    let raw = e["rawName"].as_str().expect("rawName for a name that is not UTF-8").to_string();
+    let raw = e["rawName"]
+        .as_str()
+        .expect("rawName for a name that is not UTF-8")
+        .to_string();
     assert!(raw.starts_with('\0'));
 
-    let dl = Req::get(&format!("/api/raw/{}", enc(&raw))).cookie(&c).send(&h.app).await;
-    assert_eq!((dl.status, dl.body.clone()), (StatusCode::OK, b"old".to_vec()));
+    let dl = Req::get(&format!("/api/raw/{}", enc(&raw)))
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (dl.status, dl.body.clone()),
+        (StatusCode::OK, b"old".to_vec())
+    );
 
-    let renamed = ops(&h, &c, json!([{ "op": "rename", "from": raw, "to": "Report café.txt" }])).await;
+    let renamed = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": raw, "to": "Report café.txt" }]),
+    )
+    .await;
     assert_eq!(renamed.json["done"], 1, "{}", renamed.json);
     assert!(!file.exists());
-    assert_eq!(std::fs::read_to_string(s.join("Report café.txt")).unwrap(), "old");
+    assert_eq!(
+        std::fs::read_to_string(s.join("Report café.txt")).unwrap(),
+        "old"
+    );
 }
 
 #[tokio::test]
@@ -759,7 +776,10 @@ async fn non_utf8_name_can_be_deleted() {
     let (c, s) = maria(&h, &dir, RW).await;
     let file = latin1(&s);
     let list = Req::get("/api/files").cookie(&c).send(&h.app).await;
-    let raw = list.json["entries"][0]["rawName"].as_str().unwrap().to_string();
+    let raw = list.json["entries"][0]["rawName"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let res = delete_paths(&h, &c, &[raw.as_str()]).await;
     assert_eq!(res.json["deleted"], 1, "{}", res.json);
     assert!(!file.exists());
@@ -773,9 +793,181 @@ async fn non_utf8_folder_contents_listed() {
     let folder = s.join(std::ffi::OsStr::from_bytes(b"Fotos f\xe9rias"));
     touch(&folder.join("a.jpg"), "a");
     let list = Req::get("/api/files").cookie(&c).send(&h.app).await;
-    let raw = list.json["entries"][0]["rawName"].as_str().unwrap().to_string();
-    let inside = Req::get(&format!("/api/files/{}", enc(&raw))).cookie(&c).send(&h.app).await;
+    let raw = list.json["entries"][0]["rawName"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let inside = Req::get(&format!("/api/files/{}", enc(&raw)))
+        .cookie(&c)
+        .send(&h.app)
+        .await;
     assert_eq!(inside.status, StatusCode::OK, "{}", inside.json);
     assert_eq!(names(&inside.json), ["a.jpg"]);
-    assert_eq!(inside.json["path"], raw, "the path comes back in the form the client sent");
+    assert_eq!(
+        inside.json["path"], raw,
+        "the path comes back in the form the client sent"
+    );
+}
+
+async fn etag_of(h: &Harness, c: &str, path: &str) -> String {
+    Req::get(&format!("/api/raw/{path}"))
+        .cookie(c)
+        .send(&h.app)
+        .await
+        .header("etag")
+        .to_string()
+}
+
+#[tokio::test]
+async fn save_with_matching_etag() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("notes.txt"), "old");
+    let tag = etag_of(&h, &c, "notes.txt").await;
+    let res = Req::put("/api/text/notes.txt")
+        .cookie(&c)
+        .header("if-match", &tag)
+        .bytes("new ✓".as_bytes())
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert_eq!(
+        std::fs::read_to_string(s.join("notes.txt")).unwrap(),
+        "new ✓"
+    );
+    assert_eq!(res.json["etag"], res.header("etag"));
+    assert_ne!(res.header("etag"), tag);
+}
+
+#[tokio::test]
+async fn stale_etag_412() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("notes.txt"), "old");
+    let res = Req::put("/api/text/notes.txt")
+        .cookie(&c)
+        .header("if-match", "\"3-0-0\"")
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::PRECONDITION_FAILED, "changed")
+    );
+    assert_eq!(std::fs::read_to_string(s.join("notes.txt")).unwrap(), "old");
+}
+
+#[tokio::test]
+async fn missing_if_match_428() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("notes.txt"), "old");
+    let res = Req::put("/api/text/notes.txt")
+        .cookie(&c)
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::PRECONDITION_REQUIRED, "if_match_required")
+    );
+}
+
+#[tokio::test]
+async fn new_file_with_if_none_match() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let res = Req::put("/api/text/new.md")
+        .cookie(&c)
+        .header("if-none-match", "*")
+        .bytes(b"# Title")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert_eq!(
+        std::fs::read_to_string(s.join("new.md")).unwrap(),
+        "# Title"
+    );
+    let again = Req::put("/api/text/new.md")
+        .cookie(&c)
+        .header("if-none-match", "*")
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(again.code(), "exists");
+}
+
+#[tokio::test]
+async fn text_too_large_413() {
+    let (h, dir) = harness_with_root(&[("CAIRN_EDIT_MAX", "8")]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("n.txt"), "old");
+    let tag = etag_of(&h, &c, "n.txt").await;
+    let res = Req::put("/api/text/n.txt")
+        .cookie(&c)
+        .header("if-match", &tag)
+        .bytes(b"123456789")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::PAYLOAD_TOO_LARGE, "too_large")
+    );
+    assert_eq!(std::fs::read_to_string(s.join("n.txt")).unwrap(), "old");
+}
+
+#[tokio::test]
+async fn binary_415() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("n.txt"), "old");
+    let tag = etag_of(&h, &c, "n.txt").await;
+    let res = Req::put("/api/text/n.txt")
+        .cookie(&c)
+        .header("if-match", &tag)
+        .bytes(&[0xff, 0xfe, 0x00])
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::UNSUPPORTED_MEDIA_TYPE, "not_text")
+    );
+}
+
+#[tokio::test]
+async fn etag_matches_raw() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("n.txt"), "old");
+    let tag = etag_of(&h, &c, "n.txt").await;
+    let res = Req::put("/api/text/n.txt")
+        .cookie(&c)
+        .header("if-match", &tag)
+        .bytes(b"newer")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.header("etag"), etag_of(&h, &c, "n.txt").await);
+}
+
+#[tokio::test]
+async fn save_needs_write() {
+    let (h, dir) = harness_with_root(&[]);
+    let ro = Perms {
+        read: true,
+        write: false,
+        share: false,
+        admin: false,
+    };
+    let (c, s) = maria(&h, &dir, ro).await;
+    touch(&s.join("n.txt"), "old");
+    let res = Req::put("/api/text/n.txt")
+        .cookie(&c)
+        .header("if-none-match", "*")
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::FORBIDDEN, "forbidden")
+    );
 }

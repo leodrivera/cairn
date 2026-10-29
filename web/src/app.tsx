@@ -8,6 +8,7 @@ import { Shell } from "./components/shell";
 import { Login } from "./screens/login";
 import { Explorer } from "./screens/explorer";
 import { Viewer } from "./screens/viewer";
+import { Settings } from "./screens/settings";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
 import type { User } from "./lib/types";
@@ -24,9 +25,6 @@ function screenFor(route: Route, user: User): ComponentChildren {
     );
   }
   if (route.name === "view") return <Viewer path={route.path} />;
-  if (route.name === "settings" && !user.permissions.admin && (route.page === "users" || route.page === "server")) {
-    return null;
-  }
   return null;
 }
 
@@ -105,6 +103,8 @@ export function App() {
     body = <main class="screen center" />;
   } else if (route.name === "files") {
     body = <Explorer path={route.path} />;
+  } else if (route.name === "settings") {
+    body = <Settings page={route.page} />;
   } else {
     body = <Shell>{screenFor(route, user)}</Shell>;
   }

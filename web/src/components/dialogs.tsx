@@ -17,7 +17,7 @@ export function folderLabel(dir: string): string {
 type DialogProps = { title: string; onClose(): void; children: ComponentChildren; wide?: boolean };
 
 /** A modal box. Escape closes; Tab stays inside; focus goes back where it was. */
-function Dialog({ title, onClose, children, wide }: DialogProps) {
+export function Dialog({ title, onClose, children, wide }: DialogProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [id] = useState(() => `dialog-${nextId++}`);
   useEffect(() => {

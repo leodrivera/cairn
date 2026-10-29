@@ -23,10 +23,12 @@ type Props = {
   class?: string;
   onDragOver?: (e: DragEvent) => void;
   onDrop?: (e: DragEvent) => void;
+  /** Replaces the places list (the settings pages bring their own). */
+  nav?: ComponentChildren;
   children?: ComponentChildren;
 };
 
-export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props) {
+export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, children }: Props) {
   const { setUser } = useSession();
   const user = useUser();
   const route = useRoute();
@@ -42,7 +44,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props
     setUser(null);
   };
 
-  const nav: { href: string; label: string; icon: IconName; on: boolean }[] = [
+  const nav: Place[] = [
     { href: "/files/", label: t("nav.myFiles"), icon: "home", on: place === "files" },
     { href: "/settings/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
   ];
@@ -54,16 +56,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props
           <Mark />
           <span class="wordmark" aria-label="Cairn" dangerouslySetInnerHTML={{ __html: wordmark }} />
         </Link>
-        <ul class="places">
-          {nav.map((n) => (
-            <li key={n.href}>
-              <Link href={n.href} class={n.on ? "place on" : "place"} aria-current={n.on ? "page" : undefined}>
-                <Icon name={n.icon} />
-                <span>{n.label}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {ownNav ?? <Places items={nav} />}
         <div class="sidebar-foot">
           {user.permissions.admin && space && space.total > 0 && (
             <div class="space">
@@ -95,5 +88,22 @@ export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props
       <UploadPanel queue={uploads()} />
       <Toast />
     </div>
+  );
+}
+
+type Place = { href: string; label: string; icon: IconName; on: boolean };
+
+export function Places({ items, class: cls = "places" }: { items: Place[]; class?: string }) {
+  return (
+    <ul class={cls}>
+      {items.map((n) => (
+        <li key={n.href}>
+          <Link href={n.href} class={n.on ? "place on" : "place"} aria-current={n.on ? "page" : undefined}>
+            <Icon name={n.icon} />
+            <span>{n.label}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }

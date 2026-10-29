@@ -73,3 +73,26 @@ export async function waitFor(check: () => void, ms = 2000): Promise<void> {
     }
   }
 }
+
+/** The control a <label> with exactly this text points at. */
+export function byLabel<T extends HTMLElement = HTMLInputElement>(root: HTMLElement, text: string): T {
+  const label = [...root.querySelectorAll("label")].find((l) => l.textContent?.trim() === text);
+  if (!label) throw new Error(`no label "${text}"`);
+  const control = label.htmlFor ? root.querySelector(`#${CSS.escape(label.htmlFor)}`) : label.querySelector("input");
+  if (!control) throw new Error(`label "${text}" points at nothing`);
+  return control as T;
+}
+
+/** Sets a field's value and fires input and change, as typing or choosing would. */
+export function setValue(control: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, value: string): void {
+  control.value = value;
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+  control.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/** The button whose text is exactly `text`. */
+export function buttonNamed(root: HTMLElement, text: string): HTMLButtonElement {
+  const b = [...root.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
+  if (!b) throw new Error(`no button "${text}"`);
+  return b as HTMLButtonElement;
+}

@@ -5,6 +5,7 @@ import { ApiFailure, offline, onSignedOut } from "./lib/api";
 import { href, navigate, useRoute, type Route } from "./lib/router";
 import { errorText, t } from "./i18n/index";
 import { Shell } from "./components/shell";
+import { Login } from "./screens/login";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
 import type { User } from "./lib/types";
@@ -95,6 +96,8 @@ export function App() {
     );
   } else if (!session) {
     body = <main class="screen center">{slow && <p class="muted">{t("app.loading")}</p>}</main>;
+  } else if (!user && route.name === "login") {
+    body = <Login />;
   } else if (!user || route.name === "login") {
     body = <main class="screen center" />;
   } else {

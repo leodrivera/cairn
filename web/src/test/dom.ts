@@ -4,7 +4,13 @@ import { render as preactRender, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
 
 if (!(globalThis as { happyDOM?: unknown }).happyDOM) {
-  GlobalRegistrator.register({ url: "https://files.example.com/", width: 1280, height: 800 });
+  GlobalRegistrator.register({
+    url: "https://files.example.com/",
+    width: 1280,
+    height: 800,
+    // Never load third-party scripts in tests; a script tag just fires "load".
+    settings: { disableJavaScriptFileLoading: true, handleDisabledFileLoadingAsSuccess: true },
+  });
 }
 
 export type Handler = (req: Request) => Response | Promise<Response>;

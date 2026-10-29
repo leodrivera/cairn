@@ -547,3 +547,180 @@ async fn delete_needs_write() {
     );
     assert!(s.join("a.txt").exists());
 }
+
+async fn ops(h: &Harness, c: &str, list: Value) -> common::Res {
+    Req::post("/api/ops")
+        .cookie(c)
+        .json(json!({ "ops": list }))
+        .send(&h.app)
+        .await
+}
+
+#[tokio::test]
+async fn rename_file() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": "a.txt", "to": "b.txt" }]),
+    )
+    .await;
+    assert_eq!(res.json, json!({ "done": 1, "failed": [] }));
+    assert!(s.join("b.txt").exists() && !s.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn rename_needs_same_parent() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    std::fs::create_dir(s.join("d")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": "a.txt", "to": "d/a.txt" }]),
+    )
+    .await;
+    assert_eq!(res.json["failed"][0]["error"], "invalid_path");
+}
+
+#[tokio::test]
+async fn move_into_folder() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    std::fs::create_dir(s.join("d")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "move", "from": "a.txt", "to": "d/a.txt" }]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1, "{}", res.json);
+    assert_eq!(std::fs::read_to_string(s.join("d/a.txt")).unwrap(), "a");
+}
+
+#[tokio::test]
+async fn move_into_itself_refused() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    std::fs::create_dir_all(s.join("a/sub")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "move", "from": "a", "to": "a/sub/a" }]),
+    )
+    .await;
+    assert_eq!(res.json["failed"][0]["error"], "into_itself");
+    let same = ops(&h, &c, json!([{ "op": "copy", "from": "a", "to": "a" }])).await;
+    assert_eq!(same.json["failed"][0]["error"], "into_itself");
+    assert!(s.join("a/sub").is_dir());
+}
+
+#[tokio::test]
+async fn copy_tree() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("src/x.txt"), "x");
+    touch(&s.join("src/deep/y.txt"), "y");
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "src", "to": "dst" }]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1, "{}", res.json);
+    assert_eq!(std::fs::read_to_string(s.join("dst/x.txt")).unwrap(), "x");
+    assert_eq!(
+        std::fs::read_to_string(s.join("dst/deep/y.txt")).unwrap(),
+        "y"
+    );
+    assert!(s.join("src/x.txt").exists());
+}
+
+#[tokio::test]
+async fn copy_skips_outside_links() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&dir.path().join("srv/bo/secret.txt"), "s");
+    touch(&s.join("src/mine.txt"), "m");
+    symlink("../../bo", s.join("src/up")).unwrap();
+    symlink("mine.txt", s.join("src/in")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "src", "to": "dst" }]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1, "{}", res.json);
+    assert!(
+        std::fs::symlink_metadata(s.join("dst/in"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(
+        std::fs::symlink_metadata(s.join("dst/up")).is_err(),
+        "outside link copied"
+    );
+}
+
+#[tokio::test]
+async fn target_exists_409() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    touch(&s.join("b.txt"), "b");
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": "a.txt", "to": "b.txt" }]),
+    )
+    .await;
+    assert_eq!(res.json["failed"][0]["error"], "exists");
+    assert_eq!(std::fs::read_to_string(s.join("b.txt")).unwrap(), "b");
+}
+
+#[tokio::test]
+async fn rename_unicode() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": "a.txt", "to": "Report #1 (50%) ✓ café.txt" }]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1);
+    assert!(s.join("Report #1 (50%) ✓ café.txt").exists());
+}
+
+#[tokio::test]
+async fn batch_reports_each() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = ops(
+        &h,
+        &c,
+        json!([
+            { "op": "rename", "from": "a.txt", "to": "b.txt" },
+            { "op": "move", "from": "missing", "to": "x" }
+        ]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1);
+    assert_eq!(res.json["failed"][0]["from"], "missing");
+    assert_eq!(res.json["failed"][0]["error"], "not_found");
+}
+
+#[tokio::test]
+async fn scope_root_cannot_move() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, _) = maria(&h, &dir, RW).await;
+    let res = ops(&h, &c, json!([{ "op": "move", "from": "", "to": "x" }])).await;
+    assert_eq!(res.json["failed"][0]["error"], "scope_root");
+}

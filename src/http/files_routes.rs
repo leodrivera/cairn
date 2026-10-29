@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
         .route("/files/{*path}", get(list_path))
         .route("/raw/{*path}", get(raw))
         .route("/folders/{*path}", axum::routing::post(new_folder))
+        .route("/ops", axum::routing::post(run_ops))
         .route(
             "/upload/{*path}",
             axum::routing::put(upload).layer(axum::extract::DefaultBodyLimit::disable()),
@@ -296,4 +297,50 @@ async fn delete_paths(
         failed = failed.len()
     );
     Ok(Json(json!({ "deleted": deleted, "failed": failed })))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpItem {
+    op: crate::fs::ops::Op,
+    from: String,
+    to: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpsBody {
+    ops: Vec<OpItem>,
+}
+
+async fn run_ops(
+    fu: FileUser,
+    crate::http::json::StrictJson(b): crate::http::json::StrictJson<OpsBody>,
+) -> Result<Json<Value>, ApiError> {
+    fu.need(false, true)?;
+    if b.ops.is_empty() || b.ops.len() > 10_000 {
+        return Err(ApiError::bad_request(
+            "Send between 1 and 10000 operations.",
+        ));
+    }
+    let user = fu.user.id;
+    let scope = fu.scope;
+    let (done, failed) = blocking(move || {
+        let (mut done, mut failed) = (0, Vec::new());
+        for item in &b.ops {
+            let result = RelPath::parse(&item.from)
+                .and_then(|from| Ok((from, RelPath::parse(&item.to)?)))
+                .and_then(|(from, to)| crate::fs::ops::apply(&scope, item.op, &from, &to));
+            match result {
+                Ok(()) => {
+                    done += 1;
+                    tracing::info!(event = "file.op", user, op = ?item.op, from = %item.from, to = %item.to);
+                }
+                Err(e) => failed.push(failure("from", &item.from, e)),
+            }
+        }
+        Ok((done, failed))
+    })
+    .await?;
+    Ok(Json(json!({ "done": done, "failed": failed })))
 }

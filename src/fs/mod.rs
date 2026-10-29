@@ -3,6 +3,7 @@
 pub mod edit;
 pub mod list;
 pub mod mime;
+pub mod ops;
 pub mod path;
 pub mod raw;
 pub mod scope;

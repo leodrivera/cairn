@@ -125,6 +125,7 @@ pub struct Res {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub json: Value,
+    pub body: Vec<u8>,
 }
 
 impl Res {
@@ -138,6 +139,13 @@ impl Res {
         self.headers
             .get("set-cookie")
             .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    pub fn header(&self, name: &str) -> &str {
+        self.headers
+            .get(name)
+            .map(|v| v.to_str().unwrap())
+            .unwrap_or("")
     }
 
     pub fn code(&self) -> &str {
@@ -227,6 +235,7 @@ impl Req {
             status,
             headers,
             json,
+            body: bytes.to_vec(),
         }
     }
 }

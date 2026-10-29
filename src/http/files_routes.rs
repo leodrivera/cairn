@@ -19,7 +19,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/files", get(list_root))
         .route("/files/{*path}", get(list_path))
+        .route("/raw/{*path}", get(raw))
 }
+
+/// Files and archives served to the browser may be HTML or SVG from anyone: they must never run script here.
+pub const RAW_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox";
 
 /// The signed-in user and their scope, opened for this request.
 pub struct FileUser {
@@ -90,4 +94,100 @@ async fn list_at(fu: FileUser, raw: String) -> Result<Json<Value>, ApiError> {
     let scope = fu.scope;
     let entries = blocking(move || list::list(&scope, &path)).await?;
     Ok(Json(json!({ "path": shown, "entries": entries })))
+}
+
+#[derive(serde::Deserialize)]
+struct RawQuery {
+    #[serde(default)]
+    download: Option<String>,
+}
+
+async fn raw(
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RawQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    use rustix::fs::{FileType, OFlags};
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    use crate::fs::raw::{ByteRange, encode_filename, etag, parse_range};
+
+    fu.need(true, false)?;
+    let path = RelPath::parse(&raw_path)?;
+    let name = path.name().unwrap_or("download").to_string();
+    let scope = fu.scope;
+    let (file, st) = blocking(move || {
+        let fd = scope.open(&path, OFlags::RDONLY)?;
+        let st = rustix::fs::fstat(&fd)?;
+        if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
+            return Err(FsError::IsAFolder);
+        }
+        Ok((std::fs::File::from(fd), st))
+    })
+    .await?;
+    let size = st.st_size as u64;
+    let tag = etag(&st);
+    let modified =
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(st.st_mtime.max(0) as u64);
+    let disposition = if q.download.is_some() {
+        "attachment"
+    } else {
+        "inline"
+    };
+    let common = [
+        (header::ETAG, tag.clone()),
+        (header::LAST_MODIFIED, httpdate::fmt_http_date(modified)),
+        (header::ACCEPT_RANGES, "bytes".to_string()),
+        (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
+        (
+            header::CONTENT_DISPOSITION,
+            format!("{disposition}; filename*=UTF-8''{}", encode_filename(&name)),
+        ),
+    ];
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        == Some(tag.as_str())
+    {
+        return Ok((StatusCode::NOT_MODIFIED, common).into_response());
+    }
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
+    let Ok(range) = parse_range(range, size) else {
+        return Ok((
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            common,
+            [(header::CONTENT_RANGE, format!("bytes */{size}"))],
+        )
+            .into_response());
+    };
+    let mut file = tokio::fs::File::from_std(file);
+    let (status, start, len) = match range {
+        ByteRange::Full => (StatusCode::OK, 0, size),
+        ByteRange::Part { start, end } => (StatusCode::PARTIAL_CONTENT, start, end - start + 1),
+    };
+    if start > 0 {
+        file.seek(std::io::SeekFrom::Start(start))
+            .await
+            .map_err(FsError::from)?;
+    }
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file.take(len)));
+    let mut res = (status, common, body).into_response();
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        crate::fs::mime::guess(&name).parse().expect("static MIME"),
+    );
+    h.insert(header::CONTENT_LENGTH, len.into());
+    if let ByteRange::Part { start, end } = range {
+        h.insert(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{size}")
+                .parse()
+                .expect("ASCII"),
+        );
+    }
+    Ok(res)
 }

@@ -3,6 +3,7 @@
 pub mod list;
 pub mod mime;
 pub mod path;
+pub mod raw;
 pub mod scope;
 
 use axum::http::StatusCode;

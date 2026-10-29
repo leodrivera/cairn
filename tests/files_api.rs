@@ -169,3 +169,125 @@ async fn signed_out_403() {
     );
     let _ = json!(null);
 }
+
+const RAW_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox";
+
+#[tokio::test]
+async fn downloads_file() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let name = "Relatório #1 (50%) ✓.txt";
+    touch(&s.join(name), "hello world");
+    let res = Req::get(&format!("/api/raw/{}", enc(name)))
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.body, b"hello world");
+    assert_eq!(res.header("content-security-policy"), RAW_CSP);
+    assert_eq!(res.header("x-content-type-options"), "nosniff");
+    assert_eq!(res.header("content-type"), "text/plain");
+    assert_eq!(res.header("accept-ranges"), "bytes");
+    assert_eq!(res.header("content-length"), "11");
+    assert_eq!(
+        res.header("content-disposition"),
+        format!("inline; filename*=UTF-8''{}", enc(name))
+    );
+    assert!(
+        res.header("etag").starts_with("\"11-"),
+        "{}",
+        res.header("etag")
+    );
+    assert!(!res.header("last-modified").is_empty());
+}
+
+#[tokio::test]
+async fn download_param_is_attachment() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = Req::get("/api/raw/a.txt?download=1")
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert!(
+        res.header("content-disposition")
+            .starts_with("attachment; "),
+        "{}",
+        res.header("content-disposition")
+    );
+}
+
+#[tokio::test]
+async fn range_206() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "0123456789");
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("range", "bytes=2-4")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(res.body, b"234");
+    assert_eq!(res.header("content-range"), "bytes 2-4/10");
+    let tail = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("range", "bytes=-3")
+        .send(&h.app)
+        .await;
+    assert_eq!(tail.body, b"789");
+}
+
+#[tokio::test]
+async fn range_416() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "0123456789");
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("range", "bytes=10-")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(res.header("content-range"), "bytes */10");
+}
+
+#[tokio::test]
+async fn etag_304() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "abc");
+    let first = Req::get("/api/raw/a.txt").cookie(&c).send(&h.app).await;
+    let etag = first.header("etag").to_string();
+    let again = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("if-none-match", &etag)
+        .send(&h.app)
+        .await;
+    assert_eq!(again.status, StatusCode::NOT_MODIFIED);
+    assert!(again.body.is_empty());
+}
+
+#[tokio::test]
+async fn folder_is_a_folder() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    std::fs::create_dir(s.join("d")).unwrap();
+    let res = Req::get("/api/raw/d").cookie(&c).send(&h.app).await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "is_a_folder")
+    );
+}
+
+#[tokio::test]
+async fn outside_link_403() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&dir.path().join("srv/bo/secret.txt"), "secret");
+    symlink("../bo/secret.txt", s.join("leak")).unwrap();
+    let res = Req::get("/api/raw/leak").cookie(&c).send(&h.app).await;
+    assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
+    assert!(!String::from_utf8_lossy(&res.body).contains("secret\""));
+}

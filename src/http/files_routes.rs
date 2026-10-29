@@ -22,6 +22,8 @@ pub fn routes() -> Router<AppState> {
         .route("/raw/{*path}", get(raw))
         .route("/folders/{*path}", axum::routing::post(new_folder))
         .route("/ops", axum::routing::post(run_ops))
+        .route("/zip", get(zip_root))
+        .route("/zip/{*path}", get(zip_path))
         .route(
             "/text/{*path}",
             axum::routing::put(save_text).layer(axum::extract::DefaultBodyLimit::disable()),
@@ -403,4 +405,46 @@ async fn save_text(
     let tag = crate::fs::raw::etag(&st);
     tracing::info!(event = "file.save", user = fu.user.id, path = %path);
     Ok(([(header::ETAG, tag.clone())], Json(json!({ "etag": tag }))).into_response())
+}
+
+async fn zip_root(fu: FileUser) -> Result<axum::response::Response, ApiError> {
+    zip_at(fu, String::new()).await
+}
+
+async fn zip_path(
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    zip_at(fu, raw_path).await
+}
+
+async fn zip_at(fu: FileUser, raw_path: String) -> Result<axum::response::Response, ApiError> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+
+    fu.need(true, false)?;
+    let path = RelPath::parse(&raw_path)?;
+    let name = match path.name_lossy() {
+        Some(n) => format!("{n}.zip"),
+        None => "files.zip".into(),
+    };
+    let scope = fu.scope;
+    // Checked before the response starts, so a wrong path is an ordinary JSON error.
+    let (scope, path) = blocking(move || {
+        scope.open_dir(&path)?;
+        Ok((scope, path))
+    })
+    .await?;
+    let headers = [
+        (header::CONTENT_TYPE, "application/zip".to_string()),
+        (
+            header::CONTENT_DISPOSITION,
+            format!(
+                "attachment; filename*=UTF-8''{}",
+                crate::fs::raw::encode_filename(&name)
+            ),
+        ),
+        (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
+    ];
+    Ok((headers, crate::fs::zip::stream_zip(scope, path)).into_response())
 }

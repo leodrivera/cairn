@@ -971,3 +971,97 @@ async fn save_needs_write() {
         (StatusCode::FORBIDDEN, "forbidden")
     );
 }
+
+fn unzip(body: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(body.to_vec())).expect("a valid ZIP");
+    let mut out = std::collections::BTreeMap::new();
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).unwrap();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut data).unwrap();
+        out.insert(f.name().unwrap().to_string(), data);
+    }
+    out
+}
+
+#[tokio::test]
+async fn zip_contains_tree() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("album/a.txt"), "a");
+    touch(&s.join("album/deep/b.txt"), "bb");
+    std::fs::create_dir(s.join("album/empty")).unwrap();
+    let res = Req::get("/api/zip/album").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.header("content-type"), "application/zip");
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''album.zip"
+    );
+    assert_eq!(res.header("content-security-policy"), RAW_CSP);
+    let files = unzip(&res.body);
+    assert_eq!(files.get("a.txt").map(Vec::as_slice), Some(&b"a"[..]));
+    assert_eq!(files.get("deep/b.txt").map(Vec::as_slice), Some(&b"bb"[..]));
+    assert!(files.contains_key("empty/"), "{:?}", files.keys());
+}
+
+#[tokio::test]
+async fn zip_of_root_is_files_zip() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("x.txt"), "x");
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''files.zip"
+    );
+    assert!(unzip(&res.body).contains_key("x.txt"));
+}
+
+#[tokio::test]
+async fn zip_skips_outside_links() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&dir.path().join("srv/bo/secret.txt"), "s");
+    touch(&s.join("album/a.txt"), "a");
+    symlink("../../bo", s.join("album/up")).unwrap();
+    symlink("../../bo/secret.txt", s.join("album/leak.txt")).unwrap();
+    symlink("a.txt", s.join("album/in.txt")).unwrap();
+    let files = unzip(
+        &Req::get("/api/zip/album")
+            .cookie(&c)
+            .send(&h.app)
+            .await
+            .body,
+    );
+    assert!(
+        !files.keys().any(|k| k.starts_with("up") || k == "leak.txt"),
+        "{:?}",
+        files.keys()
+    );
+    assert_eq!(files.get("in.txt").map(Vec::as_slice), Some(&b"a"[..]));
+}
+
+#[tokio::test]
+async fn zip_of_file_is_not_a_folder() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = Req::get("/api/zip/a.txt").cookie(&c).send(&h.app).await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "not_a_folder")
+    );
+}
+
+#[tokio::test]
+async fn zip_needs_read() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, _) = maria(&h, &dir, NONE).await;
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::FORBIDDEN, "forbidden")
+    );
+}

@@ -8,6 +8,7 @@ pub mod path;
 pub mod raw;
 pub mod scope;
 pub mod upload;
+pub mod zip;
 
 use axum::http::StatusCode;
 

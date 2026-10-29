@@ -254,8 +254,9 @@ an internal URL.
 - Changing a password, removing a permission, changing a scope or deleting a user ends that user's other sessions.
 - Every state-changing request needs the `X-Cairn` header (any value). Browsers do not send custom headers
   cross-site without a CORS preflight, which Cairn never allows, so this plus `SameSite=Lax` stops CSRF without a
-  token dance. The one `POST` that comes from a plain form, the ZIP of chosen items, changes nothing and needs an
-  `Origin` naming the host it was sent to instead.
+  token dance. The one `POST` that comes from a plain form, the ZIP of chosen items, changes nothing and needs proof
+  that it came from this site instead: `Sec-Fetch-Site: same-origin`, or, from browsers that do not send it, an
+  `Origin` whose host is the one in `CAIRN_PUBLIC_URL` or in `Host`.
 
 ## 5. Files
 

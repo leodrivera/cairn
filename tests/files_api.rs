@@ -1410,3 +1410,56 @@ async fn other_posts_still_need_x_cairn() {
     assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(res.code(), "csrf");
 }
+
+#[tokio::test]
+async fn zip_form_behind_a_proxy_that_rewrites_host() {
+    let (h, dir) = harness_with_root(&[("CAIRN_PUBLIC_URL", "https://files.example.com")]);
+    let c = album(&h, &dir).await;
+    // nginx by default sends the upstream name as Host.
+    let res = Req::post("/api/zip/album")
+        .no_csrf()
+        .cookie(&c)
+        .header("host", "cairn:8080")
+        .header("origin", "https://files.example.com")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .bytes(b"item=a.txt")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+}
+
+#[tokio::test]
+async fn zip_form_same_origin_fetch_metadata() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let res = Req::post("/api/zip/album")
+        .no_csrf()
+        .cookie(&c)
+        .header("host", "cairn:8080")
+        .header("origin", "https://files.example.com")
+        .header("sec-fetch-site", "same-origin")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .bytes(b"item=a.txt")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+}
+
+#[tokio::test]
+async fn zip_form_cross_site_fetch_metadata_refused() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    // A matching Host does not help when the browser says the form came from another site.
+    let res = Req::post("/api/zip/album")
+        .no_csrf()
+        .cookie(&c)
+        .header("host", "files.example.com")
+        .header("origin", "https://files.example.com")
+        .header("sec-fetch-site", "cross-site")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .bytes(b"item=a.txt")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.code(), "csrf");
+}

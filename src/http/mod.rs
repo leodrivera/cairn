@@ -72,7 +72,10 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             current_user::load,
         ))
-        .layer(middleware::from_fn(csrf::require_header))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            csrf::require_header,
+        ))
         .layer(DefaultBodyLimit::max(1 << 20));
     let captcha = state.captcha.clone();
     let app = Router::new()

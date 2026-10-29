@@ -90,8 +90,7 @@ fn user(config: &Config, cmd: UserCommand) -> Result<String, String> {
             let u = find(&email)?;
             let hash = hash_blocking(&read_password()?);
             users::set_password(&db, u.id, Some(hash)).map_err(|e| e.message())?;
-            db.with(|c| c.execute("DELETE FROM sessions WHERE user_id = ?1", [u.id]))
-                .map_err(|e| e.to_string())?;
+            crate::auth::session::delete_for_user(&db, u.id, None).map_err(|e| e.to_string())?;
             Ok(format!(
                 "Password changed for {}. Their sessions have ended.",
                 u.email

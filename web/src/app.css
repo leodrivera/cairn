@@ -1634,6 +1634,17 @@ fieldset.perms {
   min-width: 0;
 }
 
+/* The whole row opens the item on a phone, not just the 21 px line of its name. */
+.narrow .cell-name {
+  position: relative;
+}
+
+.narrow .cell-name .name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
 .name-stack .name {
   overflow: hidden;
   text-overflow: ellipsis;

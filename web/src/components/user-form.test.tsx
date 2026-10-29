@@ -124,3 +124,9 @@ test("remove password shows only with SSO and a password", async () => {
   await waitFor(() => assert.equal(saved, 1));
   assert.ok(log.some((r) => r.method === "DELETE"));
 });
+
+test("the form opens with Name focused", async () => {
+  const el = render(<UserForm sso={false} onSaved={() => {}} onClose={() => {}} />);
+  await flush();
+  assert.ok(document.activeElement === byLabel(el, "Name"));
+});

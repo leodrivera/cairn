@@ -27,7 +27,7 @@ A cairn is a stack of stones that marks a trail. Cairn stacks your folders and f
 - Sign in with an e-mail and password, with OAuth providers through a broker such as Tinyauth, with any OpenID Connect provider directly, or any mix of these
 - Optional CAPTCHA on the password form: reCAPTCHA v2, Cloudflare Turnstile or hCaptcha
 - Light and dark themes, usable on desktop and phone
-- English interface with a small translation table; Português (Brasil) is planned first
+- The interface is in English and Português (Brasil), chosen in Profile
 - Single static binary, no runtime to install, shipped as a small Docker image
 
 ## Non-goals

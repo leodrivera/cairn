@@ -1,5 +1,5 @@
 // The new user and edit user form. Write and Share need Read, so ticking them ticks Read and locks it.
-import { useState } from "preact/hooks";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline } from "../lib/api";
 import { passwordOk } from "../lib/password";
 import { errorText, t } from "../i18n/index";
@@ -21,6 +21,8 @@ export function UserForm({ user, sso, onSaved, onClose }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const id = user ? `user-${user.id}` : "user-new";
+  const first = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => first.current?.focus(), []);
 
   const toggle = (k: keyof Perms) =>
     setPerms((p) => {
@@ -90,7 +92,7 @@ export function UserForm({ user, sso, onSaved, onClose }: Props) {
           <label class="field-label" for={`${id}-name`}>
             {t("form.name")}
           </label>
-          <input id={`${id}-name`} class="input" value={name} onInput={(e) => setName(e.currentTarget.value)} />
+          <input ref={first} id={`${id}-name`} class="input" value={name} onInput={(e) => setName(e.currentTarget.value)} />
         </div>
         <div class="field">
           <label class="field-label" for={`${id}-email`}>

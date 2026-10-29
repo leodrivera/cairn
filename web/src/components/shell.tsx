@@ -1,0 +1,85 @@
+// The signed-in frame: sidebar with the brand, places, disk use (admins) and the account; the screen beside it.
+import type { ComponentChildren } from "preact";
+import wordmark from "../../../brand/cairn-wordmark.svg";
+import { api } from "../lib/api";
+import { formatSize } from "../lib/format";
+import { Link, navigate, useRoute } from "../lib/router";
+import { t } from "../i18n/index";
+import { useSession, useUser } from "../state/session";
+import { Icon, Mark, type IconName } from "./icons";
+
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2);
+  return letters.toLocaleUpperCase();
+}
+
+type Props = { space?: { used: number; total: number }; children?: ComponentChildren };
+
+export function Shell({ space, children }: Props) {
+  const { setUser } = useSession();
+  const user = useUser();
+  const route = useRoute();
+  const place = route.name === "files" || route.name === "view" ? "files" : route.name === "settings" ? route.page : "";
+
+  const signOut = async () => {
+    const res = await api<{ next: string | null }>("POST", "/api/auth/logout").catch(() => ({ next: null }));
+    if (res.next) {
+      location.assign(res.next);
+      return;
+    }
+    navigate("/login", { replace: true });
+    setUser(null);
+  };
+
+  const nav: { href: string; label: string; icon: IconName; on: boolean }[] = [
+    { href: "/files/", label: t("nav.myFiles"), icon: "home", on: place === "files" },
+    { href: "/settings/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
+  ];
+
+  return (
+    <div class="shell">
+      <nav class="sidebar" aria-label={t("nav.primary")}>
+        <Link href="/files/" class="brand">
+          <Mark />
+          <span class="wordmark" aria-label="Cairn" dangerouslySetInnerHTML={{ __html: wordmark }} />
+        </Link>
+        <ul class="places">
+          {nav.map((n) => (
+            <li key={n.href}>
+              <Link href={n.href} class={n.on ? "place on" : "place"} aria-current={n.on ? "page" : undefined}>
+                <Icon name={n.icon} />
+                <span>{n.label}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <div class="sidebar-foot">
+          {user.permissions.admin && space && space.total > 0 && (
+            <div class="space">
+              <div class="space-bar" aria-hidden="true">
+                <div style={{ width: `${Math.min(100, Math.round((space.used / space.total) * 100))}%` }} />
+              </div>
+              <span>{t("shell.space", { used: formatSize(space.used), total: formatSize(space.total) })}</span>
+            </div>
+          )}
+          <div class="account">
+            <Link href="/settings/profile" class="account-link" aria-label={t("shell.settings")}>
+              <span class="avatar" aria-hidden="true">
+                {initials(user.name)}
+              </span>
+              <span class="account-text">
+                <span class="account-name">{user.name}</span>
+                <span class="account-role">{user.permissions.admin ? t("shell.admin") : t("shell.user")}</span>
+              </span>
+            </Link>
+            <button type="button" class="icon-button" aria-label={t("shell.signOut")} onClick={signOut}>
+              <Icon name="signOut" />
+            </button>
+          </div>
+        </div>
+      </nav>
+      <main class="screen">{children}</main>
+    </div>
+  );
+}

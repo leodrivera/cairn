@@ -18,6 +18,7 @@ const result = await build({
   outdir: dist,
   entryNames: "assets/app-[hash]",
   metafile: true,
+  loader: { ".svg": "text" },
   logLevel: "warning",
 });
 

@@ -4,6 +4,22 @@ import type { en } from "./en";
 type Table = { [K in keyof typeof en]: (typeof en)[K] extends string ? string : { one: string; other: string } };
 
 export const ptBR: Table = {
+  "app.loading": "Carregando…",
+  "nav.primary": "Lugares",
+  "nav.myFiles": "Meus arquivos",
+  "nav.sharedLinks": "Links compartilhados",
+  "shell.space": "{used} de {total} usados",
+  "shell.admin": "Administrador",
+  "shell.user": "Usuário",
+  "shell.settings": "Configurações",
+  "shell.signOut": "Sair",
+  "state.offline.title": "Não foi possível falar com o servidor",
+  "state.offline.body": "Verifique se o Cairn está rodando e tente de novo.",
+  "state.failed.title": "O Cairn não conseguiu abrir",
+  "state.tryAgain": "Tentar de novo",
+  "state.missing.title": "Não há nada aqui",
+  "state.missing.body": "O endereço pode estar errado, ou a página mudou de lugar.",
+  "state.backToFiles": "Voltar aos arquivos",
   "files.moved": { one: "{n} item movido para {dest}.", other: "{n} itens movidos para {dest}." },
   "login.continueWith": "Continuar com {name}",
   "time.minutes": { one: "{n} minuto", other: "{n} minutos" },

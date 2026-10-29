@@ -46,8 +46,22 @@ export function render(vnode: ComponentChild): HTMLElement {
 }
 
 /** Lets pending promises, effects and zero-delay timers run. */
-export async function flush(times = 3): Promise<void> {
+export async function flush(times = 5): Promise<void> {
   for (let i = 0; i < times; i++) {
     await act(() => new Promise<void>((r) => setTimeout(r, 0)));
+  }
+}
+
+/** Flushes until `check` stops throwing, for at most `ms`; then throws its last error. */
+export async function waitFor(check: () => void, ms = 2000): Promise<void> {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      check();
+      return;
+    } catch (e) {
+      if (Date.now() > end) throw e;
+      await flush(1);
+    }
   }
 }

@@ -28,7 +28,7 @@ await build({
   outdir: out,
   outbase: "src",
   outExtension: { ".js": ".mjs" },
-  loader: { ".css": "empty" },
+  loader: { ".css": "empty", ".svg": "text" },
   packages: "external",
   logLevel: "warning",
 });

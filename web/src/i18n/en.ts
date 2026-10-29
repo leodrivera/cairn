@@ -2,6 +2,22 @@
 // A value is a string, or { one, other } for a count. Placeholders look like {name}.
 
 export const en = {
+  "app.loading": "Loading…",
+  "nav.primary": "Places",
+  "nav.myFiles": "My files",
+  "nav.sharedLinks": "Shared links",
+  "shell.space": "{used} of {total} used",
+  "shell.admin": "Administrator",
+  "shell.user": "User",
+  "shell.settings": "Settings",
+  "shell.signOut": "Sign out",
+  "state.offline.title": "Can't reach the server",
+  "state.offline.body": "Check that Cairn is running, then try again.",
+  "state.failed.title": "Cairn could not start",
+  "state.tryAgain": "Try again",
+  "state.missing.title": "There is nothing here",
+  "state.missing.body": "The address may be mistyped, or the page has moved.",
+  "state.backToFiles": "Back to files",
   "files.moved": { one: "Moved {n} item to {dest}.", other: "Moved {n} items to {dest}." },
   "login.continueWith": "Continue with {name}",
   "time.minutes": { one: "{n} minute", other: "{n} minutes" },

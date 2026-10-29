@@ -27,6 +27,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "fmt"] }
 url = "2.5.8"
+ureq = { version = "3.5.0", features = ["json"] }
 
 [dev-dependencies]
 http-body-util = "0.1.5"

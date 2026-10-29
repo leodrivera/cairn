@@ -27,7 +27,7 @@ pub fn read_secret(vars: &Vars, name: &str) -> Result<Option<Secret>, String> {
         (Some(_), Some(_)) => Err(format!(
             "{name}: set it or {file_var}, not both. Remove one of them."
         )),
-        (Some(value), None) => Ok(Some(Secret(value.clone()))),
+        (Some(value), None) => Ok(Some(Secret(value.clone())).filter(|s| !s.0.is_empty())),
         (None, Some(path)) => {
             let text = std::fs::read_to_string(path).map_err(|e| {
                 format!("{file_var}: cannot read {path} ({e}). Check the path and that the user running Cairn can read it.")
@@ -36,7 +36,7 @@ pub fn read_secret(vars: &Vars, name: &str) -> Result<Option<Secret>, String> {
                 .strip_suffix("\r\n")
                 .or_else(|| text.strip_suffix('\n'))
                 .unwrap_or(&text);
-            Ok(Some(Secret(text.to_string())))
+            Ok(Some(Secret(text.to_string())).filter(|s| !s.0.is_empty()))
         }
         (None, None) => Ok(None),
     }
@@ -123,6 +123,25 @@ mod tests {
         assert!(
             got.starts_with("CAIRN_OAUTH_SECRET_FILE: cannot read /nonexistent ("),
             "{got}"
+        );
+    }
+
+    #[test]
+    fn empty_is_unset() {
+        let file = file_with("\n");
+        let path = file.path().to_str().unwrap();
+        assert!(
+            read_secret(
+                &vars(&[("CAIRN_OAUTH_SECRET_FILE", path)]),
+                "CAIRN_OAUTH_SECRET"
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            read_secret(&vars(&[("CAIRN_OAUTH_SECRET", "")]), "CAIRN_OAUTH_SECRET")
+                .unwrap()
+                .is_none()
         );
     }
 

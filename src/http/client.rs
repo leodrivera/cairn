@@ -47,16 +47,24 @@ impl Client {
                 https: false,
             };
         }
-        let entries: Vec<Option<IpAddr>> = forwarded
-            .map(|v| v.split(',').map(|s| s.trim().parse().ok()).collect())
-            .unwrap_or_default();
-        let ip = entries
-            .iter()
-            .rev()
-            .map_while(|e| *e)
-            .find(|ip| !is_trusted(ip))
-            .or_else(|| entries.iter().flatten().next().copied())
-            .unwrap_or(peer);
+        // Walk from the right, the end our proxies wrote. The first address outside them is the client. An entry that
+        // does not parse stops the walk at the last hop we trust: everything left of it came from the client.
+        let mut ip = peer;
+        for entry in forwarded
+            .unwrap_or("")
+            .rsplit(',')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
+            match parse_hop(entry) {
+                Some(hop) if is_trusted(&hop) => ip = hop,
+                Some(hop) => {
+                    ip = hop;
+                    break;
+                }
+                None => break,
+            }
+        }
         let https = headers
             .get("x-forwarded-proto")
             .and_then(|v| v.to_str().ok())
@@ -64,6 +72,15 @@ impl Client {
             .is_some_and(|v| v.trim().eq_ignore_ascii_case("https"));
         Client { ip, https }
     }
+}
+
+/// An address, with or without a port: `203.0.113.9`, `203.0.113.9:5555`, `2001:db8::1`, `[2001:db8::1]:443`.
+fn parse_hop(entry: &str) -> Option<IpAddr> {
+    entry
+        .parse()
+        .ok()
+        .or_else(|| entry.parse::<SocketAddr>().ok().map(|a| a.ip()))
+        .or_else(|| entry.strip_prefix('[')?.strip_suffix(']')?.parse().ok())
 }
 
 impl<S> FromRequestParts<S> for Client
@@ -147,5 +164,33 @@ mod tests {
     fn no_peer_is_local() {
         let c = Client::from_parts(None, &HeaderMap::new(), &trusted());
         assert_eq!((c.ip, c.https), (ip("127.0.0.1"), false));
+    }
+
+    #[test]
+    fn port_is_stripped() {
+        let h = headers(&[("x-forwarded-for", "1.2.3.4, 203.0.113.9:5555")]);
+        assert_eq!(
+            Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted()).ip,
+            ip("203.0.113.9")
+        );
+        let h = headers(&[("x-forwarded-for", "[2001:db8::1]:443")]);
+        assert_eq!(
+            Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted()).ip,
+            ip("2001:db8::1")
+        );
+    }
+
+    #[test]
+    fn unreadable_entry_never_falls_back_to_the_client_written_part() {
+        let h = headers(&[("x-forwarded-for", "1.2.3.4, nonsense")]);
+        assert_eq!(
+            Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted()).ip,
+            ip("10.0.0.1")
+        );
+        let h = headers(&[("x-forwarded-for", "1.2.3.4, nonsense, 10.0.0.2")]);
+        assert_eq!(
+            Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted()).ip,
+            ip("10.0.0.2")
+        );
     }
 }

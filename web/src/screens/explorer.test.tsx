@@ -301,3 +301,140 @@ test("the upload panel stays across folders", async () => {
   await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
   assert.match(el.textContent!, /Uploading 1 of 1/);
 });
+
+function menuItem(el: HTMLElement, label: string): HTMLButtonElement {
+  const b = [...el.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((x) =>
+    x.textContent!.startsWith(label),
+  );
+  assert.ok(b, `no menu item "${label}"`);
+  return b!;
+}
+
+function more(el: HTMLElement, name: string): HTMLButtonElement {
+  const b = el.querySelector<HTMLButtonElement>(`button[aria-label="More actions for ${name}"]`);
+  assert.ok(b, `no More button for ${name}`);
+  return b!;
+}
+
+function submit(el: HTMLElement) {
+  el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+}
+
+test("rename from the More menu", async () => {
+  let loads = 0;
+  const log = startAt("/files/photos", admin, {
+    "GET /api/files/photos": () => {
+      loads++;
+      return json({ path: "photos", entries: sample });
+    },
+    "POST /api/ops": () => json({ done: 1, failed: [] }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  click(menuItem(el, "Rename"));
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"] input')));
+  const input = el.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+  input.value = "todo.txt";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await flush();
+  submit(el);
+  await waitFor(() => assert.match(el.textContent!, /Renamed to todo\.txt\./));
+  assert.ok(!el.querySelector('[role="dialog"]'));
+  const ops = log.find((r) => r.method === "POST")!;
+  assert.deepEqual(await ops.json(), { ops: [{ op: "rename", from: "photos/notes.txt", to: "photos/todo.txt" }] });
+  await waitFor(() => assert.equal(loads, 2));
+  assert.ok(el.querySelector('.toast-region[role="status"] .toast'));
+});
+
+test("right click opens the menu; a reader gets no write items", async () => {
+  startAt("/files/", reader, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  rows(el)[3].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  const labels = [...el.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent);
+  assert.deepEqual(labels, ["OpenEnter", "Download"]);
+});
+
+test("Shift+F10 on a row opens its menu; F2 renames the selected item", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const row = rows(el)[3];
+  row.querySelector<HTMLElement>("a.name")!.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }),
+  );
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await waitFor(() => assert.ok(!el.querySelector('[role="menu"]')));
+  click(row.querySelector(".check-button")!);
+  await flush();
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+  await waitFor(() => assert.equal(el.querySelector<HTMLInputElement>('[role="dialog"] input')?.value, "notes.txt"));
+});
+
+test("move the selection reports a partial failure", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "GET /api/files/2026": listing("2026", []),
+    "POST /api/ops": () =>
+      json({
+        done: 1,
+        failed: [{ from: "site-backup.tar.gz", error: "denied", message: "x" }],
+      }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[3].querySelector(".check-button")!);
+  click(rows(el)[5].querySelector(".check-button")!);
+  await flush();
+  click(button(el, "Move"));
+  await waitFor(() => assert.match(el.textContent!, /Move 2 items to…/));
+  await waitFor(() => assert.ok([...el.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent === "2026")));
+  click([...el.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "2026")!);
+  await waitFor(() => assert.ok(!button(el, "Move here").disabled));
+  click(button(el, "Move here"));
+  await waitFor(() =>
+    assert.match(
+      el.textContent!,
+      /Moved 1 of 2 items\. site-backup\.tar\.gz: The server's folder permissions do not allow this\./,
+    ),
+  );
+  assert.ok(!el.querySelector(".selection-bar"));
+});
+
+test("delete asks first, then deletes", async () => {
+  const log = startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "DELETE /api/files": () => json({ deleted: 1, failed: [] }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  click(menuItem(el, "Delete"));
+  await waitFor(() => assert.match(el.textContent!, /Delete 1 item\?/));
+  assert.ok(!log.some((r) => r.method === "DELETE"));
+  click(el.querySelector<HTMLButtonElement>('[role="dialog"] .button.danger')!);
+  await waitFor(() => assert.match(el.textContent!, /Deleted 1 item\./));
+  assert.deepEqual(await log.find((r) => r.method === "DELETE")!.json(), { paths: ["notes.txt"] });
+});
+
+test("new folder from the toolbar", async () => {
+  startAt("/files/photos", admin, {
+    "GET /api/files/photos": listing("photos", sample),
+    "POST /api/folders/photos/2027": () => json({ entry: folder("2027") }, 201),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(el.querySelector('button[aria-label="New folder"]')!);
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"] input')));
+  const input = el.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+  input.value = "2027";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await flush();
+  submit(el);
+  await waitFor(() => assert.match(el.textContent!, /Created folder 2027\./));
+});

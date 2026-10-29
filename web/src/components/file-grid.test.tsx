@@ -57,3 +57,13 @@ test("switching the view saves it", async () => {
   assert.deepEqual(await patches[0].json(), { view: "gallery" });
   assert.equal(el.querySelector('button[aria-label="Gallery view"]')!.getAttribute("aria-pressed"), "true");
 });
+
+test("each tile has a More button that opens the menu", async () => {
+  startAt("/files/photos", gallery, { "GET /api/files/photos": listing("photos", photos) });
+  const el = render(<App />);
+  await tiles(el);
+  const more = el.querySelector<HTMLButtonElement>('.tile button[aria-label="More actions for cover.png"]');
+  assert.ok(more);
+  more!.click();
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"][aria-label="Actions for cover.png"]')));
+});

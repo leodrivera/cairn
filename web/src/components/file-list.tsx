@@ -22,12 +22,23 @@ export function opensInViewer(e: Entry): boolean {
   );
 }
 
+/** Shift+F10 or the context-menu key opens an item's menu from the keyboard. */
+export function menuKey(e: KeyboardEvent): boolean {
+  return (e.key === "F10" && e.shiftKey) || e.key === "ContextMenu";
+}
+
+/** Where a menu opened from an element starts: under its left edge. */
+export function below(el: HTMLElement): { x: number; y: number } {
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.bottom };
+}
+
 type Props = {
   dir: string;
   entries: Entry[];
   selection: Selection;
   onSelect(e: Entry, ev: MouseEvent): void;
-  onMore?(e: Entry, anchor: HTMLElement): void;
+  onMore?(e: Entry, at: { x: number; y: number }): void;
 };
 
 export function EntryName({ dir, entry }: { dir: string; entry: Entry }) {
@@ -99,7 +110,12 @@ export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
               onContextMenu={(ev) => {
                 if (!onMore) return;
                 ev.preventDefault();
-                onMore(e, ev.currentTarget as HTMLElement);
+                onMore(e, { x: ev.clientX, y: ev.clientY });
+              }}
+              onKeyDown={(ev) => {
+                if (!onMore || !menuKey(ev)) return;
+                ev.preventDefault();
+                onMore(e, below(ev.currentTarget as HTMLElement));
               }}
             >
               <span role="cell" class="cell-check">
@@ -130,7 +146,7 @@ export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
                     class="icon-button"
                     aria-label={t("explorer.more", { name: e.name })}
                     aria-haspopup="menu"
-                    onClick={(ev) => onMore(e, ev.currentTarget as HTMLElement)}
+                    onClick={(ev) => onMore(e, below(ev.currentTarget as HTMLElement))}
                   >
                     <Icon name="more" />
                   </button>

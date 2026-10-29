@@ -1,8 +1,56 @@
 import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { downloadUrl, zipForm } from "./actions";
+import { downloadUrl, newFolder, remove, rename, transfer, zipForm } from "./actions";
+import { ApiFailure } from "./api";
+import { json, stubFetch } from "../test/dom";
 import { file, folder } from "../test/fixtures";
+
+const raw = file("caf\uFFFD.txt", { rawName: "\u0000Y2Fm6S50eHQ" });
+
+test("rename body", async () => {
+  const log = stubFetch({ "POST /api/ops": () => json({ done: 1, failed: [] }) });
+  await rename("photos", raw, "café.txt");
+  assert.equal(log[0].headers.get("x-cairn"), "1");
+  assert.deepEqual(await log[0].json(), {
+    ops: [{ op: "rename", from: "photos/\u0000Y2Fm6S50eHQ", to: "photos/café.txt" }],
+  });
+});
+
+test("rename failure throws the item's error", async () => {
+  stubFetch({
+    "POST /api/ops": () =>
+      json({ done: 0, failed: [{ from: "photos/a.txt", error: "exists", message: "Something with that name is already there." }] }),
+  });
+  await assert.rejects(rename("photos", file("a.txt"), "b.txt"), (e) => e instanceof ApiFailure && e.code === "exists");
+});
+
+test("move reports partial", async () => {
+  const failed = [{ from: "photos/b.txt", error: "denied", message: "x" }];
+  const log = stubFetch({ "POST /api/ops": () => json({ done: 1, failed }) });
+  const r = await transfer("move", "photos", [file("a.txt"), file("b.txt")], "");
+  assert.deepEqual(r, { done: 1, failed });
+  assert.deepEqual(await log[0].json(), {
+    ops: [
+      { op: "move", from: "photos/a.txt", to: "a.txt" },
+      { op: "move", from: "photos/b.txt", to: "b.txt" },
+    ],
+  });
+});
+
+test("delete body paths", async () => {
+  const log = stubFetch({ "DELETE /api/files": () => json({ deleted: 2, failed: [] }) });
+  const r = await remove("photos", [folder("2026"), raw]);
+  assert.deepEqual(r, { deleted: 2, failed: [] });
+  assert.deepEqual(await log[0].json(), { paths: ["photos/2026", "photos/\u0000Y2Fm6S50eHQ"] });
+});
+
+test("new folder", async () => {
+  const entry = folder("Report #1 (50%) ✓");
+  const log = stubFetch({ "POST /api/folders/photos/Report #1 (50%) ✓": () => json({ entry }, 201) });
+  assert.deepEqual(await newFolder("photos", "Report #1 (50%) ✓"), entry);
+  assert.equal(new URL(log[0].url).pathname, "/api/folders/photos/Report%20%231%20(50%25)%20%E2%9C%93");
+});
 
 test("download urls", () => {
   assert.equal(downloadUrl("photos", [file("a b.txt")]), "/api/raw/photos/a%20b.txt?download=1");

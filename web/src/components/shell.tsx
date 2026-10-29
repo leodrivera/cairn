@@ -9,6 +9,7 @@ import { t } from "../i18n/index";
 import { useSession, useUser } from "../state/session";
 import { uploads } from "../state/uploads";
 import { Icon, Mark, type IconName } from "./icons";
+import { Toast } from "./toast";
 import { UploadPanel } from "./upload-panel";
 
 export function initials(name: string): string {
@@ -92,6 +93,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props
         {children}
       </main>
       <UploadPanel queue={uploads()} />
+      <Toast />
     </div>
   );
 }

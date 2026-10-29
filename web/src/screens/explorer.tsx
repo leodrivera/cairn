@@ -1,21 +1,37 @@
-// A folder: toolbar, breadcrumbs, the listing, and the selection bar. Files dropped on it upload here.
+// A folder: toolbar, breadcrumbs, the listing, the selection bar and the item actions. Files dropped on it upload here.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline } from "../lib/api";
-import { apiUrl, segmentOf } from "../lib/paths";
+import { apiUrl, displaySegment, join, segmentOf } from "../lib/paths";
 import { filterEntries } from "../lib/filter";
-import { downloadUrl, zipForm } from "../lib/actions";
+import { downloadUrl, failureOfItem, newFolder, remove, rename, transfer, zipForm, type Failed } from "../lib/actions";
 import { addTree, entriesFromDrop, filesFromPicker, type TreeFile } from "../lib/uploads";
 import { errorText, t, tn } from "../i18n/index";
 import { Shell } from "../components/shell";
 import { Breadcrumbs } from "../components/breadcrumbs";
-import { FileList } from "../components/file-list";
+import { FileList, opensInViewer } from "../components/file-list";
 import { FileGrid } from "../components/file-grid";
 import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
+import { ContextMenu, entryMenu } from "../components/context-menu";
+import { DeleteDialog, FolderPicker, NewFolderDialog, RenameDialog, folderLabel } from "../components/dialogs";
+import { showToast } from "../components/toast";
+import { href, navigate } from "../lib/router";
 import { Selection } from "../state/selection";
 import { useSession, useUser } from "../state/session";
 import { uploads, useUploaded } from "../state/uploads";
 import type { Entry, Listing } from "../lib/types";
+
+type DialogState =
+  | { kind: "rename"; entry: Entry }
+  | { kind: "newFolder" }
+  | { kind: "move" | "copy"; items: Entry[] }
+  | { kind: "delete"; items: Entry[] };
+
+/** The name of the item a batch failure is about, from its path. */
+function failedName(f: Failed): string {
+  const path = f.from ?? f.path ?? "";
+  return displaySegment(path.slice(path.lastIndexOf("/") + 1));
+}
 
 export function Explorer({ path }: { path: string }) {
   const user = useUser();
@@ -29,6 +45,8 @@ export function Explorer({ path }: { path: string }) {
   const [, setTick] = useState(0);
   const touch = () => setTick((n) => n + 1);
   const [menu, setMenu] = useState(false);
+  const [itemMenu, setItemMenu] = useState<{ entry: Entry; at: { x: number; y: number } } | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
   const pickFiles = useRef<HTMLInputElement>(null);
   const pickFolder = useRef<HTMLInputElement>(null);
 
@@ -87,13 +105,28 @@ export function Explorer({ path }: { path: string }) {
     upload(entries.length ? await entriesFromDrop(entries) : filesFromPicker(dt.files));
   };
 
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {});
+  keys.current = (e: KeyboardEvent) => {
+    if (dialog || itemMenu) return;
+    if (e.key === "Escape" && selection.size > 0) {
+      selection.clear();
+      touch();
+      return;
+    }
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("input, textarea, select, [contenteditable]")) return;
+    if (!canWrite || chosen.length === 0) return;
+    if (e.key === "F2" && chosen.length === 1) {
+      e.preventDefault();
+      setDialog({ kind: "rename", entry: chosen[0] });
+    } else if (e.key === "Delete") {
+      e.preventDefault();
+      setDialog({ kind: "delete", items: chosen });
+    }
+  };
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selection.size > 0) {
-        selection.clear();
-        touch();
-      }
-    };
+    const onKey = (e: KeyboardEvent) => keys.current(e);
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
@@ -120,11 +153,78 @@ export function Explorer({ path }: { path: string }) {
     }
   };
 
-  const download = () => {
-    const url = downloadUrl(path, chosen);
+  const downloadItems = (items: Entry[]) => {
+    const url = downloadUrl(path, items);
     if (url) location.assign(url);
-    else zipForm(path, chosen);
+    else zipForm(path, items);
   };
+  const download = () => downloadItems(chosen);
+
+  /** After a change: the selection is stale, the listing is reloaded, and a toast says what happened. */
+  const changed = (text: string) => {
+    selection.clear();
+    touch();
+    load();
+    showToast(text);
+  };
+
+  const open = (e: Entry) => {
+    if (e.outside) return;
+    const to = join(path, segmentOf(e));
+    if (e.kind === "folder") navigate(href({ name: "files", path: to }));
+    else if (opensInViewer(e)) navigate(href({ name: "view", path: to }));
+    else downloadItems([e]);
+  };
+
+  /** The menu acts on the whole selection when the item is part of one. */
+  const targets = (e: Entry) => (selection.has(segmentOf(e)) && chosen.length > 1 ? chosen : [e]);
+
+  const doRename = async (e: Entry, name: string) => {
+    await rename(path, e, name);
+    changed(t("files.renamed", { name }));
+  };
+
+  const doTransfer = async (op: "move" | "copy", items: Entry[], dest: string) => {
+    const r = await transfer(op, path, items, dest);
+    if (r.failed.length === 0) {
+      changed(tn(op === "move" ? "files.moved" : "files.copied", r.done, { dest: folderLabel(dest) }));
+    } else {
+      const f = r.failed[0];
+      changed(
+        tn(op === "move" ? "files.movedSome" : "files.copiedSome", items.length, {
+          done: r.done,
+          name: failedName(f),
+          error: errorText(failureOfItem(f)),
+        }),
+      );
+    }
+  };
+
+  const doDelete = async (items: Entry[]) => {
+    const r = await remove(path, items);
+    if (r.failed.length === 0) {
+      changed(tn("files.deleted", r.deleted));
+    } else {
+      const f = r.failed[0];
+      changed(
+        tn("files.deletedSome", items.length, {
+          done: r.deleted,
+          name: failedName(f),
+          error: errorText(failureOfItem(f)),
+        }),
+      );
+    }
+  };
+
+  const doNewFolder = async (name: string) => {
+    const entry = await newFolder(path, name);
+    changed(t("files.created", { name: entry.name }));
+  };
+
+  const closeMenu = useCallback(() => setItemMenu(null), []);
+  const closeDialog = () => setDialog(null);
+
+  const openMenu = (entry: Entry, at: { x: number; y: number }) => setItemMenu({ entry, at });
 
   let content;
   if (error) {
@@ -159,9 +259,10 @@ export function Explorer({ path }: { path: string }) {
           selection={selection}
           thumbnails={session!.config.thumbnails}
           onSelect={select}
+          onMore={openMenu}
         />
       ) : (
-        <FileList dir={path} entries={shown} selection={selection} onSelect={select} />
+        <FileList dir={path} entries={shown} selection={selection} onSelect={select} onMore={openMenu} />
       );
   }
 
@@ -204,7 +305,12 @@ export function Explorer({ path }: { path: string }) {
         </div>
         {canWrite && (
           <>
-            <button type="button" class="button" aria-label={t("explorer.newFolder")}>
+            <button
+              type="button"
+              class="button"
+              aria-label={t("explorer.newFolder")}
+              onClick={() => setDialog({ kind: "newFolder" })}
+            >
               <Icon name="folderPlus" />
               <span class="label">{t("explorer.newFolder")}</span>
             </button>
@@ -255,13 +361,17 @@ export function Explorer({ path }: { path: string }) {
             </button>
             {canWrite && (
               <>
-                <button type="button" class="button quiet">
+                <button type="button" class="button quiet" onClick={() => setDialog({ kind: "move", items: chosen })}>
                   {t("explorer.move")}
                 </button>
-                <button type="button" class="button quiet">
+                <button type="button" class="button quiet" onClick={() => setDialog({ kind: "copy", items: chosen })}>
                   {t("explorer.copy")}
                 </button>
-                <button type="button" class="button quiet danger-text">
+                <button
+                  type="button"
+                  class="button quiet danger-text"
+                  onClick={() => setDialog({ kind: "delete", items: chosen })}
+                >
                   {t("explorer.delete")}
                 </button>
               </>
@@ -281,6 +391,37 @@ export function Explorer({ path }: { path: string }) {
         )}
       </div>
       {content}
+      {itemMenu && (
+        <ContextMenu
+          at={itemMenu.at}
+          label={t("menu.label", { name: itemMenu.entry.name })}
+          items={entryMenu(canWrite, {
+            open: () => open(itemMenu.entry),
+            download: () => downloadItems([itemMenu.entry]),
+            rename: () => setDialog({ kind: "rename", entry: itemMenu.entry }),
+            move: () => setDialog({ kind: "move", items: targets(itemMenu.entry) }),
+            copy: () => setDialog({ kind: "copy", items: targets(itemMenu.entry) }),
+            remove: () => setDialog({ kind: "delete", items: targets(itemMenu.entry) }),
+          })}
+          onClose={closeMenu}
+        />
+      )}
+      {dialog?.kind === "rename" && (
+        <RenameDialog entry={dialog.entry} onRename={(n) => doRename(dialog.entry, n)} onClose={closeDialog} />
+      )}
+      {dialog?.kind === "newFolder" && <NewFolderDialog onCreate={doNewFolder} onClose={closeDialog} />}
+      {(dialog?.kind === "move" || dialog?.kind === "copy") && (
+        <FolderPicker
+          op={dialog.kind}
+          dir={path}
+          items={dialog.items}
+          onPick={(dest) => doTransfer(dialog.kind as "move" | "copy", dialog.items, dest)}
+          onClose={closeDialog}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <DeleteDialog dir={path} items={dialog.items} onConfirm={() => doDelete(dialog.items)} onClose={closeDialog} />
+      )}
     </Shell>
   );
 }

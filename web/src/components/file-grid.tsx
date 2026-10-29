@@ -4,7 +4,7 @@ import { apiUrl, join, segmentOf } from "../lib/paths";
 import { formatSize } from "../lib/format";
 import { gridRange, useScroller } from "../lib/windowing";
 import { t } from "../i18n/index";
-import { EntryName } from "./file-list";
+import { below, EntryName, menuKey } from "./file-list";
 import { FileIcon } from "./file-icon";
 import { Icon } from "./icons";
 import type { Entry } from "../lib/types";
@@ -20,7 +20,7 @@ type Props = {
   selection: Selection;
   thumbnails: boolean;
   onSelect(e: Entry, ev: MouseEvent): void;
-  onMore?(e: Entry, anchor: HTMLElement): void;
+  onMore?(e: Entry, at: { x: number; y: number }): void;
 };
 
 export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore }: Props) {
@@ -47,7 +47,12 @@ export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore
               onContextMenu={(ev) => {
                 if (!onMore) return;
                 ev.preventDefault();
-                onMore(e, ev.currentTarget as HTMLElement);
+                onMore(e, { x: ev.clientX, y: ev.clientY });
+              }}
+              onKeyDown={(ev) => {
+                if (!onMore || !menuKey(ev)) return;
+                ev.preventDefault();
+                onMore(e, below(ev.currentTarget as HTMLElement));
               }}
             >
               <div class="thumb">
@@ -69,6 +74,17 @@ export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore
               <div class="tile-foot">
                 <EntryName dir={dir} entry={e} />
                 {e.kind !== "folder" && !e.outside && <span class="mono muted size">{formatSize(e.size)}</span>}
+                {onMore && (
+                  <button
+                    type="button"
+                    class="icon-button tile-more"
+                    aria-label={t("explorer.more", { name: e.name })}
+                    aria-haspopup="menu"
+                    onClick={(ev) => onMore(e, below(ev.currentTarget as HTMLElement))}
+                  >
+                    <Icon name="more" />
+                  </button>
+                )}
               </div>
             </li>
           );

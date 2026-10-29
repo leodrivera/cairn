@@ -7,7 +7,9 @@ description = "Self-hosted web file browser. Your files. One small binary."
 publish = false
 
 [dependencies]
+argon2 = "0.6.0"
 axum = "0.8.9"
+getrandom = "0.4.3"
 hyper = { version = "1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-graceful", "http1", "service"] }
 ipnet = "2.12.2"

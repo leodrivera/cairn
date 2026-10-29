@@ -1,29 +1,63 @@
 //! HTTP: the router every route hangs from.
 
 pub mod assets;
+pub mod auth_routes;
 pub mod client;
+pub mod csrf;
+pub mod current_user;
+pub mod error;
 pub mod headers;
+pub mod json;
 
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::extract::DefaultBodyLimit;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Json, Router, middleware};
 use serde_json::json;
 
+use crate::auth::captcha::Captcha;
+use crate::auth::password::Hasher;
+use crate::auth::ratelimit::Limiters;
 use crate::config::Config;
+use crate::db::Db;
 
-/// Shared by every handler. Later parts add the database and the rate limiters here.
+/// Shared by every handler.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
+    pub db: Arc<Db>,
+    pub hasher: Arc<Hasher>,
+    pub limiters: Arc<Limiters>,
+    pub captcha: Option<Arc<Captcha>>,
+}
+
+impl AppState {
+    pub fn new(config: Config, db: Db) -> AppState {
+        let captcha =
+            Captcha::from_config(&config.captcha, config.public_url.as_ref()).map(Arc::new);
+        AppState {
+            config: Arc::new(config),
+            db: Arc::new(db),
+            hasher: Arc::new(Hasher::new()),
+            limiters: Arc::new(Limiters::new()),
+            captcha,
+        }
+    }
 }
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
-        .fallback(api_not_found);
+        .merge(auth_routes::routes())
+        .fallback(api_not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            current_user::load,
+        ))
+        .layer(middleware::from_fn(csrf::require_header))
+        .layer(DefaultBodyLimit::max(1 << 20));
     let app = Router::new()
         .nest("/api", api)
         .fallback(assets::serve)
@@ -36,15 +70,11 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn api_not_found() -> impl IntoResponse {
-    (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "not_found", "message": "No such API route." })),
-    )
+    error::ApiError::not_found()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -55,9 +85,10 @@ mod tests {
     use crate::config::{Config, Vars};
 
     fn test_state() -> AppState {
-        AppState {
-            config: Arc::new(Config::from_vars(&Vars::new()).unwrap()),
-        }
+        AppState::new(
+            Config::from_vars(&Vars::new()).unwrap(),
+            crate::db::Db::open_in_memory(),
+        )
     }
 
     async fn get(path: &str) -> axum::response::Response {

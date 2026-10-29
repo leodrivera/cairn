@@ -82,7 +82,7 @@ fn user(config: &Config, cmd: UserCommand) -> Result<String, String> {
                 scope,
                 perms,
             };
-            let u = users::create(&db, new, now()).map_err(|e| e.message())?;
+            let u = users::create(&db, new, crate::now()).map_err(|e| e.message())?;
             let role = if u.perms.admin { "admin" } else { "user" };
             Ok(format!("Created {} ({role}, scope {}).", u.email, u.scope))
         }
@@ -150,11 +150,4 @@ fn read_password() -> Result<String, String> {
         return Err(POLICY.into());
     }
     Ok(password)
-}
-
-pub fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }

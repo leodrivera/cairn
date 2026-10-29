@@ -2,7 +2,6 @@
 
 use std::future::Future;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -59,10 +58,10 @@ pub fn run(config: Config) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    runtime.block_on(serve(config))
+    runtime.block_on(serve(config, db))
 }
 
-async fn serve(config: Config) -> ExitCode {
+async fn serve(config: Config, db: crate::db::Db) -> ExitCode {
     let addr = config.addr;
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
@@ -113,9 +112,7 @@ async fn serve(config: Config) -> ExitCode {
         );
     }
 
-    let app = router(AppState {
-        config: Arc::new(config),
-    });
+    let app = router(AppState::new(config, db));
     serve_on(listener, app, Limits::DEFAULT, stop_signal()).await;
     tracing::info!(event = "shutdown");
     ExitCode::SUCCESS

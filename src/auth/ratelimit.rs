@@ -4,6 +4,21 @@ use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Mutex;
 
+/// IPv4 per address; IPv6 per /64, the block one subscriber usually gets, so rotating addresses inside it does not
+/// reset the count.
+fn ip_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => format!("ip:{v4}"),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => format!("ip:{v4}"),
+            None => {
+                let s = v6.segments();
+                format!("ip:{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+    }
+}
+
 pub struct FailureLimiter {
     per_ip: u32,
     per_key: u32,
@@ -50,8 +65,7 @@ impl FailureLimiter {
                 _ => 0,
             }
         };
-        let longest =
-            wait(format!("ip:{ip}"), self.per_ip).max(wait(format!("key:{key}"), self.per_key));
+        let longest = wait(ip_key(ip), self.per_ip).max(wait(format!("key:{key}"), self.per_key));
         (longest > 0).then_some(longest)
     }
 
@@ -69,7 +83,7 @@ impl FailureLimiter {
         }
         let mut ids = vec![format!("key:{key}")];
         if self.per_ip > 0 {
-            ids.push(format!("ip:{ip}"));
+            ids.push(ip_key(ip));
         }
         for id in ids {
             match w.map.get_mut(&id) {
@@ -190,5 +204,18 @@ mod tests {
             l.failed(ip(1), &format!("user:{i}"), 0);
         }
         assert_eq!(l.blocked(ip(1), "user:99", 0), None);
+    }
+
+    #[test]
+    fn ipv6_counts_per_64() {
+        let l = FailureLimiter::new(10, 5, 900, 10_000);
+        for i in 0..10u16 {
+            let addr = IpAddr::from([0x2001, 0xdb8, 0, 1, 0, 0, 0, i]);
+            l.failed(addr, &format!("u{i}@example.com"), 0);
+        }
+        let same_64 = IpAddr::from([0x2001, 0xdb8, 0, 1, 0xffff, 0, 0, 1]);
+        assert!(l.blocked(same_64, "new@example.com", 0).is_some());
+        let other_64 = IpAddr::from([0x2001, 0xdb8, 0, 2, 0, 0, 0, 1]);
+        assert!(l.blocked(other_64, "new@example.com", 0).is_none());
     }
 }

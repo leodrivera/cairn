@@ -83,13 +83,29 @@ export function setLeaveGuard(g: (() => boolean) | null): void {
   guard = g;
 }
 
+/** The address the app shows, so a Back the guard refuses can be put back. */
+let shown = typeof location === "undefined" ? "/" : location.pathname + location.search;
+
 export function navigate(to: string, opts: { replace?: boolean } = {}): boolean {
   if (guard && !guard()) return false;
   if (opts.replace) history.replaceState(null, "", to);
   else history.pushState(null, "", to);
+  shown = location.pathname + location.search;
   listeners.forEach((l) => l());
   return true;
 }
+
+/** Back and Forward ask the guard too. The browser has already moved, so staying pushes the shown address again. */
+function onPop(): void {
+  if (guard && !guard()) {
+    history.pushState(null, "", shown);
+    return;
+  }
+  shown = location.pathname + location.search;
+  listeners.forEach((l) => l());
+}
+
+if (typeof window !== "undefined") window.addEventListener("popstate", onPop);
 
 export function currentRoute(): Route {
   return parseRoute(location.pathname, location.search);
@@ -100,10 +116,8 @@ export function useRoute(): Route {
   useEffect(() => {
     const update = () => setRoute(currentRoute());
     listeners.add(update);
-    window.addEventListener("popstate", update);
     return () => {
       listeners.delete(update);
-      window.removeEventListener("popstate", update);
     };
   }, []);
   return route;

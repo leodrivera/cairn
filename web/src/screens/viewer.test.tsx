@@ -190,3 +190,33 @@ test("a file that is gone says so", async () => {
   const el = render(<App />);
   await waitFor(() => assert.match(el.textContent!, /No such file or folder\./));
 });
+
+test("the browser Back button asks too, and stays when told to", async () => {
+  startAt("/files/scripts", admin, {
+    "GET /api/files/scripts": listing("scripts", [script]),
+    "GET /api/raw/scripts/backup.sh": raw("hello"),
+  });
+  const asked: string[] = [];
+  let answer = false;
+  globalThis.confirm = (m?: string) => {
+    asked.push(String(m));
+    return answer;
+  };
+  const el = render(<App />);
+  await waitFor(() => assert.ok(el.querySelector('a[href="/view/scripts/backup.sh"]')));
+  el.querySelector('a[href="/view/scripts/backup.sh"]')!.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }),
+  );
+  await waitFor(() => assert.equal(textarea(el).value, "hello"));
+  await edit(el, "changed");
+  history.back();
+  await waitFor(() => assert.deepEqual(asked, ["Leave without saving? Your changes will be lost."]));
+  await flush(10);
+  assert.equal(location.pathname, "/view/scripts/backup.sh");
+  assert.equal(textarea(el).value, "changed");
+  answer = true;
+  history.back();
+  await waitFor(() => assert.equal(location.pathname, "/files/scripts"));
+  await waitFor(() => assert.ok(!el.querySelector("textarea")));
+  assert.equal(asked.length, 2);
+});

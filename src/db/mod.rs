@@ -62,6 +62,13 @@ impl Db {
 
     /// SQLite online backup: a consistent copy while Cairn runs.
     pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+        // Owner-only, like the database itself: the copy holds password hashes and session digests.
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(dest)
+            .map_err(|e| format!("Cannot write the backup to {} ({e}).", dest.display()))?;
         let conn = self
             .0
             .lock()
@@ -163,5 +170,16 @@ mod tests {
             .with(|c| c.query_row("SELECT count(*) FROM users", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn backup_mode_is_0600() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("backup.db");
+        Db::open_in_memory().backup_to(&dest).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

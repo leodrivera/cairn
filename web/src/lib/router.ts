@@ -109,7 +109,13 @@ export function useRoute(): Route {
   return route;
 }
 
-type LinkProps = { href: string; children?: ComponentChildren; class?: string; "aria-current"?: "page" };
+type LinkProps = {
+  href: string;
+  children?: ComponentChildren;
+  class?: string;
+  "aria-current"?: "page";
+  "aria-label"?: string;
+};
 
 /** An <a> that navigates in the app on a plain left click and lets other clicks through. */
 export function Link(props: LinkProps) {

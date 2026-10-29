@@ -37,6 +37,25 @@ export function offline(): ApiFailure {
   return new ApiFailure(0, "offline", "");
 }
 
+/** A request whose answer is not JSON (file bodies). Resolves to an ok response; failures throw like `api`. */
+export async function request(url: string, init: RequestInit = {}): Promise<Response> {
+  const method = init.method ?? "GET";
+  const headers = new Headers(init.headers);
+  if (method !== "GET" && method !== "HEAD") headers.set("X-Cairn", "1");
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, method, headers, credentials: "same-origin" });
+  } catch {
+    throw offline();
+  }
+  if (!res.ok) {
+    const f = await failureOf(res);
+    if (f.code === "signed_out") signedOut();
+    throw f;
+  }
+  return res;
+}
+
 export async function api<T>(
   method: string,
   url: string,

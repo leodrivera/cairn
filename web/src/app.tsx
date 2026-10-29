@@ -7,6 +7,7 @@ import { errorText, t } from "./i18n/index";
 import { Shell } from "./components/shell";
 import { Login } from "./screens/login";
 import { Explorer } from "./screens/explorer";
+import { Viewer } from "./screens/viewer";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
 import type { User } from "./lib/types";
@@ -22,6 +23,7 @@ function screenFor(route: Route, user: User): ComponentChildren {
       </StatePanel>
     );
   }
+  if (route.name === "view") return <Viewer path={route.path} />;
   if (route.name === "settings" && !user.permissions.admin && (route.page === "users" || route.page === "server")) {
     return null;
   }

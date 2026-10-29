@@ -3,6 +3,7 @@ import { useRef } from "preact/hooks";
 import { Link, href } from "../lib/router";
 import { join, segmentOf } from "../lib/paths";
 import { downloadUrl } from "../lib/actions";
+import { isEditable } from "../lib/text";
 import { formatSize, formatWhen } from "../lib/format";
 import { useWindow } from "../lib/windowing";
 import { t } from "../i18n/index";
@@ -15,11 +16,7 @@ export const ROW_HEIGHT = 52;
 
 /** Text and images open in the viewer; everything else downloads. */
 export function opensInViewer(e: Entry): boolean {
-  return (
-    e.mime.startsWith("text/") ||
-    e.mime.startsWith("image/") ||
-    /^application\/(json|xml|javascript)$/.test(e.mime)
-  );
+  return e.mime.startsWith("image/") || isEditable(e.mime, e.name);
 }
 
 /** Shift+F10 or the context-menu key opens an item's menu from the keyboard. */

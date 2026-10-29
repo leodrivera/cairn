@@ -902,6 +902,153 @@ a.name:hover {
   margin-right: -10px;
 }
 
+/* Viewer and editor */
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.viewer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.viewer-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.viewer-title h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.viewer-title p {
+  margin: 2px 0 0;
+  font-size: var(--cairn-text-small);
+  overflow-wrap: anywhere;
+}
+
+.viewer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.viewer-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viewer-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.viewer-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cairn-line);
+  border-radius: var(--cairn-radius-m);
+  background: var(--cairn-surface);
+  overflow: hidden;
+}
+
+.viewer-image {
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  object-fit: contain;
+}
+
+.editor {
+  flex: 1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cairn-line);
+  border-radius: var(--cairn-radius-m);
+  background: var(--cairn-surface);
+  overflow: hidden;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editor-gutter,
+.editor-text {
+  margin: 0;
+  padding: 12px 0;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-text-small);
+  line-height: 1.6;
+}
+
+.editor-gutter {
+  flex: none;
+  min-width: 48px;
+  padding-inline: 12px;
+  border-right: 1px solid var(--cairn-line);
+  background: var(--cairn-bg);
+  color: var(--cairn-muted);
+  text-align: right;
+  overflow: hidden;
+  user-select: none;
+}
+
+.editor-text {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--cairn-text);
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+}
+
+.editor-text:focus {
+  outline: none;
+}
+
+.editor:focus-within {
+  border-color: var(--cairn-accent);
+}
+
+.editor-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 14px;
+  border-top: 1px solid var(--cairn-line);
+  font-size: var(--cairn-text-micro);
+  color: var(--cairn-muted);
+}
+
+.editor-status span:last-child {
+  margin-left: auto;
+}
+
 /* Menus */
 
 .menu-anchor {

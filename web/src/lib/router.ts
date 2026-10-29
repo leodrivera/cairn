@@ -1,0 +1,122 @@
+// Client routes on the History API. No library: a handful of URLs.
+import { h, type ComponentChildren } from "preact";
+import { useEffect, useState } from "preact/hooks";
+import { encodePath } from "./paths";
+
+export type SettingsPage = "profile" | "users" | "server" | "links";
+
+export type Route =
+  | { name: "files"; path: string }
+  | { name: "view"; path: string }
+  | { name: "login"; next: string | null }
+  | { name: "settings"; page: SettingsPage }
+  | { name: "missing" };
+
+const pages: SettingsPage[] = ["profile", "users", "server", "links"];
+
+/** Decodes the path after a prefix; null when a segment is empty inside, malformed, or hides a "/". */
+function decodePath(rest: string): string | null {
+  const trimmed = rest.replace(/\/$/, "");
+  if (trimmed === "") return "";
+  const out: string[] = [];
+  for (const raw of trimmed.split("/")) {
+    if (raw === "") return null;
+    let seg: string;
+    try {
+      seg = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
+    if (seg.includes("/")) return null;
+    out.push(seg);
+  }
+  return out.join("/");
+}
+
+/** A place on this site to return to after signing in; anything else is dropped. */
+function localNext(next: string | null): string | null {
+  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : null;
+}
+
+export function parseRoute(pathname: string, search: string): Route {
+  if (pathname === "/" || pathname === "/files") return { name: "files", path: "" };
+  if (pathname.startsWith("/files/")) {
+    const path = decodePath(pathname.slice(7));
+    return path === null ? { name: "missing" } : { name: "files", path };
+  }
+  if (pathname.startsWith("/view/")) {
+    const path = decodePath(pathname.slice(6));
+    return path ? { name: "view", path } : { name: "missing" };
+  }
+  if (pathname === "/login") {
+    return { name: "login", next: localNext(new URLSearchParams(search).get("next")) };
+  }
+  if (pathname === "/settings" || pathname === "/settings/") return { name: "settings", page: "profile" };
+  if (pathname.startsWith("/settings/")) {
+    const page = pathname.slice(10).replace(/\/$/, "") as SettingsPage;
+    return pages.includes(page) ? { name: "settings", page } : { name: "missing" };
+  }
+  return { name: "missing" };
+}
+
+export function href(r: Route): string {
+  switch (r.name) {
+    case "files":
+      return `/files/${encodePath(r.path)}`;
+    case "view":
+      return `/view/${encodePath(r.path)}`;
+    case "login":
+      return r.next ? `/login?next=${encodeURIComponent(r.next)}` : "/login";
+    case "settings":
+      return `/settings/${r.page}`;
+    case "missing":
+      return "/";
+  }
+}
+
+const listeners = new Set<() => void>();
+
+/** Asked before leaving; returns false to stay (the editor with unsaved text uses it). */
+let guard: (() => boolean) | null = null;
+
+export function setLeaveGuard(g: (() => boolean) | null): void {
+  guard = g;
+}
+
+export function navigate(to: string, opts: { replace?: boolean } = {}): boolean {
+  if (guard && !guard()) return false;
+  if (opts.replace) history.replaceState(null, "", to);
+  else history.pushState(null, "", to);
+  listeners.forEach((l) => l());
+  return true;
+}
+
+export function currentRoute(): Route {
+  return parseRoute(location.pathname, location.search);
+}
+
+export function useRoute(): Route {
+  const [route, setRoute] = useState(currentRoute);
+  useEffect(() => {
+    const update = () => setRoute(currentRoute());
+    listeners.add(update);
+    window.addEventListener("popstate", update);
+    return () => {
+      listeners.delete(update);
+      window.removeEventListener("popstate", update);
+    };
+  }, []);
+  return route;
+}
+
+type LinkProps = { href: string; children?: ComponentChildren; class?: string; "aria-current"?: "page" };
+
+/** An <a> that navigates in the app on a plain left click and lets other clicks through. */
+export function Link(props: LinkProps) {
+  const onClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate(props.href);
+  };
+  return h("a", { ...props, onClick }, props.children);
+}

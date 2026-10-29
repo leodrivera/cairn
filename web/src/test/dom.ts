@@ -1,6 +1,7 @@
 // Test helpers: a DOM from happy-dom, a fake fetch, and rendering into it.
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { render as preactRender, type ComponentChild } from "preact";
+import { act } from "preact/test-utils";
 
 if (!(globalThis as { happyDOM?: unknown }).happyDOM) {
   GlobalRegistrator.register({ url: "https://files.example.com/", width: 1280, height: 800 });
@@ -37,15 +38,16 @@ export function render(vnode: ComponentChild): HTMLElement {
     preactRender(null, container);
     container.remove();
   }
-  container = document.createElement("div");
-  document.body.append(container);
-  preactRender(vnode, container);
-  return container;
+  const el = document.createElement("div");
+  container = el;
+  document.body.append(el);
+  act(() => preactRender(vnode, el));
+  return el;
 }
 
 /** Lets pending promises, effects and zero-delay timers run. */
 export async function flush(times = 3): Promise<void> {
   for (let i = 0; i < times; i++) {
-    await new Promise((r) => setTimeout(r, 0));
+    await act(() => new Promise<void>((r) => setTimeout(r, 0)));
   }
 }

@@ -1,4 +1,6 @@
 // Test helpers: a DOM from happy-dom, a fake fetch, and rendering into it.
+// Never pass a DOM node to assert.equal or deepEqual: a failing message inspects the whole document and hangs.
+// Compare with assert.ok(a === b) or assert.ok(!node) instead.
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { render as preactRender, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";

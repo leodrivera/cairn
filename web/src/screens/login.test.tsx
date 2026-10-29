@@ -79,7 +79,7 @@ test("wrong credentials clears the password", async () => {
   await waitFor(() => assert.match(el.querySelector('[role="alert"]')!.textContent!, /Wrong e-mail or password\./));
   const pw = el.querySelector<HTMLInputElement>("#login-password")!;
   assert.equal(pw.value, "");
-  assert.equal(document.activeElement, pw);
+  assert.ok(document.activeElement === pw, "focus on the password");
 });
 
 test("too many uses Retry-After", async () => {
@@ -115,7 +115,7 @@ test("providers render as links with a divider", async () => {
 test("without the password method there is no form", async () => {
   const { el } = open({ authMethods: ["oidc"], providers: [{ name: "Google", href: "/auth/oidc/google" }] });
   await ready(el);
-  assert.equal(el.querySelector("#login-password"), null);
+  assert.ok(!el.querySelector("#login-password"));
   assert.doesNotMatch(el.textContent!, /or with a password/);
 });
 

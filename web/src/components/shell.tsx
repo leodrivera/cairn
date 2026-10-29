@@ -14,9 +14,9 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase();
 }
 
-type Props = { space?: { used: number; total: number }; children?: ComponentChildren };
+type Props = { space?: { used: number; total: number }; class?: string; children?: ComponentChildren };
 
-export function Shell({ space, children }: Props) {
+export function Shell({ space, class: cls, children }: Props) {
   const { setUser } = useSession();
   const user = useUser();
   const route = useRoute();
@@ -79,7 +79,7 @@ export function Shell({ space, children }: Props) {
           </div>
         </div>
       </nav>
-      <main class="screen">{children}</main>
+      <main class={cls ? `screen ${cls}` : "screen"}>{children}</main>
     </div>
   );
 }

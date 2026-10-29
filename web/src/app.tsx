@@ -6,6 +6,7 @@ import { href, navigate, useRoute, type Route } from "./lib/router";
 import { errorText, t } from "./i18n/index";
 import { Shell } from "./components/shell";
 import { Login } from "./screens/login";
+import { Explorer } from "./screens/explorer";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
 import type { User } from "./lib/types";
@@ -100,6 +101,8 @@ export function App() {
     body = <Login />;
   } else if (!user || route.name === "login") {
     body = <main class="screen center" />;
+  } else if (route.name === "files") {
+    body = <Explorer path={route.path} />;
   } else {
     body = <Shell>{screenFor(route, user)}</Shell>;
   }

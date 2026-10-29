@@ -1,0 +1,187 @@
+import "../test/dom";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { App } from "../app";
+import { flush, json, render, waitFor } from "../test/dom";
+import { admin, file, folder, listing, reader, startAt } from "../test/fixtures";
+
+function rows(el: HTMLElement): HTMLElement[] {
+  return [...el.querySelectorAll<HTMLElement>('.list-body [role="row"]')];
+}
+
+/** Waits until the listing (or a state panel) is on screen. */
+async function shown(el: HTMLElement) {
+  await waitFor(() => assert.ok(el.querySelector('.list-body [role="row"], .state')));
+}
+
+function button(el: HTMLElement, text: string): HTMLButtonElement {
+  const b = [...el.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
+  assert.ok(b, `no button "${text}"`);
+  return b as HTMLButtonElement;
+}
+
+function click(target: Element, init: MouseEventInit = {}) {
+  target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init }));
+}
+
+const sample = [
+  folder("2026"),
+  folder("raw"),
+  file("trail-ridge.jpg", { mime: "image/jpeg" }),
+  file("notes.txt", { mime: "text/plain", size: 812 }),
+  file("Report #1 (50%) ✓ café.txt", { mime: "text/plain" }),
+  file("site-backup.tar.gz", { mime: "application/gzip" }),
+];
+
+test("fifty thousand rows are windowed", async () => {
+  const many = Array.from({ length: 50_000 }, (_, i) => file(`file-${String(i).padStart(5, "0")}`));
+  startAt("/files/many", admin, { "GET /api/files/many": listing("many", many) });
+  const el = render(<App />);
+  await shown(el);
+  await waitFor(() => assert.ok(rows(el).length > 0));
+  assert.ok(rows(el).length < 60, `${rows(el).length} rows in the DOM`);
+  const scroller = el.querySelector<HTMLElement>(".list-body")!;
+  scroller.scrollTop = 26_000;
+  scroller.dispatchEvent(new Event("scroll"));
+  await waitFor(() => {
+    const first = rows(el)[0].querySelector(".name")!.textContent!;
+    assert.ok(first >= "file-00480", first);
+  });
+  assert.ok(rows(el).length < 60);
+});
+
+test("columns: size, folders without one, modified", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const r = rows(el);
+  assert.equal(r.length, 6);
+  assert.match(r[0].textContent!, /2026—Oct 24/);
+  assert.match(r[3].textContent!, /notes\.txt812 BOct 24/);
+});
+
+test("folders navigate", async () => {
+  startAt("/files/photos", admin, {
+    "GET /api/files/photos": listing("photos", sample),
+    "GET /api/files/photos/2026": listing("photos/2026", []),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[0].querySelector("a.name")!);
+  await waitFor(() => assert.equal(location.pathname, "/files/photos/2026"));
+  await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
+});
+
+test("a text file opens the viewer", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[4].querySelector("a.name")!);
+  await waitFor(() => assert.equal(location.pathname, "/view/Report%20%231%20(50%25)%20%E2%9C%93%20caf%C3%A9.txt"));
+});
+
+test("other files download", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const a = rows(el)[5].querySelector<HTMLAnchorElement>("a.name")!;
+  assert.equal(a.getAttribute("href"), "/api/raw/site-backup.tar.gz?download=1");
+  assert.equal(a.hasAttribute("download"), true);
+});
+
+test("breadcrumbs show raw names readably", async () => {
+  startAt("/files/docs/%00Y2Fm6Q", admin, { "GET /api/files/docs/\u0000Y2Fm6Q": listing("docs/\u0000Y2Fm6Q", []) });
+  const el = render(<App />);
+  await shown(el);
+  const crumbs = el.querySelector(".breadcrumbs")!;
+  assert.equal(crumbs.textContent, "My files/docs/caf�");
+  const links = [...crumbs.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+  assert.deepEqual(links, ["/files/", "/files/docs"]);
+  assert.equal(crumbs.querySelector('[aria-current="page"]')!.textContent, "caf�");
+});
+
+test("empty state offers Upload only with write", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", []) });
+  let el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
+  assert.ok(el.querySelector(".state button"));
+  startAt("/files/", reader, { "GET /api/files": listing("", []) });
+  el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
+  assert.ok(!el.querySelector(".state button"));
+  assert.ok(!el.querySelector('button[aria-label="New folder"]'));
+});
+
+test("filter and clear", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const search = el.querySelector<HTMLInputElement>('input[type="search"]')!;
+  search.value = "CAFE";
+  search.dispatchEvent(new Event("input", { bubbles: true }));
+  await waitFor(() => assert.equal(rows(el).length, 1));
+  search.value = "zzz";
+  search.dispatchEvent(new Event("input", { bubbles: true }));
+  await waitFor(() => assert.match(el.textContent!, /No results for “zzz”/));
+  assert.match(el.textContent!, /The search covers this folder only\./);
+  button(el, "Clear search").click();
+  await waitFor(() => assert.equal(rows(el).length, 6));
+  assert.equal(search.value, "");
+});
+
+test("an outside link is not clickable", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", [{ ...file("elsewhere"), kind: "link", size: 0, outside: true }]),
+  });
+  const el = render(<App />);
+  await shown(el);
+  const row = rows(el)[0];
+  assert.ok(!row.querySelector("a.name"));
+  assert.match(row.textContent!, /Link outside your folder/);
+});
+
+test("the selection toolbar counts and downloads several", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(el.querySelector('button[aria-label="Select notes.txt"]')!);
+  await flush();
+  assert.match(el.querySelector(".selection-bar")!.textContent!, /1 selected/);
+  click(el.querySelector('button[aria-label="Select trail-ridge.jpg"]')!);
+  await waitFor(() => assert.match(el.querySelector(".selection-bar")!.textContent!, /2 selected/));
+  assert.equal(button(el, "Download").disabled, false);
+  assert.equal(
+    el.querySelector('button[aria-label="Select notes.txt"]')!.getAttribute("aria-pressed"),
+    "true",
+  );
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await waitFor(() => assert.ok(!el.querySelector(".selection-bar"), "selection bar still shown"));
+});
+
+test("shift-click selects a range", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(el.querySelector('button[aria-label="Select raw"]')!);
+  await flush();
+  click(el.querySelector('button[aria-label="Select notes.txt"]')!, { shiftKey: true });
+  await waitFor(() => assert.match(el.querySelector(".selection-bar")!.textContent!, /3 selected/));
+});
+
+test("a folder the user cannot open says so", async () => {
+  startAt("/files/private", admin, {
+    "GET /api/files/private": () =>
+      json({ error: "forbidden", message: "You do not have permission to do this here." }, 403),
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /You can't open this folder/));
+  assert.ok(el.querySelector('a[href="/files/"]'));
+});
+
+test("a folder that is gone says so", async () => {
+  startAt("/files/gone", admin, {
+    "GET /api/files/gone": () => json({ error: "not_found", message: "No such file or folder." }, 404),
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /This folder is gone/));
+});

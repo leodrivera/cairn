@@ -8,14 +8,17 @@ import { errorText, t, tn } from "../i18n/index";
 import { Shell } from "../components/shell";
 import { Breadcrumbs } from "../components/breadcrumbs";
 import { FileList } from "../components/file-list";
+import { FileGrid } from "../components/file-grid";
 import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
 import { Selection } from "../state/selection";
-import { useUser } from "../state/session";
+import { useSession, useUser } from "../state/session";
 import type { Entry, Listing } from "../lib/types";
 
 export function Explorer({ path }: { path: string }) {
   const user = useUser();
+  const { session, setUser } = useSession();
+  const view = user.view ?? "list";
   const canWrite = user.permissions.write;
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
@@ -64,6 +67,17 @@ export function Explorer({ path }: { path: string }) {
     touch();
   };
 
+  const switchView = async (next: "list" | "gallery") => {
+    if (next === view) return;
+    setUser({ ...user, view: next });
+    try {
+      const res = await api<{ user: typeof user }>("PATCH", "/api/me", { view: next });
+      setUser(res.user);
+    } catch {
+      // The choice still applies on this page; it just is not remembered.
+    }
+  };
+
   const download = () => {
     const url = downloadUrl(path, chosen);
     if (url) location.assign(url);
@@ -95,7 +109,18 @@ export function Explorer({ path }: { path: string }) {
       </StatePanel>
     );
   } else {
-    content = <FileList dir={path} entries={shown} selection={selection} onSelect={select} />;
+    content =
+      view === "gallery" ? (
+        <FileGrid
+          dir={path}
+          entries={shown}
+          selection={selection}
+          thumbnails={session!.config.thumbnails}
+          onSelect={select}
+        />
+      ) : (
+        <FileList dir={path} entries={shown} selection={selection} onSelect={select} />
+      );
   }
 
   return (
@@ -114,6 +139,26 @@ export function Explorer({ path }: { path: string }) {
             value={query}
             onInput={(e) => setQuery(e.currentTarget.value)}
           />
+        </div>
+        <div class="segmented" role="group" aria-label={t("explorer.view")}>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label={t("explorer.listView")}
+            aria-pressed={view === "list"}
+            onClick={() => switchView("list")}
+          >
+            <Icon name="list" />
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label={t("explorer.galleryView")}
+            aria-pressed={view === "gallery"}
+            onClick={() => switchView("gallery")}
+          >
+            <Icon name="grid" />
+          </button>
         </div>
         {canWrite && (
           <>

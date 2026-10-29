@@ -17,13 +17,31 @@ export function visibleRange(
   return { start, end: Math.max(start, end) };
 }
 
-/** Tracks the scroller's position and size; a scroller with no layout yet counts as one window tall. */
-export function useScroller(ref: RefObject<HTMLElement | null>): { top: number; height: number } {
-  const [box, setBox] = useState({ top: 0, height: 0 });
+/** Item indices of a grid with `columns` per row, by rows on screen plus `overscanRows` either side. */
+export function gridRange(
+  scrollTop: number,
+  viewport: number,
+  rowHeight: number,
+  count: number,
+  columns: number,
+  overscanRows = 2,
+): { start: number; end: number } {
+  const rows = visibleRange(scrollTop, viewport, rowHeight, Math.ceil(count / columns), overscanRows);
+  return { start: rows.start * columns, end: Math.min(count, rows.end * columns) };
+}
+
+/** Tracks the scroller's position and size; a scroller with no layout yet counts as one window. */
+export function useScroller(ref: RefObject<HTMLElement | null>): { top: number; height: number; width: number } {
+  const [box, setBox] = useState({ top: 0, height: 0, width: 0 });
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const update = () => setBox({ top: el.scrollTop, height: el.clientHeight || window.innerHeight });
+    const update = () =>
+      setBox({
+        top: el.scrollTop,
+        height: el.clientHeight || window.innerHeight,
+        width: el.clientWidth || window.innerWidth,
+      });
     update();
     el.addEventListener("scroll", update, { passive: true });
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);

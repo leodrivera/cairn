@@ -83,6 +83,14 @@ Plain, quiet, exact.
 
 Cairn will ship as a Docker image. Mount the folder to browse at `/srv` and a folder for the database at `/data`, and configure it with environment variables. The planned variables and Compose examples are in [`docs/architecture.md`](docs/architecture.md).
 
+Then create the first admin. The command asks for the password without showing it:
+
+```bash
+docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password
+```
+
+Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to the proxy's network, or every visitor will look like the proxy.
+
 [TODO: tested instructions once there is a release]
 
 ## Building from source

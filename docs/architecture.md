@@ -62,7 +62,7 @@ Startup checks the whole configuration and exits with one clear message per prob
 | `CAIRN_DATA` | `/data` | Folder for `cairn.db`. Must not be inside `CAIRN_ROOT`. |
 | `CAIRN_ADDR` | `0.0.0.0:8080` | Listen address inside the container. |
 | `CAIRN_PUBLIC_URL` | none | The address people use, e.g. `https://files.example.com`. Required for OAuth, OIDC and CAPTCHA, and used to build share links. |
-| `CAIRN_TRUSTED_PROXIES` | none | Comma-separated CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed. Without it the socket peer is the client IP. |
+| `CAIRN_TRUSTED_PROXIES` | none | Comma-separated CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed. Without it the socket peer is the client IP. Set it whenever Cairn runs behind a reverse proxy (section 4.6). |
 | `CAIRN_AUTH_METHODS` | `password` | Comma-separated list of `password`, `oauth` (through a broker) and `oidc` (direct). Any combination; at least one. |
 | `CAIRN_OAUTH_BROKER_URL` | none | Internal URL of the OAuth broker, e.g. `http://tinyauth:3000`. Required with `oauth`. |
 | `CAIRN_OAUTH_SECRET` | none | Shared secret the broker sends as `X-Auth-Secret`. Required with `oauth`. At least 32 characters. |
@@ -193,8 +193,9 @@ Each vendor is a row of data: its verify URL and the hosts its widget needs in t
 - The answer's `hostname` must equal the host of `CAIRN_PUBLIC_URL`; a token solved on another site is refused.
 - Vendor unreachable or slow (5 s timeout): refused. The form says "The anti-robot check could not be reached. Try
   again in a minute."
-- The widget script loads only on the sign-in page, and only when CAPTCHA is on. The CSP for that page adds the
-  vendor's hosts; every other page keeps the strict default.
+- The widget script loads only on the sign-in page, and only when CAPTCHA is on. Cairn is one page, so when
+  CAPTCHA is on the app's CSP adds the vendor's hosts to `script-src` and a matching `frame-src`. File and share
+  routes keep their own strict CSP.
 - The widget follows the theme (`data-theme` dark or light).
 
 `CAIRN_CAPTCHA` defaults to `none`, because every vendor needs keys the operator must create. The documented
@@ -216,6 +217,19 @@ store is needed; a restart clears them, which is acceptable.
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password per share and per IP | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
+
+Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
+`http.rate_limited`. The limits are fixed; there is no switch to turn them off.
+
+They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to
+the proxy's network. Without it every request seems to come from the proxy: one person mistyping blocks sign-in
+for everyone for 15 minutes, Fail2ban would ban the proxy, and the session cookie loses `Secure`. Cairn logs
+`http.forwarded_ignored` once when it sees `X-Forwarded-For` from a proxy it does not trust.
+
+**Fail2ban.** Count only `401` on `POST /api/auth/login` (the `auth.login_failed` log line) and keep Cairn out of
+generic 401/403 jails. Use `maxretry` between 6 and 10 and a `findtime` of at least 15 minutes. A person mistyping
+their own password then gets Cairn's `429` after 5 tries, before any ban, while one address trying many accounts is
+banned before Cairn's own limit of 10 per address.
 
 ### 4.7 Sessions
 
@@ -376,8 +390,8 @@ backup) while it runs.
 ## 9. HTTP hardening
 
 - Content-Security-Policy on every page: `default-src 'self'; img-src 'self' blob: data:; style-src 'self';
-  script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`. The sign-in page adds the CAPTCHA
-  vendor's hosts when CAPTCHA is on.
+  script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`. When CAPTCHA is on it
+  adds the vendor's hosts to `script-src` and a `frame-src` (section 4.5).
 - Files served from `/api/raw` and `/s/` carry `X-Content-Type-Options: nosniff` and their own strict CSP
   (`default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox`), so an uploaded HTML or SVG file cannot
   run script in Cairn's origin.

@@ -60,11 +60,12 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn(csrf::require_header))
         .layer(DefaultBodyLimit::max(1 << 20));
+    let captcha = state.captcha.clone();
     let app = Router::new()
         .nest("/api", api)
         .fallback(assets::serve)
         .with_state(state);
-    headers::apply(app)
+    headers::apply(app, captcha.as_deref())
 }
 
 async fn health() -> impl IntoResponse {

@@ -1217,3 +1217,31 @@ async fn permission_denied_on_disk_is_403_denied() {
         res.json
     );
 }
+
+#[tokio::test]
+async fn replacing_keeps_the_original_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("run.sh"), "#!/bin/sh\necho old\n");
+    std::fs::set_permissions(s.join("run.sh"), std::fs::Permissions::from_mode(0o750)).unwrap();
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+
+    let up = Req::put("/api/upload/run.sh?replace=1")
+        .cookie(&c)
+        .bytes(b"#!/bin/sh\necho new\n")
+        .send(&h.app)
+        .await;
+    assert_eq!(up.status, StatusCode::OK, "{}", up.json);
+    assert_eq!(mode(&s.join("run.sh")), 0o750, "upload with replace");
+
+    let tag = etag_of(&h, &c, "run.sh").await;
+    let save = Req::put("/api/text/run.sh")
+        .cookie(&c)
+        .header("if-match", &tag)
+        .bytes(b"#!/bin/sh\necho newer\n")
+        .send(&h.app)
+        .await;
+    assert_eq!(save.status, StatusCode::OK, "{}", save.json);
+    assert_eq!(mode(&s.join("run.sh")), 0o750, "text save");
+}

@@ -291,6 +291,9 @@ outside your folder" marker and cannot be opened.
   While a temporary file exists its path is recorded in an `uploads` table, so after a crash startup removes exactly
   those leftovers without walking the whole tree. Existing names are never overwritten silently: the client asks first
   and then sends `?replace=1`.
+- A replaced file (upload with `?replace=1`, or a text save) keeps the original's permissions, without setuid,
+  setgid and sticky bits. It keeps the original's owner when Cairn may set it: as root, or when Cairn runs as that
+  owner (`user:` in Compose). Otherwise the new file belongs to the user running Cairn.
 - Moves inside one filesystem are renames. Across filesystems they are copy then delete, and the response says how
   many items moved and which ones failed.
 - Text editing uses the file's ETag (size plus modified time). A save whose `If-Match` no longer matches answers

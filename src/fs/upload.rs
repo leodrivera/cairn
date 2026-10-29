@@ -101,7 +101,11 @@ pub async fn upload(
         }
         file.write_all(&chunk).await?;
     }
-    file.sync_all().await?;
+    let file = file.into_std().await;
+    if let Some(old) = &existing {
+        keep_owner_and_mode(&file, old)?;
+    }
+    file.sync_all()?;
     drop(file);
 
     let how = if replace {
@@ -120,6 +124,22 @@ pub async fn upload(
     temp.armed = false;
     let st = rustix::fs::statat(&temp.dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     Ok((st, existing.is_some()))
+}
+
+/// The replacement takes the original's permissions, so a script keeps its execute bit. It also takes the
+/// original's owner when the process may set it: as root, or when Cairn already runs as that owner (the `user:` of
+/// the Compose file). Otherwise the new file belongs to the user running Cairn.
+fn keep_owner_and_mode(file: &std::fs::File, old: &rustix::fs::Stat) -> Result<(), FsError> {
+    // Without setuid, setgid and sticky: replacing a privileged program's content must not carry its privilege.
+    rustix::fs::fchmod(file, Mode::from_raw_mode(old.st_mode & 0o777))?;
+    let owner = (
+        rustix::fs::Uid::from_raw(old.st_uid),
+        rustix::fs::Gid::from_raw(old.st_gid),
+    );
+    match rustix::fs::fchown(file, Some(owner.0), Some(owner.1)) {
+        Ok(()) | Err(rustix::io::Errno::PERM) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// At startup no upload is running, so every recorded temporary file is a leftover from a crash.

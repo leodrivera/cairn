@@ -56,6 +56,14 @@ impl From<std::io::Error> for FsError {
             Some(code) if code == rustix::io::Errno::NAMETOOLONG.raw_os_error() => {
                 FsError::InvalidPath
             }
+            // O_NOFOLLOW met a link: on older kernels every link is refused.
+            Some(code) if code == rustix::io::Errno::LOOP.raw_os_error() => FsError::Outside,
+            Some(code) if code == rustix::io::Errno::ACCESS.raw_os_error() => FsError::Denied,
+            Some(code) if code == rustix::io::Errno::PERM.raw_os_error() => FsError::Denied,
+            Some(code) if code == rustix::io::Errno::NOSPC.raw_os_error() => FsError::DiskFull,
+            Some(code) if code == rustix::io::Errno::DQUOT.raw_os_error() => FsError::DiskFull,
+            Some(code) if code == rustix::io::Errno::ROFS.raw_os_error() => FsError::ReadOnly,
+            Some(code) if code == rustix::io::Errno::NOTEMPTY.raw_os_error() => FsError::NotEmpty,
             _ => FsError::Io(e),
         }
     }

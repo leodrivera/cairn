@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use rustix::fd::OwnedFd;
-use rustix::fs::{AtFlags, CWD, Mode, OFlags, ResolveFlags};
+use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, ResolveFlags};
 use rustix::io::Errno;
 
 use super::FsError;
@@ -21,8 +21,8 @@ pub struct Scope {
 enum Resolve {
     /// Linux 5.6 and later: `openat2` keeps every lookup beneath the scope, even through symlinks.
     Openat2,
-    /// Older kernels: canonicalize and compare, and refuse symlinks altogether. Holds the canonical scope path.
-    Fallback(PathBuf),
+    /// Older kernels: walk one folder at a time with `O_NOFOLLOW`, refusing every symlink.
+    Fallback,
 }
 
 const RESOLVE: ResolveFlags = ResolveFlags::BENEATH.union(ResolveFlags::NO_MAGICLINKS);
@@ -47,6 +47,13 @@ fn id_of(st: &rustix::fs::Stat) -> (u64, u64) {
     (st.st_dev, st.st_ino)
 }
 
+fn fd_path(fd: &OwnedFd) -> std::io::Result<PathBuf> {
+    std::fs::read_link(format!(
+        "/proc/self/fd/{}",
+        rustix::fd::AsRawFd::as_raw_fd(fd)
+    ))
+}
+
 impl Scope {
     /// `scope` is the user's folder as stored, like `/photos`; it was validated when it was saved.
     pub fn new(
@@ -64,7 +71,7 @@ impl Scope {
         let mode = if openat2_available(&root) {
             Resolve::Openat2
         } else {
-            Resolve::Fallback(std::fs::canonicalize(&path)?)
+            Resolve::Fallback
         };
         Ok(Scope {
             root,
@@ -75,13 +82,8 @@ impl Scope {
 
     /// Forces the older-kernel path, for tests.
     pub fn with_fallback(self) -> Scope {
-        let base = std::fs::canonicalize(format!(
-            "/proc/self/fd/{}",
-            rustix::fd::AsRawFd::as_raw_fd(&self.root)
-        ))
-        .expect("scope folder path");
         Scope {
-            mode: Resolve::Fallback(base),
+            mode: Resolve::Fallback,
             ..self
         }
     }
@@ -94,7 +96,7 @@ impl Scope {
         } else {
             Mode::empty()
         };
-        match &self.mode {
+        match self.mode {
             Resolve::Openat2 => Ok(rustix::fs::openat2(
                 &self.root,
                 path.to_os(),
@@ -102,36 +104,84 @@ impl Scope {
                 mode,
                 RESOLVE,
             )?),
-            Resolve::Fallback(base) => {
-                let lexical = if path.is_root() {
-                    base.clone()
-                } else {
-                    base.join(path.to_os())
-                };
-                let real = std::fs::canonicalize(&lexical)?;
-                if real != lexical {
-                    return Err(FsError::Outside);
-                }
-                Ok(rustix::fs::openat(
-                    CWD,
-                    &real,
-                    flags | OFlags::NOFOLLOW,
-                    Mode::from_raw_mode(0o644),
-                )?)
-            }
+            Resolve::Fallback => self.open_walk(path, flags, mode),
         }
     }
 
-    /// Refuses a path when any folder on it is the data folder, also when reached through another mount.
-    fn check_data(&self, path: &RelPath) -> Result<(), FsError> {
+    /// One folder at a time from the scope's descriptor, never following a link, checking each folder against the
+    /// data folder as it is opened. Nothing is looked up by path twice, so a rename racing with the request cannot
+    /// redirect it.
+    fn open_walk(&self, path: &RelPath, flags: OFlags, mode: Mode) -> Result<OwnedFd, FsError> {
+        let dir_flags = OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::RDONLY | OFlags::CLOEXEC;
+        let mut cur = rustix::fs::openat(&self.root, ".", dir_flags, Mode::empty())?;
+        let Some((last, folders)) = path.segments().split_last() else {
+            return Ok(rustix::fs::openat(&self.root, ".", flags, mode)?);
+        };
+        for seg in folders {
+            let name = OsStr::from_bytes(seg);
+            let next = match rustix::fs::openat(&cur, name, dir_flags, Mode::empty()) {
+                Ok(fd) => fd,
+                // O_DIRECTORY with O_NOFOLLOW on a link answers ENOTDIR; say what it is.
+                Err(Errno::NOTDIR)
+                    if rustix::fs::statat(&cur, name, AtFlags::SYMLINK_NOFOLLOW).is_ok_and(
+                        |st| FileType::from_raw_mode(st.st_mode) == FileType::Symlink,
+                    ) =>
+                {
+                    return Err(FsError::Outside);
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if Some(id_of(&rustix::fs::fstat(&next)?)) == self.data_id {
+                return Err(FsError::NotFound);
+            }
+            cur = next;
+        }
+        let fd = rustix::fs::openat(
+            &cur,
+            OsStr::from_bytes(last),
+            flags | OFlags::NOFOLLOW,
+            mode,
+        )?;
+        // With O_PATH, O_NOFOLLOW opens the link itself instead of failing; refuse it the same way.
+        if FileType::from_raw_mode(rustix::fs::fstat(&fd)?.st_mode) == FileType::Symlink {
+            return Err(FsError::Outside);
+        }
+        Ok(fd)
+    }
+
+    /// Refuses what was opened when it is the data folder or lies inside it, also when reached through a symlink
+    /// or another mount of the same folder. It checks the object actually opened, not the path again.
+    fn check_data(&self, fd: &OwnedFd, path: &RelPath) -> Result<(), FsError> {
         let Some(data) = self.data_id else {
             return Ok(());
         };
-        for n in 0..=path.len() {
-            let fd = self.open_raw(&path.prefix(n), OFlags::PATH)?;
-            if id_of(&rustix::fs::fstat(&fd)?) == data {
+        if id_of(&rustix::fs::fstat(fd)?) == data {
+            return Err(FsError::NotFound);
+        }
+        let (Ok(real), Ok(base)) = (fd_path(fd), fd_path(&self.root)) else {
+            // No /proc: check each folder named on the path instead.
+            for n in 0..path.len() {
+                let fd = self.open_raw(&path.prefix(n), OFlags::PATH)?;
+                if id_of(&rustix::fs::fstat(&fd)?) == data {
+                    return Err(FsError::NotFound);
+                }
+            }
+            return Ok(());
+        };
+        let mut folder = real.parent();
+        while let Some(dir) = folder {
+            if !dir.starts_with(&base) {
+                break;
+            }
+            if let Ok(st) = rustix::fs::stat(dir)
+                && id_of(&st) == data
+            {
                 return Err(FsError::NotFound);
             }
+            if dir == base {
+                break;
+            }
+            folder = dir.parent();
         }
         Ok(())
     }
@@ -139,7 +189,7 @@ impl Scope {
     /// Opens `path`, following symlinks that stay inside the scope.
     pub fn open(&self, path: &RelPath, flags: OFlags) -> Result<OwnedFd, FsError> {
         let fd = self.open_raw(path, flags)?;
-        self.check_data(path)?;
+        self.check_data(&fd, path)?;
         Ok(fd)
     }
 
@@ -324,5 +374,20 @@ mod tests {
             assert!(matches!(read(&s, "nope.txt"), Err(FsError::NotFound)));
             assert!(matches!(s.stat(&p("nope")), Err(FsError::NotFound)));
         }
+    }
+
+    #[test]
+    fn link_to_a_file_in_the_data_folder_is_not_found() {
+        let t = tree();
+        std::fs::write(t.dir.path().join("a/.db/cairn.db"), "db").unwrap();
+        symlink(".db/cairn.db", t.dir.path().join("a/db-link")).unwrap();
+        symlink(".db", t.dir.path().join("a/db-dir-link")).unwrap();
+        let [modern, _] = scopes(&t);
+        assert!(matches!(read(&modern, "db-link"), Err(FsError::NotFound)));
+        assert!(matches!(
+            modern.open_dir(&p("db-dir-link")),
+            Err(FsError::NotFound)
+        ));
+        assert!(!modern.link_inside(&p("db-link")));
     }
 }

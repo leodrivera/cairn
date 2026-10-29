@@ -103,6 +103,10 @@ impl RelPath {
         self.0.starts_with(&other.0)
     }
 
+    pub fn segments(&self) -> &[Vec<u8>] {
+        &self.0
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }

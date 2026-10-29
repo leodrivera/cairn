@@ -1193,3 +1193,27 @@ async fn deep_tree_delete_and_copy_stop_cleanly() {
     assert_eq!(del.json["failed"][0]["error"], "too_deep", "{}", del.json);
     assert!(s.join("deep").exists());
 }
+
+#[tokio::test]
+async fn permission_denied_on_disk_is_403_denied() {
+    use std::os::unix::fs::PermissionsExt;
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    std::fs::create_dir(s.join("locked")).unwrap();
+    std::fs::set_permissions(s.join("locked"), std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(s.join("locked/probe"), b"").is_ok() {
+        return; // running as root: permissions do not apply
+    }
+    let res = Req::put("/api/upload/locked/a.txt")
+        .cookie(&c)
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    std::fs::set_permissions(s.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::FORBIDDEN, "denied"),
+        "{}",
+        res.json
+    );
+}

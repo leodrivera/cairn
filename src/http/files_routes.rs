@@ -123,7 +123,10 @@ async fn raw(
 
     fu.need(true, false)?;
     let path = RelPath::parse(&raw_path)?;
-    let name = path.name().unwrap_or("download").to_string();
+    let name = path
+        .name_lossy()
+        .map(|n| n.into_owned())
+        .unwrap_or_else(|| "download".into());
     let scope = fu.scope;
     let (file, st) = blocking(move || {
         let fd = scope.open(&path, OFlags::RDONLY)?;

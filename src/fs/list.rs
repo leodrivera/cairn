@@ -32,6 +32,10 @@ pub struct Entry {
     pub mime: &'static str,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub outside: bool,
+    /// Only for a name that is not UTF-8: the segment to use in paths for this entry (see `RelPath::segment_for`).
+    /// `name` then shows U+FFFD for the unreadable bytes.
+    #[serde(rename = "rawName", skip_serializing_if = "Option::is_none")]
+    pub raw_name: Option<String>,
 }
 
 /// Case-insensitive, with runs of digits compared as numbers: file2 before file10.
@@ -82,7 +86,12 @@ fn kind_of(st: &rustix::fs::Stat) -> Kind {
     }
 }
 
-fn describe(scope: &Scope, path: &RelPath, name: &str, st: rustix::fs::Stat) -> Entry {
+fn describe(scope: &Scope, path: &RelPath, st: rustix::fs::Stat) -> Entry {
+    let raw = path.name_bytes().unwrap_or(b"");
+    let name = String::from_utf8_lossy(raw).into_owned();
+    let raw_name = std::str::from_utf8(raw)
+        .is_err()
+        .then(|| RelPath::segment_for(raw));
     let mut kind = kind_of(&st);
     let (mut size, mut modified, mut outside) = (st.st_size as u64, st.st_mtime, false);
     if kind == Kind::Link {
@@ -101,20 +110,22 @@ fn describe(scope: &Scope, path: &RelPath, name: &str, st: rustix::fs::Stat) -> 
     if kind == Kind::Folder {
         size = 0;
     }
+    let mime = mime::guess(&name);
     Entry {
-        name: name.to_string(),
+        name,
         kind,
         size,
         modified,
-        mime: mime::guess(name),
+        mime,
         outside,
+        raw_name,
     }
 }
 
 /// One entry, for answers about a single file or folder.
 pub fn entry(scope: &Scope, path: &RelPath) -> Result<Entry, FsError> {
     let st = scope.stat(path)?;
-    Ok(describe(scope, path, path.name().unwrap_or(""), st))
+    Ok(describe(scope, path, st))
 }
 
 pub fn list(scope: &Scope, path: &RelPath) -> Result<Vec<Entry>, FsError> {
@@ -126,21 +137,20 @@ pub fn list(scope: &Scope, path: &RelPath) -> Result<Vec<Entry>, FsError> {
         if raw == b"." || raw == b".." {
             continue;
         }
-        let Some(name) = std::str::from_utf8(raw).ok() else {
-            tracing::warn!(event = "file.name_not_utf8", name = %OsStr::from_bytes(raw).to_string_lossy());
-            continue;
-        };
-        if name.starts_with(TEMP_PREFIX) {
+        if raw.starts_with(TEMP_PREFIX.as_bytes()) {
             continue;
         }
+        let name = OsStr::from_bytes(raw);
         let Ok(st) = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW) else {
             continue;
         };
         if scope.data_id() == Some((st.st_dev, st.st_ino)) {
             continue;
         }
-        let Ok(child) = path.join(name) else { continue };
-        entries.push(describe(scope, &child, name, st));
+        let Ok(child) = path.join_bytes(raw) else {
+            continue;
+        };
+        entries.push(describe(scope, &child, st));
     }
     entries.sort_by(|a, b| {
         let folder = |e: &Entry| e.kind != Kind::Folder;

@@ -261,6 +261,12 @@ Every path from a client is relative to the user's scope. The server resolves it
    and canonical paths cannot tell. At startup Cairn records the device and inode of `CAIRN_DATA`; `resolve`
    rejects every path component with the same pair.
 
+Names on Linux are bytes and need not be UTF-8; old copies from Windows, ZIP files and USB sticks often carry
+Latin-1 accents. Such entries are listed with U+FFFD in place of the unreadable bytes and a `rawName` field. In a
+path, a segment that starts with NUL (`%00` in a URL) carries a name's raw bytes in base64url, and every route
+accepts it, so these files can be opened, downloaded, renamed to a readable name and deleted. A real name cannot
+contain NUL, so this never collides with one.
+
 Symlinks inside the scope that point inside the scope work. Symlinks that point outside are listed with a "link
 outside your folder" marker and cannot be opened.
 

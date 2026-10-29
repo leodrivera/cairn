@@ -34,18 +34,18 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
         return Err(FsError::InvalidPath);
     }
     let (src_dir, src) = scope.parent(from)?;
-    rustix::fs::statat(&src_dir, src.as_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+    rustix::fs::statat(&src_dir, src.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let (dst_dir, dst) = scope.parent(to)?;
-    if rustix::fs::statat(&dst_dir, dst.as_str(), AtFlags::SYMLINK_NOFOLLOW).is_ok() {
+    if rustix::fs::statat(&dst_dir, dst.as_os_str(), AtFlags::SYMLINK_NOFOLLOW).is_ok() {
         return Err(FsError::Exists);
     }
     match op {
         Op::Rename | Op::Move => {
             match rustix::fs::renameat_with(
                 &src_dir,
-                src.as_str(),
+                src.as_os_str(),
                 &dst_dir,
-                dst.as_str(),
+                dst.as_os_str(),
                 RenameFlags::NOREPLACE,
             ) {
                 Ok(()) => Ok(()),
@@ -55,9 +55,9 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
                         scope,
                         from,
                         &src_dir,
-                        src.as_bytes(),
+                        src.as_os_str().as_bytes(),
                         &dst_dir,
-                        dst.as_bytes(),
+                        dst.as_os_str().as_bytes(),
                     )?;
                     super::edit::remove(scope, from)
                 }
@@ -68,9 +68,9 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
             scope,
             from,
             &src_dir,
-            src.as_bytes(),
+            src.as_os_str().as_bytes(),
             &dst_dir,
-            dst.as_bytes(),
+            dst.as_os_str().as_bytes(),
         ),
     }
 }

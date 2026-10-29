@@ -1,5 +1,7 @@
 //! The user's scope: every path a client sends is opened beneath it, never outside, never into the data folder.
 
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -125,10 +127,8 @@ impl Scope {
         let Some(data) = self.data_id else {
             return Ok(());
         };
-        let segments = path.segments();
-        for n in 0..=segments.len() {
-            let prefix = RelPath::parse(&segments[..n].join("/"))?;
-            let fd = self.open_raw(&prefix, OFlags::PATH)?;
+        for n in 0..=path.len() {
+            let fd = self.open_raw(&path.prefix(n), OFlags::PATH)?;
             if id_of(&rustix::fs::fstat(&fd)?) == data {
                 return Err(FsError::NotFound);
             }
@@ -148,19 +148,19 @@ impl Scope {
     }
 
     /// The parent folder and the final name, for `*at` calls that act on the name itself (never its link target).
-    pub fn parent(&self, path: &RelPath) -> Result<(OwnedFd, String), FsError> {
-        let (Some(parent), Some(name)) = (path.parent(), path.name()) else {
+    pub fn parent(&self, path: &RelPath) -> Result<(OwnedFd, OsString), FsError> {
+        let (Some(parent), Some(name)) = (path.parent(), path.name_bytes()) else {
             return Err(FsError::ScopeRoot);
         };
         let dir = self.open_dir(&parent)?;
         if let (Some(data), Ok(st)) = (
             self.data_id,
-            rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW),
+            rustix::fs::statat(&dir, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW),
         ) && id_of(&st) == data
         {
             return Err(FsError::NotFound);
         }
-        Ok((dir, name.to_string()))
+        Ok((dir, OsStr::from_bytes(name).to_os_string()))
     }
 
     /// Without following a final symlink.
@@ -171,7 +171,7 @@ impl Scope {
         let (dir, name) = self.parent(path)?;
         Ok(rustix::fs::statat(
             &dir,
-            name.as_str(),
+            name.as_os_str(),
             AtFlags::SYMLINK_NOFOLLOW,
         )?)
     }

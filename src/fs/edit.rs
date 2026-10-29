@@ -1,5 +1,6 @@
 //! New folders and permanent deletes. Deletes act on a link itself, never on what it points to.
 
+use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 use rustix::fd::OwnedFd;
@@ -17,7 +18,7 @@ pub fn mkdir(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
     let (dir, name) = scope.parent(path)?;
     Ok(rustix::fs::mkdirat(
         &dir,
-        name.as_str(),
+        name.as_os_str(),
         Mode::from_raw_mode(0o755),
     )?)
 }
@@ -29,7 +30,7 @@ pub fn remove(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
 
 /// Removes `name` in `dir`. A folder is emptied level by level, each opened without following links; the data
 /// folder, if met on the way, is left alone (and its parent then cannot be removed).
-fn remove_at(scope: &Scope, dir: &OwnedFd, name: &str) -> Result<(), FsError> {
+fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr) -> Result<(), FsError> {
     let st = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
     if scope.data_id() == Some((st.st_dev, st.st_ino)) {
         return Err(FsError::NotFound);
@@ -44,12 +45,12 @@ fn remove_at(scope: &Scope, dir: &OwnedFd, name: &str) -> Result<(), FsError> {
         let item = item?;
         let raw = item.file_name().to_bytes();
         if raw != b"." && raw != b".." {
-            names.push(std::ffi::OsStr::from_bytes(raw).to_os_string());
+            names.push(OsStr::from_bytes(raw).to_os_string());
         }
     }
     let mut first_error = None;
     for child in names {
-        if let Err(e) = remove_os(scope, &sub, &child) {
+        if let Err(e) = remove_at(scope, &sub, &child) {
             first_error.get_or_insert(e);
         }
     }
@@ -57,18 +58,4 @@ fn remove_at(scope: &Scope, dir: &OwnedFd, name: &str) -> Result<(), FsError> {
         return Err(e);
     }
     Ok(rustix::fs::unlinkat(dir, name, AtFlags::REMOVEDIR)?)
-}
-
-/// Like `remove_at`, for names on disk that need not be UTF-8.
-fn remove_os(scope: &Scope, dir: &OwnedFd, name: &std::ffi::OsStr) -> Result<(), FsError> {
-    match name.to_str() {
-        Some(n) => remove_at(scope, dir, n),
-        None => {
-            let st = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
-            if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
-                return Err(FsError::InvalidPath);
-            }
-            Ok(rustix::fs::unlinkat(dir, name, AtFlags::empty())?)
-        }
-    }
 }

@@ -724,3 +724,58 @@ async fn scope_root_cannot_move() {
     let res = ops(&h, &c, json!([{ "op": "move", "from": "", "to": "x" }])).await;
     assert_eq!(res.json["failed"][0]["error"], "scope_root");
 }
+
+/// A name written by an old system in Latin-1: "Report caf\xe9.txt" is not UTF-8.
+fn latin1(dir: &Path) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let p = dir.join(std::ffi::OsStr::from_bytes(b"Report caf\xe9.txt"));
+    std::fs::write(&p, "old").unwrap();
+    p
+}
+
+#[tokio::test]
+async fn non_utf8_name_is_listed_and_usable() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let file = latin1(&s);
+    let res = Req::get("/api/files").cookie(&c).send(&h.app).await;
+    let e = &res.json["entries"][0];
+    assert_eq!(e["name"], "Report caf\u{FFFD}.txt");
+    let raw = e["rawName"].as_str().expect("rawName for a name that is not UTF-8").to_string();
+    assert!(raw.starts_with('\0'));
+
+    let dl = Req::get(&format!("/api/raw/{}", enc(&raw))).cookie(&c).send(&h.app).await;
+    assert_eq!((dl.status, dl.body.clone()), (StatusCode::OK, b"old".to_vec()));
+
+    let renamed = ops(&h, &c, json!([{ "op": "rename", "from": raw, "to": "Report café.txt" }])).await;
+    assert_eq!(renamed.json["done"], 1, "{}", renamed.json);
+    assert!(!file.exists());
+    assert_eq!(std::fs::read_to_string(s.join("Report café.txt")).unwrap(), "old");
+}
+
+#[tokio::test]
+async fn non_utf8_name_can_be_deleted() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let file = latin1(&s);
+    let list = Req::get("/api/files").cookie(&c).send(&h.app).await;
+    let raw = list.json["entries"][0]["rawName"].as_str().unwrap().to_string();
+    let res = delete_paths(&h, &c, &[raw.as_str()]).await;
+    assert_eq!(res.json["deleted"], 1, "{}", res.json);
+    assert!(!file.exists());
+}
+
+#[tokio::test]
+async fn non_utf8_folder_contents_listed() {
+    use std::os::unix::ffi::OsStrExt;
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let folder = s.join(std::ffi::OsStr::from_bytes(b"Fotos f\xe9rias"));
+    touch(&folder.join("a.jpg"), "a");
+    let list = Req::get("/api/files").cookie(&c).send(&h.app).await;
+    let raw = list.json["entries"][0]["rawName"].as_str().unwrap().to_string();
+    let inside = Req::get(&format!("/api/files/{}", enc(&raw))).cookie(&c).send(&h.app).await;
+    assert_eq!(inside.status, StatusCode::OK, "{}", inside.json);
+    assert_eq!(names(&inside.json), ["a.jpg"]);
+    assert_eq!(inside.json["path"], raw, "the path comes back in the form the client sent");
+}

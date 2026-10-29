@@ -48,11 +48,14 @@ pub async fn upload(
     replace: bool,
     now: i64,
 ) -> Result<(rustix::fs::Stat, bool), FsError> {
-    if path.name().is_none_or(|n| n.starts_with(TEMP_PREFIX)) {
+    if path
+        .name_bytes()
+        .is_none_or(|n| n.starts_with(TEMP_PREFIX.as_bytes()))
+    {
         return Err(FsError::InvalidPath);
     }
     let (dir, name) = scope.parent(path)?;
-    let existing = rustix::fs::statat(&dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW).ok();
+    let existing = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW).ok();
     if let Some(st) = &existing {
         if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
             return Err(FsError::IsAFolder);
@@ -106,10 +109,16 @@ pub async fn upload(
     } else {
         RenameFlags::NOREPLACE
     };
-    rustix::fs::renameat_with(&temp.dir, temp.name.as_str(), &temp.dir, name.as_str(), how)?;
+    rustix::fs::renameat_with(
+        &temp.dir,
+        temp.name.as_str(),
+        &temp.dir,
+        name.as_os_str(),
+        how,
+    )?;
     let mut temp = temp;
     temp.armed = false;
-    let st = rustix::fs::statat(&temp.dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+    let st = rustix::fs::statat(&temp.dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     Ok((st, existing.is_some()))
 }
 

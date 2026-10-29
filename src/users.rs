@@ -220,6 +220,7 @@ pub fn count(db: &Db) -> Result<i64, UserError> {
     Ok(db.with(|c| c.query_row("SELECT count(*) FROM users", [], |r| r.get(0)))?)
 }
 
+#[cfg(test)]
 fn admins(db: &Db) -> Result<i64, UserError> {
     Ok(db.with(|c| {
         c.query_row("SELECT count(*) FROM users WHERE perm_admin = 1", [], |r| {
@@ -241,9 +242,6 @@ pub fn update(db: &Db, id: i64, patch: UserPatch) -> Result<User, UserError> {
     }
     if let Some(perms) = patch.perms {
         let perms = perms.normalized();
-        if u.perms.admin && !perms.admin && admins(db)? <= 1 {
-            return Err(UserError::LastAdmin);
-        }
         u.perms = perms;
     }
     if let Some(lang) = patch.lang {
@@ -259,13 +257,22 @@ pub fn update(db: &Db, id: i64, patch: UserPatch) -> Result<User, UserError> {
         u.view = view;
     }
     let p = u.perms;
-    db.with(|c| {
-        c.execute(
-            "UPDATE users SET email = ?2, name = ?3, scope = ?4, perm_read = ?5, perm_write = ?6, perm_share = ?7,
-             perm_admin = ?8, lang = ?9, theme = ?10, view = ?11 WHERE id = ?1",
-            params![id, u.email, u.name, u.scope, p.read, p.write, p.share, p.admin, u.lang, u.theme, u.view],
-        )
+    let outcome = db.with(|c| {
+        immediate(c, || {
+            if !p.admin && removes_last_admin(c, id)? {
+                return Ok(Outcome::LastAdmin);
+            }
+            c.execute(
+                "UPDATE users SET email = ?2, name = ?3, scope = ?4, perm_read = ?5, perm_write = ?6, perm_share = ?7,
+                 perm_admin = ?8, lang = ?9, theme = ?10, view = ?11 WHERE id = ?1",
+                params![id, u.email, u.name, u.scope, p.read, p.write, p.share, p.admin, u.lang, u.theme, u.view],
+            )?;
+            Ok(Outcome::Done)
+        })
     })?;
+    if outcome == Outcome::LastAdmin {
+        return Err(UserError::LastAdmin);
+    }
     by_id(db, id)?.ok_or(UserError::NotFound)
 }
 
@@ -284,12 +291,61 @@ pub fn set_password(db: &Db, id: i64, hash: Option<String>) -> Result<(), UserEr
 }
 
 pub fn delete(db: &Db, id: i64) -> Result<(), UserError> {
-    let u = by_id(db, id)?.ok_or(UserError::NotFound)?;
-    if u.perms.admin && admins(db)? <= 1 {
-        return Err(UserError::LastAdmin);
+    let outcome = db.with(|c| {
+        immediate(c, || {
+            if removes_last_admin(c, id)? {
+                return Ok(Outcome::LastAdmin);
+            }
+            let n = c.execute("DELETE FROM users WHERE id = ?1", [id])?;
+            Ok(if n == 0 {
+                Outcome::NotFound
+            } else {
+                Outcome::Done
+            })
+        })
+    })?;
+    match outcome {
+        Outcome::Done => Ok(()),
+        Outcome::NotFound => Err(UserError::NotFound),
+        Outcome::LastAdmin => Err(UserError::LastAdmin),
     }
-    db.with(|c| c.execute("DELETE FROM users WHERE id = ?1", [id]))?;
-    Ok(())
+}
+
+#[derive(PartialEq, Eq)]
+enum Outcome {
+    Done,
+    NotFound,
+    LastAdmin,
+}
+
+/// True when `id` is an admin and the only one, so taking it away would leave none.
+fn removes_last_admin(c: &rusqlite::Connection, id: i64) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT perm_admin = 1 AND (SELECT count(*) FROM users WHERE perm_admin = 1) <= 1 FROM users WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )
+    .optional()
+    .map(|v| v.unwrap_or(false))
+}
+
+/// Runs `f` in a `BEGIN IMMEDIATE` transaction: the check and the write it guards happen under one write lock,
+/// also against another process (`cairn user`) on the same file.
+fn immediate<T>(
+    c: &rusqlite::Connection,
+    f: impl FnOnce() -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    c.execute_batch("BEGIN IMMEDIATE")?;
+    match f() {
+        Ok(v) => {
+            c.execute_batch("COMMIT")?;
+            Ok(v)
+        }
+        Err(e) => {
+            let _ = c.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -498,5 +554,31 @@ mod tests {
             .with(|c| c.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0)))
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn last_admin_survives_concurrent_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        for round in 0..100 {
+            let path = dir.path().join(format!("r{round}.db"));
+            let setup = Db::open(&path).unwrap();
+            let a = create(&setup, new("a@example.com", ALL), 0).unwrap().id;
+            let b = create(&setup, new("b@example.com", ALL), 0).unwrap().id;
+            drop(setup);
+            // Two connections, like the server and `cairn user delete` at once.
+            let (one, two) = (Db::open(&path).unwrap(), Db::open(&path).unwrap());
+            let gate = std::sync::Barrier::new(2);
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    gate.wait();
+                    let _ = delete(&one, a);
+                });
+                s.spawn(|| {
+                    gate.wait();
+                    let _ = delete(&two, b);
+                });
+            });
+            assert!(admins(&one).unwrap() >= 1, "round {round}: no admin left");
+        }
     }
 }

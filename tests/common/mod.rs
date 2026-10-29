@@ -35,7 +35,45 @@ pub fn harness(extra: &[(&str, &str)]) -> Harness {
     }
 }
 
+/// A server root and a data folder on disk, for the file routes. Keep the `TempDir` alive for the test.
+pub fn harness_with_root(extra: &[(&str, &str)]) -> (Harness, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let (srv, data) = (dir.path().join("srv"), dir.path().join("data"));
+    std::fs::create_dir_all(&srv).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let (srv, data) = (
+        srv.to_str().unwrap().to_string(),
+        data.to_str().unwrap().to_string(),
+    );
+    let mut all = vec![("CAIRN_ROOT", srv.as_str()), ("CAIRN_DATA", data.as_str())];
+    all.extend_from_slice(extra);
+    (harness(&all), dir)
+}
+
+/// Percent-encodes a path for a URL, keeping the slashes.
+pub fn enc(path: &str) -> String {
+    path.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 impl Harness {
+    pub fn add_user_scoped(&self, email: &str, password: &str, scope: &str, perms: Perms) -> User {
+        let new = NewUser {
+            email: email.into(),
+            name: "Someone".into(),
+            password_hash: Some(hash_blocking(password)),
+            scope: scope.into(),
+            perms,
+        };
+        users::create(&self.state.db, new, 0).unwrap()
+    }
+
     /// Points the CAPTCHA client at a fake vendor.
     pub fn with_captcha_url(mut self, url: String) -> Harness {
         let c = &self.state.config;

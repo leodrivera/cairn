@@ -6,6 +6,7 @@ pub mod client;
 pub mod csrf;
 pub mod current_user;
 pub mod error;
+pub mod files_routes;
 pub mod headers;
 pub mod json;
 pub mod users_routes;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub captcha: Option<Arc<Captcha>>,
     /// Device and inode of `CAIRN_DATA`: no path a client sends may pass through it.
     pub data_id: Option<(u64, u64)>,
+    /// Tests only: resolve paths the way kernels without openat2 do.
+    pub force_fallback: bool,
 }
 
 impl AppState {
@@ -46,6 +49,7 @@ impl AppState {
         });
         AppState {
             data_id,
+            force_fallback: false,
             config: Arc::new(config),
             db: Arc::new(db),
             hasher: Arc::new(Hasher::new()),
@@ -60,6 +64,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .merge(auth_routes::routes())
         .merge(users_routes::routes())
+        .merge(files_routes::routes())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

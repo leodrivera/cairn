@@ -377,3 +377,21 @@ async fn sessions_are_not_shared_across_logins() {
     let b = h.login("ana@example.com", PW).await;
     assert_ne!(a, b);
 }
+
+#[tokio::test]
+async fn plain_cookie_ignored_over_https() {
+    let h = harness(&[("CAIRN_TRUSTED_PROXIES", "10.0.0.0/8")]);
+    h.add_user("ana@example.com", Some(PW), false);
+    // A plain-name session, as a sibling subdomain could plant with Domain=example.com.
+    let planted = h.login("ana@example.com", PW).await;
+    assert!(planted.starts_with("cairn_session="));
+    let res = Req::get("/api/me")
+        .cookie(&planted)
+        .peer("10.0.0.1:5000")
+        .header("x-forwarded-proto", "https")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.json, json!({ "user": null }));
+    let plain_http = Req::get("/api/me").cookie(&planted).send(&h.app).await;
+    assert_eq!(plain_http.json["user"]["email"], "ana@example.com");
+}

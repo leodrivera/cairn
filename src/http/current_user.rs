@@ -29,18 +29,18 @@ pub struct AdminUser(pub CurrentUser);
 #[derive(Clone)]
 struct Loaded(Option<CurrentUser>);
 
-pub fn read_token(headers: &HeaderMap) -> Option<String> {
-    let mut plain = None;
-    for value in headers.get_all(header::COOKIE) {
-        for part in value.to_str().unwrap_or("").split(';') {
-            match part.trim().split_once('=') {
-                Some((COOKIE_HTTPS, v)) if !v.is_empty() => return Some(v.to_string()),
-                Some((COOKIE, v)) if !v.is_empty() => plain = Some(v.to_string()),
-                _ => {}
-            }
-        }
-    }
-    plain
+/// Over HTTPS only `__Host-cairn_session` counts: a plain-name cookie could have been planted by a sibling
+/// subdomain (`Domain=example.com`), which is exactly what the prefix exists to stop.
+pub fn read_token(headers: &HeaderMap, https: bool) -> Option<String> {
+    let name = if https { COOKIE_HTTPS } else { COOKIE };
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .flat_map(|value| value.to_str().unwrap_or("").split(';'))
+        .find_map(|part| match part.trim().split_once('=') {
+            Some((n, v)) if n == name && !v.is_empty() => Some(v.to_string()),
+            _ => None,
+        })
 }
 
 pub fn set_cookie(token: &str, keep: bool, https: bool) -> HeaderValue {
@@ -65,7 +65,9 @@ pub fn clear_cookie(https: bool) -> HeaderValue {
 }
 
 pub async fn load(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
-    let token = read_token(req.headers());
+    let peer = req.extensions().get::<Peer>().map(|p| p.0.ip());
+    let https = Client::from_parts(peer, req.headers(), &state.config.trusted_proxies).https;
+    let token = read_token(req.headers(), https);
     let current = match &token {
         Some(token) => match session::lookup(&state.db, token, crate::now()) {
             Ok(found) => found.map(|session| CurrentUser {
@@ -83,8 +85,6 @@ pub async fn load(State(state): State<AppState>, mut req: Request, next: Next) -
         .as_ref()
         .filter(|c| c.session.renewed)
         .map(|c| c.token.clone());
-    let peer = req.extensions().get::<Peer>().map(|p| p.0.ip());
-    let https = Client::from_parts(peer, req.headers(), &state.config.trusted_proxies).https;
     req.extensions_mut().insert(Loaded(current));
     let mut res = next.run(req).await;
     if let Some(token) = renewed

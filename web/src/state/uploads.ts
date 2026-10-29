@@ -1,0 +1,42 @@
+// The one upload queue of the page: shared by every folder, so uploads keep going while the person moves around.
+import { useEffect, useState } from "preact/hooks";
+import { UploadQueue, xhrTransport, type Transport } from "../lib/uploads";
+
+let queue: UploadQueue | null = null;
+const uploaded = new Set<(dir: string) => void>();
+
+function make(send: Transport): UploadQueue {
+  const q = new UploadQueue(send, () => {});
+  q.onDone = (dir) => {
+    for (const fn of uploaded) fn(dir);
+  };
+  return q;
+}
+
+export function uploads(): UploadQueue {
+  queue ??= make(xhrTransport);
+  return queue;
+}
+
+/** Tests: a fresh, empty queue over `send`. */
+export function resetUploads(send: Transport): void {
+  queue?.cancelAll();
+  queue = make(send);
+}
+
+/** Calls `fn(dir)` when a batch of uploads into `dir` has settled with at least one file done. */
+export function useUploaded(fn: (dir: string) => void): void {
+  useEffect(() => {
+    uploaded.add(fn);
+    return () => {
+      uploaded.delete(fn);
+    };
+  }, [fn]);
+}
+
+/** Re-renders the caller on every change to `q`. */
+export function useQueue(q: UploadQueue): UploadQueue {
+  const [, setTick] = useState(0);
+  useEffect(() => q.subscribe(() => setTick((n) => n + 1)), [q]);
+  return q;
+}

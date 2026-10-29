@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { App } from "../app";
 import { flush, json, render, waitFor } from "../test/dom";
 import { admin, file, folder, listing, reader, startAt } from "../test/fixtures";
+import { resetUploads } from "../state/uploads";
+import type { Transport } from "../lib/uploads";
 
 function rows(el: HTMLElement): HTMLElement[] {
   return [...el.querySelectorAll<HTMLElement>('.list-body [role="row"]')];
@@ -184,4 +186,118 @@ test("a folder that is gone says so", async () => {
   });
   const el = render(<App />);
   await waitFor(() => assert.match(el.textContent!, /This folder is gone/));
+});
+
+function pick(input: HTMLInputElement, files: File[]) {
+  Object.defineProperty(input, "files", { value: files, configurable: true });
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function okTransport(urls: string[]): Transport {
+  return async (url) => {
+    urls.push(url);
+    return { status: 201, body: "{}" };
+  };
+}
+
+test("Upload › Files sends into this folder and reloads it", async () => {
+  let loads = 0;
+  startAt("/files/photos", admin, {
+    "GET /api/files/photos": () => {
+      loads++;
+      return json({ path: "photos", entries: sample });
+    },
+  });
+  const urls: string[] = [];
+  resetUploads(okTransport(urls));
+  const el = render(<App />);
+  await shown(el);
+  click(button(el, "Upload"));
+  await waitFor(() => assert.ok(button(el, "Files")));
+  assert.ok(button(el, "Folder"));
+  const input = el.querySelector<HTMLInputElement>("input[data-pick=files]")!;
+  assert.ok(input.multiple);
+  pick(input, [new File(["a"], "cover.png")]);
+  await waitFor(() => assert.match(el.textContent!, /Uploaded 1 file to photos\./));
+  assert.deepEqual(urls, ["/api/upload/photos/cover.png"]);
+  await waitFor(() => assert.equal(loads, 2));
+});
+
+test("Upload › Folder keeps the picked folder's paths", async () => {
+  const log = startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "POST /api/folders/2027": () => json({}, 201),
+  });
+  const urls: string[] = [];
+  resetUploads(okTransport(urls));
+  const el = render(<App />);
+  await shown(el);
+  const input = el.querySelector<HTMLInputElement>("input[data-pick=folder]")!;
+  assert.ok(input.hasAttribute("webkitdirectory"));
+  const f = new File(["a"], "cover.png");
+  Object.defineProperty(f, "webkitRelativePath", { value: "2027/cover.png" });
+  pick(input, [f]);
+  await waitFor(() => assert.deepEqual(urls, ["/api/upload/2027/cover.png"]));
+  assert.ok(log.some((r) => r.method === "POST" && r.url.endsWith("/api/folders/2027")));
+  await waitFor(() => assert.match(el.textContent!, /2027\/cover\.png/));
+});
+
+test("dropping a folder on the list uploads it", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "POST /api/folders/trip": () => json({}, 201),
+  });
+  const urls: string[] = [];
+  resetUploads(okTransport(urls));
+  const el = render(<App />);
+  await shown(el);
+  const fileEntry = {
+    isFile: true,
+    isDirectory: false,
+    name: "map.png",
+    file: (ok: (f: File) => void) => ok(new File(["m"], "map.png")),
+  };
+  let reads = 0;
+  const dirEntry = {
+    isFile: false,
+    isDirectory: true,
+    name: "trip",
+    createReader: () => ({ readEntries: (ok: (e: unknown[]) => void) => ok(reads++ === 0 ? [fileEntry] : []) }),
+  };
+  const drop = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(drop, "dataTransfer", {
+    value: { items: [{ kind: "file", webkitGetAsEntry: () => dirEntry }], files: [], types: ["Files"] },
+  });
+  el.querySelector(".files")!.dispatchEvent(drop);
+  assert.ok(drop.defaultPrevented);
+  await waitFor(() => assert.deepEqual(urls, ["/api/upload/trip/map.png"]));
+});
+
+test("the empty folder's Upload opens the file picker", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", []) });
+  resetUploads(okTransport([]));
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
+  const input = el.querySelector<HTMLInputElement>("input[data-pick=files]")!;
+  let opened = 0;
+  input.click = () => {
+    opened++;
+  };
+  click(el.querySelector(".state button")!);
+  assert.equal(opened, 1);
+});
+
+test("the upload panel stays across folders", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "GET /api/files/2026": listing("2026", []),
+  });
+  resetUploads(() => new Promise(() => {}));
+  const el = render(<App />);
+  await shown(el);
+  pick(el.querySelector<HTMLInputElement>("input[data-pick=files]")!, [new File(["a"], "a.txt")]);
+  await waitFor(() => assert.match(el.textContent!, /Uploading 1 of 1/));
+  click(el.querySelector('.list-body a[href="/files/2026"]')!);
+  await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
+  assert.match(el.textContent!, /Uploading 1 of 1/);
 });

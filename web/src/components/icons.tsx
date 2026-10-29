@@ -5,6 +5,8 @@ export const paths = {
   archive: "M4 4h16v5H4z M5 9v11h14V9 M10 13h4",
   back: "M15 6l-6 6 6 6",
   check: "M5 12l5 5 9-10",
+  chevronDown: "M6 9l6 6 6-6",
+  chevronUp: "M6 15l6-6 6 6",
   close: "M6 6l12 12 M18 6L6 18",
   code: "M8 8l-4 4 4 4 M16 8l4 4-4 4 M14 5l-4 14",
   copy: "M9 9h11v11H9z M5 15H4V4h11v1",

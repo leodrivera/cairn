@@ -1,4 +1,5 @@
-// The signed-in frame: sidebar with the brand, places, disk use (admins) and the account; the screen beside it.
+// The signed-in frame: sidebar with the brand, places, disk use (admins) and the account; the screen beside it;
+// the upload panel above both.
 import type { ComponentChildren } from "preact";
 import wordmark from "../../../brand/cairn-wordmark.svg";
 import { api } from "../lib/api";
@@ -6,7 +7,9 @@ import { formatSize } from "../lib/format";
 import { Link, navigate, useRoute } from "../lib/router";
 import { t } from "../i18n/index";
 import { useSession, useUser } from "../state/session";
+import { uploads } from "../state/uploads";
 import { Icon, Mark, type IconName } from "./icons";
+import { UploadPanel } from "./upload-panel";
 
 export function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -14,9 +17,15 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase();
 }
 
-type Props = { space?: { used: number; total: number }; class?: string; children?: ComponentChildren };
+type Props = {
+  space?: { used: number; total: number };
+  class?: string;
+  onDragOver?: (e: DragEvent) => void;
+  onDrop?: (e: DragEvent) => void;
+  children?: ComponentChildren;
+};
 
-export function Shell({ space, class: cls, children }: Props) {
+export function Shell({ space, class: cls, onDragOver, onDrop, children }: Props) {
   const { setUser } = useSession();
   const user = useUser();
   const route = useRoute();
@@ -79,7 +88,10 @@ export function Shell({ space, class: cls, children }: Props) {
           </div>
         </div>
       </nav>
-      <main class={cls ? `screen ${cls}` : "screen"}>{children}</main>
+      <main class={cls ? `screen ${cls}` : "screen"} onDragOver={onDragOver} onDrop={onDrop}>
+        {children}
+      </main>
+      <UploadPanel queue={uploads()} />
     </div>
   );
 }

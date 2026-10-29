@@ -1,9 +1,10 @@
-// A folder: toolbar, breadcrumbs, the listing, and the selection bar.
-import { useEffect, useMemo, useState } from "preact/hooks";
+// A folder: toolbar, breadcrumbs, the listing, and the selection bar. Files dropped on it upload here.
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline } from "../lib/api";
 import { apiUrl, segmentOf } from "../lib/paths";
 import { filterEntries } from "../lib/filter";
 import { downloadUrl, zipForm } from "../lib/actions";
+import { addTree, entriesFromDrop, filesFromPicker, type TreeFile } from "../lib/uploads";
 import { errorText, t, tn } from "../i18n/index";
 import { Shell } from "../components/shell";
 import { Breadcrumbs } from "../components/breadcrumbs";
@@ -13,6 +14,7 @@ import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
 import { Selection } from "../state/selection";
 import { useSession, useUser } from "../state/session";
+import { uploads, useUploaded } from "../state/uploads";
 import type { Entry, Listing } from "../lib/types";
 
 export function Explorer({ path }: { path: string }) {
@@ -26,6 +28,9 @@ export function Explorer({ path }: { path: string }) {
   const [selection] = useState(() => new Selection());
   const [, setTick] = useState(0);
   const touch = () => setTick((n) => n + 1);
+  const [menu, setMenu] = useState(false);
+  const pickFiles = useRef<HTMLInputElement>(null);
+  const pickFolder = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     try {
@@ -44,6 +49,43 @@ export function Explorer({ path }: { path: string }) {
     selection.clear();
     load();
   }, [path]);
+
+  useUploaded(
+    useCallback(
+      (dir: string) => {
+        if (dir === path) load();
+      },
+      [path],
+    ),
+  );
+
+  const upload = (files: TreeFile[]) => {
+    if (files.length) addTree(uploads(), path, files);
+  };
+
+  const picked = (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    setMenu(false);
+    upload(filesFromPicker(input.files ?? []));
+    input.value = "";
+  };
+
+  const onDragOver = (e: DragEvent) => {
+    if (!canWrite || !e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+
+  const onDrop = async (e: DragEvent) => {
+    if (!canWrite || !e.dataTransfer) return;
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    const entries = [...dt.items]
+      .filter((i) => i.kind === "file")
+      .map((i) => i.webkitGetAsEntry?.())
+      .filter((x): x is FileSystemEntry => !!x);
+    upload(entries.length ? await entriesFromDrop(entries) : filesFromPicker(dt.files));
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -93,7 +135,7 @@ export function Explorer({ path }: { path: string }) {
     content = (
       <StatePanel icon="folder" tone="accent" title={t("state.empty.title")} body={t("state.empty.body")}>
         {canWrite && (
-          <button type="button" class="button primary">
+          <button type="button" class="button primary" onClick={() => pickFiles.current?.click()}>
             <Icon name="upload" />
             {t("explorer.upload")}
           </button>
@@ -124,7 +166,7 @@ export function Explorer({ path }: { path: string }) {
   }
 
   return (
-    <Shell space={listing?.space} class="files">
+    <Shell space={listing?.space} class="files" onDragOver={onDragOver} onDrop={onDrop}>
       <div class="toolbar">
         <div class="search">
           <label for="explorer-search" class="visually-hidden">
@@ -166,10 +208,40 @@ export function Explorer({ path }: { path: string }) {
               <Icon name="folderPlus" />
               <span class="label">{t("explorer.newFolder")}</span>
             </button>
-            <button type="button" class="button primary">
-              <Icon name="upload" />
-              {t("explorer.upload")}
-            </button>
+            <div class="menu-anchor">
+              <button
+                type="button"
+                class="button primary"
+                aria-haspopup="true"
+                aria-expanded={menu}
+                onClick={() => setMenu(!menu)}
+              >
+                <Icon name="upload" />
+                {t("explorer.upload")}
+              </button>
+              {menu && (
+                <div class="menu" role="group" aria-label={t("upload.choose")}>
+                  <button type="button" class="menu-item" onClick={() => pickFiles.current?.click()}>
+                    <Icon name="file" />
+                    {t("upload.files")}
+                  </button>
+                  <button type="button" class="menu-item" onClick={() => pickFolder.current?.click()}>
+                    <Icon name="folder" />
+                    {t("upload.folder")}
+                  </button>
+                </div>
+              )}
+            </div>
+            <input ref={pickFiles} data-pick="files" type="file" multiple hidden onChange={picked} />
+            <input
+              ref={pickFolder}
+              data-pick="folder"
+              type="file"
+              multiple
+              hidden
+              {...{ webkitdirectory: "" }}
+              onChange={picked}
+            />
           </>
         )}
       </div>

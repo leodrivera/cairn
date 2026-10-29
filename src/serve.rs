@@ -138,6 +138,26 @@ impl Limits {
     };
 }
 
+/// The router, with the connection's peer address on every request.
+fn with_peer(
+    app: Router,
+    peer: std::net::SocketAddr,
+) -> TowerToHyperService<
+    tower::util::MapRequest<
+        Router,
+        impl FnMut(hyper::Request<hyper::body::Incoming>) -> hyper::Request<hyper::body::Incoming>
+        + Clone,
+    >,
+> {
+    TowerToHyperService::new(tower::ServiceExt::map_request(
+        app,
+        move |mut req: hyper::Request<hyper::body::Incoming>| {
+            req.extensions_mut().insert(crate::http::client::Peer(peer));
+            req
+        },
+    ))
+}
+
 /// Serves HTTP/1.1 on `listener` until `stop` completes, then waits at most `limits.grace` for open connections.
 pub async fn serve_on(
     listener: TcpListener,
@@ -146,13 +166,12 @@ pub async fn serve_on(
     stop: impl Future<Output = ()>,
 ) {
     let graceful = GracefulShutdown::new();
-    let service = TowerToHyperService::new(app);
     let mut stop = std::pin::pin!(stop);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let stream = match accepted {
-                    Ok((stream, _)) => stream,
+                let (stream, peer) = match accepted {
+                    Ok(pair) => pair,
                     Err(e) => {
                         // Out of file descriptors and similar: back off instead of spinning.
                         tracing::warn!(event = "http.accept_failed", error = %e);
@@ -163,7 +182,7 @@ pub async fn serve_on(
                 let conn = http1::Builder::new()
                     .timer(TokioTimer::new())
                     .header_read_timeout(limits.header_read)
-                    .serve_connection(TokioIo::new(stream), service.clone());
+                    .serve_connection(TokioIo::new(stream), with_peer(app.clone(), peer));
                 let conn = graceful.watch(conn);
                 tokio::spawn(async move {
                     let _ = conn.await;
@@ -256,5 +275,39 @@ mod tests {
             done.is_ok(),
             "server still running 1 s after stop with a 200 ms grace period"
         );
+    }
+
+    #[tokio::test]
+    async fn peer_is_inserted() {
+        use crate::http::client::Peer;
+        use axum::Extension;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(|Extension(Peer(peer)): Extension<Peer>| async move {
+                peer.ip().to_string()
+            }),
+        );
+        tokio::spawn(serve_on(
+            listener,
+            app,
+            Limits::DEFAULT,
+            std::future::pending(),
+        ));
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.0\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).await.unwrap();
+        assert!(
+            reply.starts_with("HTTP/1.0 200") || reply.starts_with("HTTP/1.1 200"),
+            "{reply}"
+        );
+        assert!(reply.ends_with("127.0.0.1"), "{reply}");
     }
 }

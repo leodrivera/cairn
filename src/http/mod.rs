@@ -1,6 +1,7 @@
 //! HTTP: the router every route hangs from.
 
 pub mod assets;
+pub mod client;
 pub mod headers;
 
 use std::sync::Arc;

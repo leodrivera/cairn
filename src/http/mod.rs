@@ -151,6 +151,69 @@ mod tests {
         assert_eq!(header(&res, "cache-control"), "no-cache");
     }
 
+    async fn send(req: Request<Body>) -> axum::response::Response {
+        router(test_state()).oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn serves_brotli() {
+        let res = send(
+            Request::get("/")
+                .header("accept-encoding", "gzip, br")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(header(&res, "content-encoding"), "br");
+        assert_eq!(header(&res, "vary"), "accept-encoding");
+        assert!(header(&res, "content-type").starts_with("text/html"));
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let want = std::fs::read("web/dist/index.html.br").unwrap();
+        assert_eq!(body.as_ref(), want.as_slice());
+    }
+
+    #[tokio::test]
+    async fn serves_gzip() {
+        let res = send(
+            Request::get("/")
+                .header("accept-encoding", "gzip")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(header(&res, "content-encoding"), "gzip");
+    }
+
+    #[tokio::test]
+    async fn serves_identity_without_header() {
+        let res = get("/").await;
+        assert!(res.headers().get("content-encoding").is_none());
+        assert_eq!(header(&res, "vary"), "accept-encoding");
+        assert!(body_text(res).await.starts_with("<!doctype html>"));
+    }
+
+    #[tokio::test]
+    async fn post_to_page_is_405() {
+        let res = send(Request::post("/files/a").body(Body::empty()).unwrap()).await;
+        assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(header(&res, "allow"), "GET, HEAD");
+    }
+
+    #[tokio::test]
+    async fn head_works() {
+        let res = send(Request::head("/").body(Body::empty()).unwrap()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(header(&res, "content-type").starts_with("text/html"));
+    }
+
+    #[tokio::test]
+    async fn compressed_path_not_exposed() {
+        let res = send(Request::get("/index.html.br").body(Body::empty()).unwrap()).await;
+        assert!(header(&res, "content-type").starts_with("text/html"));
+        assert!(res.headers().get("content-encoding").is_none());
+    }
+
     #[tokio::test]
     async fn security_headers_everywhere() {
         for path in ["/", "/api/health", "/api/nope"] {

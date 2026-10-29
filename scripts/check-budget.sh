@@ -52,8 +52,8 @@ bytes=$(awk -v u="$usage" 'BEGIN {
 }')
 report memory "$bytes" $((memory_mb * 1048576)) 1048576 MB
 
-# Front-end, gzipped
-web=$(cat "$dist"/assets/* | gzip -9 | wc -c)
+# Front-end, gzipped (the pre-compressed copies next to each file are not counted)
+web=$(find "$dist/assets" -type f ! -name "*.br" ! -name "*.gz" -exec cat {} + | gzip -9 | wc -c)
 report "front-end" "$web" $((web_kb * 1024)) 1024 "kB gzipped"
 
 exit "$failed"

@@ -134,12 +134,18 @@ pub fn delete_for_user(db: &Db, user_id: i64, except_token: Option<&str>) -> rus
     .map(|_| ())
 }
 
-/// Ends a user's sessions that started with `method`.
-pub fn delete_for_user_method(db: &Db, user_id: i64, method: Method) -> rusqlite::Result<()> {
+/// Ends a user's sessions that started with `method`, except the one holding `except_token`.
+pub fn delete_for_user_method(
+    db: &Db,
+    user_id: i64,
+    method: Method,
+    except_token: Option<&str>,
+) -> rusqlite::Result<()> {
+    let keep = except_token.map(digest).unwrap_or_default();
     db.with(|c| {
         c.execute(
-            "DELETE FROM sessions WHERE user_id = ?1 AND method = ?2",
-            params![user_id, method.as_str()],
+            "DELETE FROM sessions WHERE user_id = ?1 AND method = ?2 AND id != ?3",
+            params![user_id, method.as_str(), keep],
         )
     })
     .map(|_| ())

@@ -1,6 +1,6 @@
 //! Users admin API: `/api/users`. Admins only.
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
@@ -13,7 +13,7 @@ use crate::auth::session::{self, Method};
 use crate::http::AppState;
 use crate::http::current_user::AdminUser;
 use crate::http::error::ApiError;
-use crate::http::json::StrictJson;
+use crate::http::json::{IdPath, StrictJson};
 use crate::users::{self, NewUser, Perms, UserPatch};
 
 pub fn routes() -> Router<AppState> {
@@ -94,10 +94,15 @@ struct Update {
 async fn update(
     State(s): State<AppState>,
     AdminUser(by): AdminUser,
-    Path(id): Path<i64>,
+    IdPath(id): IdPath,
     StrictJson(b): StrictJson<Update>,
 ) -> Result<Json<Value>, ApiError> {
     let before = users::by_id(&s.db, id)?.ok_or(users::UserError::NotFound)?;
+    if let Some(e) = &b.email
+        && users::normalize_email(e).is_none()
+    {
+        return Err(users::UserError::Invalid("Enter a valid e-mail address.").into());
+    }
     if id == by.session.user.id
         && b.email
             .as_ref()
@@ -143,7 +148,7 @@ struct SetPassword {
 async fn set_password(
     State(s): State<AppState>,
     AdminUser(by): AdminUser,
-    Path(id): Path<i64>,
+    IdPath(id): IdPath,
     StrictJson(b): StrictJson<SetPassword>,
 ) -> Result<Json<Value>, ApiError> {
     if !policy_ok(&b.password) {
@@ -165,7 +170,7 @@ async fn set_password(
 async fn remove_password(
     State(s): State<AppState>,
     AdminUser(by): AdminUser,
-    Path(id): Path<i64>,
+    IdPath(id): IdPath,
 ) -> Result<Json<Value>, ApiError> {
     if !sso_on(&s) {
         return Err(ApiError::conflict(
@@ -175,7 +180,8 @@ async fn remove_password(
     }
     users::by_id(&s.db, id)?.ok_or(users::UserError::NotFound)?;
     users::set_password(&s.db, id, None)?;
-    session::delete_for_user_method(&s.db, id, Method::Password)?;
+    let keep = (id == by.session.user.id).then_some(by.token.as_str());
+    session::delete_for_user_method(&s.db, id, Method::Password, keep)?;
     tracing::info!(
         event = "auth.password_removed",
         by = by.session.user.id,
@@ -187,7 +193,7 @@ async fn remove_password(
 async fn delete(
     State(s): State<AppState>,
     AdminUser(by): AdminUser,
-    Path(id): Path<i64>,
+    IdPath(id): IdPath,
 ) -> Result<Response, ApiError> {
     users::delete(&s.db, id)?;
     tracing::info!(event = "users.deleted", by = by.session.user.id, user = id);

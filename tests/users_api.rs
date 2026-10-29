@@ -290,3 +290,60 @@ async fn remove_password_only_with_sso() {
     let created = create(&h, &a, "sso@example.com", None).await;
     assert_eq!(created["user"]["hasPassword"], false);
 }
+
+#[tokio::test]
+async fn removing_own_password_keeps_current_session() {
+    let h = harness(OIDC_ON);
+    let a = admin(&h).await;
+    let me = Req::get("/api/me").cookie(&a).send(&h.app).await.json["user"]["id"]
+        .as_i64()
+        .unwrap();
+    let res = Req::delete(&format!("/api/users/{me}/password"))
+        .cookie(&a)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert_eq!(
+        Req::get("/api/me").cookie(&a).send(&h.app).await.json["user"]["hasPassword"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn bad_id_is_json_400() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let res = Req::patch("/api/users/abc")
+        .cookie(&a)
+        .json(json!({ "name": "X" }))
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "bad_request")
+    );
+    let res = Req::delete("/api/users/abc").cookie(&a).send(&h.app).await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "bad_request")
+    );
+}
+
+#[tokio::test]
+async fn own_invalid_email_says_invalid() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let me = Req::get("/api/me").cookie(&a).send(&h.app).await.json["user"]["id"]
+        .as_i64()
+        .unwrap();
+    let res = Req::patch(&format!("/api/users/{me}"))
+        .cookie(&a)
+        .json(json!({ "email": "not an e-mail" }))
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "invalid")
+    );
+    assert_eq!(res.json["message"], "Enter a valid e-mail address.");
+}

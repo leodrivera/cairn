@@ -9,4 +9,5 @@ pub mod http;
 pub mod log;
 pub mod serve;
 pub mod startup;
+pub mod user_cli;
 pub mod users;

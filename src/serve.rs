@@ -31,6 +31,16 @@ pub fn run(config: Config) -> ExitCode {
     if !problems.is_empty() {
         return report_invalid(&problems);
     }
+    let db = match crate::db::Db::open(&crate::user_cli::db_path(&config)) {
+        Ok(db) => db,
+        Err(message) => return report_invalid(&[message]),
+    };
+    if crate::users::count(&db).unwrap_or(0) == 0 {
+        tracing::warn!(
+            event = "startup.no_users",
+            hint = "docker exec -it cairn /cairn user add \"Admin\" admin@example.com --admin --password",
+        );
+    }
 
     let runtime = if config.threads == 1 {
         tokio::runtime::Builder::new_current_thread()

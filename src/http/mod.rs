@@ -8,6 +8,7 @@ pub mod current_user;
 pub mod error;
 pub mod headers;
 pub mod json;
+pub mod users_routes;
 
 use std::sync::Arc;
 
@@ -51,6 +52,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .merge(auth_routes::routes())
+        .merge(users_routes::routes())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

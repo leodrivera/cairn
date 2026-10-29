@@ -134,6 +134,17 @@ pub fn delete_for_user(db: &Db, user_id: i64, except_token: Option<&str>) -> rus
     .map(|_| ())
 }
 
+/// Ends a user's sessions that started with `method`.
+pub fn delete_for_user_method(db: &Db, user_id: i64, method: Method) -> rusqlite::Result<()> {
+    db.with(|c| {
+        c.execute(
+            "DELETE FROM sessions WHERE user_id = ?1 AND method = ?2",
+            params![user_id, method.as_str()],
+        )
+    })
+    .map(|_| ())
+}
+
 /// A short label for the Profile screen, like "Firefox on Linux".
 pub fn label_from_user_agent(ua: &str) -> String {
     let browser = ["Firefox", "Edg", "Chrome", "Safari"]

@@ -1,6 +1,7 @@
 // The signed-in frame: sidebar with the brand, places, disk use (admins) and the account; the screen beside it;
 // the upload panel above both.
 import type { ComponentChildren } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
 import wordmark from "../../../brand/cairn-wordmark.svg";
 import { api } from "../lib/api";
 import { formatSize } from "../lib/format";
@@ -18,6 +19,21 @@ export function initials(name: string): string {
   return letters.toLocaleUpperCase();
 }
 
+const NARROW = "(max-width: 720px)";
+
+/** True on a phone-sized screen; follows rotation and resizes. Decides structure only; looks stay in CSS. */
+export function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
+  useEffect(() => {
+    const m = matchMedia(NARROW);
+    const update = () => setNarrow(m.matches);
+    update();
+    m.addEventListener("change", update);
+    return () => m.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
+
 type Props = {
   space?: { used: number; total: number };
   class?: string;
@@ -32,6 +48,30 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
   const { setUser } = useSession();
   const user = useUser();
   const route = useRoute();
+  const narrow = useNarrow();
+  const [open, setOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const routeKey = JSON.stringify(route);
+
+  useEffect(() => setOpen(false), [routeKey, narrow]);
+
+  const sheet = useRef<HTMLElement>(null);
+
+  const closeSheet = () => {
+    setOpen(false);
+    menuButton.current?.focus();
+  };
+
+  // Open: focus moves into the sheet, and Escape anywhere closes it.
+  useEffect(() => {
+    if (!open) return;
+    sheet.current?.querySelector<HTMLElement>(".places a")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeSheet();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
   const place = route.name === "files" || route.name === "view" ? "files" : route.name === "settings" ? route.page : "";
 
   const signOut = async () => {
@@ -49,9 +89,13 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
     { href: "/settings/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
   ];
 
-  return (
-    <div class="shell">
-      <nav class="sidebar" aria-label={t("nav.primary")}>
+  const sidebar = (
+      <nav ref={sheet} class={narrow ? "sidebar sheet" : "sidebar"} aria-label={t("nav.primary")}>
+        {narrow && (
+          <button type="button" class="icon-button sheet-close" aria-label={t("shell.closeMenu")} onClick={closeSheet}>
+            <Icon name="close" />
+          </button>
+        )}
         <Link href="/files/" class="brand">
           <Mark />
           <span class="wordmark" aria-label="Cairn" dangerouslySetInnerHTML={{ __html: wordmark }} />
@@ -82,6 +126,30 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
           </div>
         </div>
       </nav>
+  );
+
+  return (
+    <div class={narrow ? "shell narrow" : "shell"}>
+      {narrow && (
+        <header class="topbar">
+          <button
+            ref={menuButton}
+            type="button"
+            class="icon-button"
+            aria-label={t("shell.openMenu")}
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+          >
+            <Icon name="menu" />
+          </button>
+          <Link href="/files/" class="brand">
+            <Mark />
+            <span class="wordmark" aria-label="Cairn" dangerouslySetInnerHTML={{ __html: wordmark }} />
+          </Link>
+        </header>
+      )}
+      {(!narrow || open) && sidebar}
+      {narrow && open && <div class="sheet-backdrop" onClick={closeSheet} aria-hidden="true" />}
       <main class={cls ? `screen ${cls}` : "screen"} onDragOver={onDragOver} onDrop={onDrop}>
         {children}
       </main>

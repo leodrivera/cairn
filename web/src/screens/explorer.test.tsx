@@ -2,7 +2,7 @@ import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
-import { flush, json, render, waitFor } from "../test/dom";
+import { flush, json, phoneWidth, render, waitFor } from "../test/dom";
 import { admin, file, folder, listing, reader, startAt } from "../test/fixtures";
 import { resetUploads } from "../state/uploads";
 import type { Transport } from "../lib/uploads";
@@ -437,4 +437,72 @@ test("new folder from the toolbar", async () => {
   await flush();
   submit(el);
   await waitFor(() => assert.match(el.textContent!, /Created folder 2027\./));
+});
+
+const yesterday = Math.floor((Date.now() - 86_400_000) / 1000);
+
+test("phone: one column with a meta line", async (t) => {
+  t.after(phoneWidth());
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", [folder("2026", { modified: yesterday }), file("trail-ridge.jpg", { modified: yesterday })]),
+  });
+  const el = render(<App />);
+  await shown(el);
+  const r = rows(el);
+  assert.equal(r[1].querySelector(".meta")!.textContent, "4.2 MB · Yesterday");
+  assert.equal(r[0].querySelector(".meta")!.textContent, "Yesterday");
+  assert.ok(!el.querySelector(".list-head"));
+});
+
+test("phone: a long press starts selection mode; Select all; close", async (t) => {
+  t.after(phoneWidth());
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const row = rows(el)[3];
+  row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", clientX: 5, clientY: 5 }));
+  await new Promise((r) => setTimeout(r, 560));
+  row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch" }));
+  const swallowed = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  row.querySelector("a.name")!.dispatchEvent(swallowed);
+  assert.ok(swallowed.defaultPrevented);
+  assert.equal(location.pathname, "/files/");
+  await waitFor(() => assert.match(el.textContent!, /1 selected/));
+  const bar = el.querySelector(".bottom-bar")!;
+  assert.ok(bar);
+  assert.deepEqual(
+    [...bar.querySelectorAll("button")].map((b) => b.textContent!.trim()),
+    ["Download", "Move", "Delete"],
+  );
+  button(el, "Select all").click();
+  await waitFor(() => assert.match(el.textContent!, /6 selected/));
+  el.querySelector<HTMLButtonElement>('button[aria-label="Clear selection"]')!.click();
+  await waitFor(() => assert.ok(!el.querySelector(".bottom-bar")));
+});
+
+test("phone: a short press does not select", async (t) => {
+  t.after(phoneWidth());
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const row = rows(el)[3];
+  row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
+  await new Promise((r) => setTimeout(r, 100));
+  row.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch" }));
+  await new Promise((r) => setTimeout(r, 500));
+  await flush();
+  assert.ok(!el.querySelector(".bottom-bar"));
+});
+
+test("phone: the toolbar folds New folder and the view into More", async (t) => {
+  t.after(phoneWidth());
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  assert.ok(!el.querySelector('.toolbar [role="group"][aria-label="View"]'));
+  assert.ok(button(el, "Upload"));
+  el.querySelector<HTMLButtonElement>('.toolbar button[aria-label="More"]')!.click();
+  await waitFor(() => assert.ok(el.querySelector('.toolbar .menu')));
+  const items = [...el.querySelectorAll(".toolbar .menu button")].map((b) => b.textContent!.trim());
+  assert.deepEqual(items, ["New folder", "List view", "Gallery view"]);
 });

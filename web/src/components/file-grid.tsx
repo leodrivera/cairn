@@ -4,7 +4,7 @@ import { apiUrl, join, segmentOf } from "../lib/paths";
 import { formatSize } from "../lib/format";
 import { gridRange, useScroller } from "../lib/windowing";
 import { t } from "../i18n/index";
-import { below, EntryName, menuKey } from "./file-list";
+import { below, EntryName, menuKey, useLongPress } from "./file-list";
 import { FileIcon } from "./file-icon";
 import { Icon } from "./icons";
 import type { Entry } from "../lib/types";
@@ -21,9 +21,11 @@ type Props = {
   thumbnails: boolean;
   onSelect(e: Entry, ev: MouseEvent): void;
   onMore?(e: Entry, at: { x: number; y: number }): void;
+  onLongPress?(e: Entry): void;
 };
 
-export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore }: Props) {
+export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore, onLongPress }: Props) {
+  const pressOf = useLongPress(onLongPress);
   const scroller = useRef<HTMLDivElement>(null);
   const { top, height, width } = useScroller(scroller);
   const columns = Math.max(2, Math.floor(width / TILE_WIDTH));
@@ -39,14 +41,17 @@ export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore
         {entries.slice(start, end).map((e) => {
           const seg = segmentOf(e);
           const on = selection.has(seg);
+          const { pressed, ...press } = pressOf(e);
           const image = thumbnails && !e.outside && e.kind !== "folder" && e.mime.startsWith("image/");
           return (
             <li
               key={seg}
+              {...press}
               class={on ? "tile on" : "tile"}
               onContextMenu={(ev) => {
                 if (!onMore) return;
                 ev.preventDefault();
+                if (pressed?.()) return;
                 onMore(e, { x: ev.clientX, y: ev.clientY });
               }}
               onKeyDown={(ev) => {

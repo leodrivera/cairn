@@ -1,5 +1,6 @@
 // The folder as a windowed table: select, name, size, modified, more.
 import { useRef } from "preact/hooks";
+import { useNarrow } from "./shell";
 import { Link, href } from "../lib/router";
 import { join, segmentOf } from "../lib/paths";
 import { downloadUrl } from "../lib/actions";
@@ -30,12 +31,59 @@ export function below(el: HTMLElement): { x: number; y: number } {
   return { x: r.left, y: r.bottom };
 }
 
+const PRESS_MS = 500;
+
+/**
+ * A long press (500 ms without moving) on an item calls `onFire`; the click that ends it is swallowed so the item
+ * does not also open. One press at a time, so the state lives in one ref for the whole list.
+ */
+export function useLongPress(onFire?: (e: Entry) => void) {
+  const press = useRef({ timer: 0 as ReturnType<typeof setTimeout> | 0, fired: false, touch: false, x: 0, y: 0 });
+  return (e: Entry) => {
+    if (!onFire) return {};
+    const p = press.current;
+    const stop = () => {
+      if (p.timer) clearTimeout(p.timer);
+      p.timer = 0;
+    };
+    return {
+      onPointerDown: (ev: PointerEvent) => {
+        if (ev.button > 0) return;
+        stop();
+        p.fired = false;
+        p.touch = ev.pointerType !== "mouse";
+        p.x = ev.clientX;
+        p.y = ev.clientY;
+        p.timer = setTimeout(() => {
+          p.timer = 0;
+          p.fired = true;
+          onFire(e);
+        }, PRESS_MS);
+      },
+      onPointerMove: (ev: PointerEvent) => {
+        if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 10) stop();
+      },
+      onPointerUp: stop,
+      onPointerCancel: stop,
+      onClickCapture: (ev: MouseEvent) => {
+        if (!p.fired) return;
+        p.fired = false;
+        ev.preventDefault();
+        ev.stopPropagation();
+      },
+      /** Touch browsers open their own menu on a long press; the press selects instead. */
+      pressed: () => p.touch && (p.timer !== 0 || p.fired),
+    };
+  };
+}
+
 type Props = {
   dir: string;
   entries: Entry[];
   selection: Selection;
   onSelect(e: Entry, ev: MouseEvent): void;
   onMore?(e: Entry, at: { x: number; y: number }): void;
+  onLongPress?(e: Entry): void;
 };
 
 export function EntryName({ dir, entry }: { dir: string; entry: Entry }) {
@@ -69,12 +117,15 @@ export function EntryName({ dir, entry }: { dir: string; entry: Entry }) {
   );
 }
 
-export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
+export function FileList({ dir, entries, selection, onSelect, onMore, onLongPress }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
+  const narrow = useNarrow();
+  const pressOf = useLongPress(onLongPress);
   const { start, end, padTop, padBottom } = useWindow(scroller, entries.length, ROW_HEIGHT);
   const now = new Date();
   return (
     <div class="list" role="table" aria-label={t("explorer.table")} aria-rowcount={entries.length + 1}>
+      {!narrow && (
       <div class="list-head" role="rowgroup">
         <div class="list-row head" role="row">
           <span role="columnheader" class="cell-check">
@@ -92,14 +143,17 @@ export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
           </span>
         </div>
       </div>
+      )}
       <div class="list-body" role="rowgroup" ref={scroller}>
         <div style={{ height: `${padTop}px` }} aria-hidden="true" />
         {entries.slice(start, end).map((e, i) => {
           const seg = segmentOf(e);
           const on = selection.has(seg);
+          const { pressed, ...press } = pressOf(e);
           return (
             <div
               key={seg}
+              {...press}
               class={on ? "list-row on" : "list-row"}
               role="row"
               aria-rowindex={start + i + 2}
@@ -107,6 +161,7 @@ export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
               onContextMenu={(ev) => {
                 if (!onMore) return;
                 ev.preventDefault();
+                if (pressed?.()) return;
                 onMore(e, { x: ev.clientX, y: ev.clientY });
               }}
               onKeyDown={(ev) => {
@@ -128,14 +183,29 @@ export function FileList({ dir, entries, selection, onSelect, onMore }: Props) {
               </span>
               <span role="cell" class="cell-name">
                 <FileIcon entry={e} />
-                <EntryName dir={dir} entry={e} />
+                {narrow ? (
+                  <span class="name-stack">
+                    <EntryName dir={dir} entry={e} />
+                    <span class="meta mono">
+                      {e.kind === "folder" || e.outside
+                        ? formatWhen(e.modified, now)
+                        : `${formatSize(e.size)} · ${formatWhen(e.modified, now)}`}
+                    </span>
+                  </span>
+                ) : (
+                  <EntryName dir={dir} entry={e} />
+                )}
               </span>
-              <span role="cell" class="cell-size mono">
-                {e.kind === "folder" || e.outside ? "—" : formatSize(e.size)}
-              </span>
-              <span role="cell" class="cell-when">
-                {formatWhen(e.modified, now)}
-              </span>
+              {!narrow && (
+                <>
+                  <span role="cell" class="cell-size mono">
+                    {e.kind === "folder" || e.outside ? "—" : formatSize(e.size)}
+                  </span>
+                  <span role="cell" class="cell-when">
+                    {formatWhen(e.modified, now)}
+                  </span>
+                </>
+              )}
               <span role="cell" class="cell-more">
                 {onMore && (
                   <button

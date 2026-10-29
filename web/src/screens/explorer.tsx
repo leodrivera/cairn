@@ -6,7 +6,7 @@ import { filterEntries } from "../lib/filter";
 import { downloadUrl, failureOfItem, newFolder, remove, rename, transfer, zipForm, type Failed } from "../lib/actions";
 import { addTree, entriesFromDrop, filesFromPicker, type TreeFile } from "../lib/uploads";
 import { errorText, t, tn } from "../i18n/index";
-import { Shell } from "../components/shell";
+import { Shell, useNarrow } from "../components/shell";
 import { Breadcrumbs } from "../components/breadcrumbs";
 import { FileList, opensInViewer } from "../components/file-list";
 import { FileGrid } from "../components/file-grid";
@@ -45,6 +45,8 @@ export function Explorer({ path }: { path: string }) {
   const [, setTick] = useState(0);
   const touch = () => setTick((n) => n + 1);
   const [menu, setMenu] = useState(false);
+  const [tools, setTools] = useState(false);
+  const narrow = useNarrow();
   const [itemMenu, setItemMenu] = useState<{ entry: Entry; at: { x: number; y: number } } | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const pickFiles = useRef<HTMLInputElement>(null);
@@ -139,6 +141,17 @@ export function Explorer({ path }: { path: string }) {
     const seg = segmentOf(e);
     if (ev.shiftKey) selection.range(seg, order);
     else selection.toggle(seg);
+    touch();
+  };
+
+  const clearSelection = () => {
+    selection.clear();
+    touch();
+  };
+
+  /** A long press on a phone selects the item; from then on taps on checkboxes add more. */
+  const pressSelect = (e: Entry) => {
+    selection.toggle(segmentOf(e));
     touch();
   };
 
@@ -260,9 +273,17 @@ export function Explorer({ path }: { path: string }) {
           thumbnails={session!.config.thumbnails}
           onSelect={select}
           onMore={openMenu}
+          onLongPress={narrow ? pressSelect : undefined}
         />
       ) : (
-        <FileList dir={path} entries={shown} selection={selection} onSelect={select} onMore={openMenu} />
+        <FileList
+          dir={path}
+          entries={shown}
+          selection={selection}
+          onSelect={select}
+          onMore={openMenu}
+          onLongPress={narrow ? pressSelect : undefined}
+        />
       );
   }
 
@@ -283,6 +304,7 @@ export function Explorer({ path }: { path: string }) {
             onInput={(e) => setQuery(e.currentTarget.value)}
           />
         </div>
+        {!narrow && (
         <div class="segmented" role="group" aria-label={t("explorer.view")}>
           <button
             type="button"
@@ -303,17 +325,20 @@ export function Explorer({ path }: { path: string }) {
             <Icon name="grid" />
           </button>
         </div>
+        )}
         {canWrite && (
           <>
-            <button
-              type="button"
-              class="button"
-              aria-label={t("explorer.newFolder")}
-              onClick={() => setDialog({ kind: "newFolder" })}
-            >
-              <Icon name="folderPlus" />
-              <span class="label">{t("explorer.newFolder")}</span>
-            </button>
+            {!narrow && (
+              <button
+                type="button"
+                class="button"
+                aria-label={t("explorer.newFolder")}
+                onClick={() => setDialog({ kind: "newFolder" })}
+              >
+                <Icon name="folderPlus" />
+                <span class="label">{t("explorer.newFolder")}</span>
+              </button>
+            )}
             <div class="menu-anchor">
               <button
                 type="button"
@@ -350,10 +375,75 @@ export function Explorer({ path }: { path: string }) {
             />
           </>
         )}
+        {narrow && (
+          <div class="menu-anchor">
+            <button
+              type="button"
+              class="icon-button"
+              aria-label={t("explorer.moreTools")}
+              aria-haspopup="true"
+              aria-expanded={tools}
+              onClick={() => setTools(!tools)}
+            >
+              <Icon name="more" />
+            </button>
+            {tools && (
+              <div class="menu" role="group" aria-label={t("explorer.moreTools")}>
+                {canWrite && (
+                  <button
+                    type="button"
+                    class="menu-item"
+                    onClick={() => {
+                      setTools(false);
+                      setDialog({ kind: "newFolder" });
+                    }}
+                  >
+                    <Icon name="folderPlus" />
+                    {t("explorer.newFolder")}
+                  </button>
+                )}
+                {(["list", "gallery"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    class="menu-item"
+                    aria-pressed={view === v}
+                    onClick={() => {
+                      setTools(false);
+                      switchView(v);
+                    }}
+                  >
+                    <Icon name={v === "list" ? "list" : "grid"} />
+                    {t(v === "list" ? "explorer.listView" : "explorer.galleryView")}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div class="crumb-row">
-        <Breadcrumbs path={path} />
-        {selection.size > 0 && (
+        {narrow && selection.size > 0 ? (
+          <div class="select-head" role="toolbar" aria-label={t("explorer.selectionTools")}>
+            <button type="button" class="icon-button" aria-label={t("explorer.clearSelection")} onClick={clearSelection}>
+              <Icon name="close" />
+            </button>
+            <span class="count">{tn("explorer.selected", selection.size)}</span>
+            <button
+              type="button"
+              class="button quiet"
+              onClick={() => {
+                selection.all(order);
+                touch();
+              }}
+            >
+              {t("explorer.selectAll")}
+            </button>
+          </div>
+        ) : (
+          <Breadcrumbs path={path} />
+        )}
+        {!narrow && selection.size > 0 && (
           <div class="selection-bar" role="toolbar" aria-label={t("explorer.selectionTools")}>
             <span class="count">{tn("explorer.selected", selection.size)}</span>
             <button type="button" class="button quiet" onClick={download}>
@@ -391,6 +481,30 @@ export function Explorer({ path }: { path: string }) {
         )}
       </div>
       {content}
+      {narrow && selection.size > 0 && (
+        <div class="bottom-bar" role="toolbar" aria-label={t("explorer.selectionTools")}>
+          <button type="button" class="bar-button" onClick={download}>
+            <Icon name="download" />
+            <span>{t("explorer.download")}</span>
+          </button>
+          {canWrite && (
+            <>
+              <button type="button" class="bar-button" onClick={() => setDialog({ kind: "move", items: chosen })}>
+                <Icon name="move" />
+                <span>{t("explorer.move")}</span>
+              </button>
+              <button
+                type="button"
+                class="bar-button danger-text"
+                onClick={() => setDialog({ kind: "delete", items: chosen })}
+              >
+                <Icon name="trash" />
+                <span>{t("explorer.delete")}</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {itemMenu && (
         <ContextMenu
           at={itemMenu.at}

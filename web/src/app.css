@@ -1603,3 +1603,150 @@ fieldset.perms {
     bottom: 16px;
   }
 }
+
+/* Phone layout. Rows keep their 52 px height: the list's windowing counts on it. */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--cairn-line);
+  background: var(--cairn-surface);
+}
+
+.sheet-close {
+  align-self: flex-end;
+  margin: -12px -8px -16px 0;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 34;
+  background: color-mix(in srgb, var(--cairn-bg) 70%, transparent);
+}
+
+.name-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.name-stack .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--cairn-text-micro);
+  color: var(--cairn-muted);
+}
+
+.select-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.select-head .count {
+  flex: 1;
+  font-weight: 600;
+}
+
+.bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  justify-content: space-around;
+  padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--cairn-line);
+  background: var(--cairn-surface);
+}
+
+.bar-button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  border: 0;
+  background: transparent;
+  font-size: var(--cairn-text-micro);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .shell.narrow {
+    flex-direction: column;
+  }
+
+  .sidebar.sheet {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(300px, 85vw);
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .screen {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .screen.files {
+    height: calc(100vh - 57px);
+  }
+
+  .toolbar {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .list-row {
+    grid-template-columns: 52px minmax(0, 1fr) 48px;
+  }
+
+  .list {
+    border-radius: var(--cairn-radius-m);
+  }
+
+  .files:has(.bottom-bar) .list-body,
+  .files:has(.bottom-bar) .grid-scroll {
+    padding-bottom: 72px;
+  }
+
+  .upload-panel {
+    bottom: 16px;
+  }
+
+  .settings-card {
+    padding: 16px;
+  }
+
+  .users-table th:nth-child(2),
+  .users-table td:nth-child(2) {
+    display: none;
+  }
+
+  .dialog-buttons {
+    flex-wrap: wrap;
+  }
+}

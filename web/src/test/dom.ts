@@ -96,3 +96,21 @@ export function buttonNamed(root: HTMLElement, text: string): HTMLButtonElement 
   if (!b) throw new Error(`no button "${text}"`);
   return b as HTMLButtonElement;
 }
+
+/** Makes `(max-width: 720px)` match (a phone) or not. Returns a function that puts the real matchMedia back. */
+export function phoneWidth(on = true): () => void {
+  const real = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: on && query.includes("max-width: 720px"),
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return () => {
+    window.matchMedia = real;
+  };
+}

@@ -122,8 +122,8 @@ mod tests {
     #[test]
     fn unicode_kept() {
         assert_eq!(
-            p("Relatório #1 (50%) ✓.txt").to_string(),
-            "Relatório #1 (50%) ✓.txt"
+            p("Report #1 (50%) ✓ café.txt").to_string(),
+            "Report #1 (50%) ✓ café.txt"
         );
     }
 

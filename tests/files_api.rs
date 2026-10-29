@@ -70,7 +70,7 @@ async fn lists_root_folders_first() {
 async fn lists_subfolder_with_unicode_name() {
     let (h, dir) = harness_with_root(&[]);
     let (c, s) = maria(&h, &dir, RW).await;
-    let folder = "Relatório #1 (50%) ✓";
+    let folder = "Report #1 (50%) ✓ café";
     touch(&s.join(folder).join("x.txt"), "x");
     let res = Req::get(&format!("/api/files/{}", enc(folder)))
         .cookie(&c)
@@ -176,7 +176,7 @@ const RAW_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src 's
 async fn downloads_file() {
     let (h, dir) = harness_with_root(&[]);
     let (c, s) = maria(&h, &dir, RW).await;
-    let name = "Relatório #1 (50%) ✓.txt";
+    let name = "Report #1 (50%) ✓ café.txt";
     touch(&s.join(name), "hello world");
     let res = Req::get(&format!("/api/raw/{}", enc(name)))
         .cookie(&c)
@@ -304,15 +304,15 @@ fn temps(dir: &Path) -> Vec<String> {
 async fn uploads_new_file() {
     let (h, dir) = harness_with_root(&[]);
     let (c, s) = maria(&h, &dir, RW).await;
-    let res = Req::put(&format!("/api/upload/{}", enc("nova ✓.txt")))
+    let res = Req::put(&format!("/api/upload/{}", enc("new ✓ café.txt")))
         .cookie(&c)
         .bytes(b"content")
         .send(&h.app)
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
-    assert_eq!(res.json["entry"]["name"], "nova ✓.txt");
+    assert_eq!(res.json["entry"]["name"], "new ✓ café.txt");
     assert_eq!(res.json["entry"]["size"], 7);
-    assert_eq!(std::fs::read(s.join("nova ✓.txt")).unwrap(), b"content");
+    assert_eq!(std::fs::read(s.join("new ✓ café.txt")).unwrap(), b"content");
     assert!(temps(&s).is_empty());
 }
 

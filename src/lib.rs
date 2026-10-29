@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod db;
 pub mod health;
 pub mod http;
 pub mod log;

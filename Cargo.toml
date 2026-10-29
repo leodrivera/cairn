@@ -12,6 +12,7 @@ hyper = { version = "1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-graceful", "http1", "service"] }
 ipnet = "2.12.2"
 lexopt = "0.3.2"
+rusqlite = { version = "0.41.1", features = ["bundled", "backup"] }
 rust-embed = "8.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -25,6 +26,13 @@ url = "2.5.8"
 http-body-util = "0.1.5"
 tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
+
+# Argon2id is slow without optimization; tests hash many passwords.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 opt-level = "s"

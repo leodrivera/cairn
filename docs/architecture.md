@@ -347,6 +347,7 @@ CREATE TABLE sessions (
   id         BLOB PRIMARY KEY,        -- SHA-256 of the token
   user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   method     TEXT NOT NULL,           -- 'password' | 'oauth' | 'oidc'
+  keep       INTEGER NOT NULL DEFAULT 0, -- "Keep me signed in": 30 days, sliding
   label      TEXT,                    -- short user-agent label
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL

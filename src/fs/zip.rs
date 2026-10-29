@@ -58,9 +58,10 @@ fn zip_err(e: zip::result::ZipError) -> FsError {
     FsError::Io(std::io::Error::other(e))
 }
 
-/// Streams the folder `path` as a ZIP. The folder was checked before the response started; a later error ends the
-/// body with an error, so the browser shows a failed download instead of a short archive.
-pub fn stream_zip(scope: Scope, path: RelPath) -> axum::body::Body {
+/// Streams the folder `path` as a ZIP, or only the chosen `items` inside it, each under its own name. The folder and
+/// items were checked before the response started; a later error ends the body with an error, so the browser shows a
+/// failed download instead of a short archive.
+pub fn stream_zip(scope: Scope, path: RelPath, items: Option<Vec<RelPath>>) -> axum::body::Body {
     let (tx, rx) = tokio::sync::mpsc::channel::<Chunk>(8);
     tokio::task::spawn_blocking(move || {
         let failed = tx.clone();
@@ -68,7 +69,15 @@ pub fn stream_zip(scope: Scope, path: RelPath) -> axum::body::Body {
             tx,
             buf: Vec::new(),
         });
-        let result = add_folder(&mut zip, &scope, &path, "", 0).and_then(|()| {
+        let added = match &items {
+            None => add_folder(&mut zip, &scope, &path, "", 0),
+            Some(items) => items.iter().try_for_each(|item| {
+                let st = scope.stat(item)?;
+                let entry = item.name_lossy().unwrap_or_default().into_owned();
+                add_child(&mut zip, &scope, item, &st, &entry, 0)
+            }),
+        };
+        let result = added.and_then(|()| {
             let mut out = zip.finish().map_err(zip_err)?;
             out.flush().map_err(FsError::from)
         });
@@ -116,24 +125,36 @@ fn add_folder<W: Write + std::io::Seek>(
             continue;
         }
         let entry = format!("{prefix}{}", String::from_utf8_lossy(&raw));
-        match FileType::from_raw_mode(st.st_mode) {
-            FileType::Directory => {
-                zip.add_directory(format!("{entry}/"), options())
-                    .map_err(zip_err)?;
-                add_folder(zip, scope, &child, &format!("{entry}/"), depth + 1)?;
-            }
-            FileType::RegularFile => add_file(zip, scope, &child, &entry)?,
-            // A link is followed only to a file inside the scope; links to folders or outside are left out.
-            FileType::Symlink => {
-                if let Ok(fd) = scope.open(&child, OFlags::PATH)
-                    && FileType::from_raw_mode(rustix::fs::fstat(&fd)?.st_mode)
-                        == FileType::RegularFile
-                {
-                    add_file(zip, scope, &child, &entry)?;
-                }
-            }
-            _ => {}
+        add_child(zip, scope, &child, &st, &entry, depth)?;
+    }
+    Ok(())
+}
+
+/// One entry of a folder: a folder recursively, a file, or a link to a file inside the scope.
+fn add_child<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    scope: &Scope,
+    child: &RelPath,
+    st: &rustix::fs::Stat,
+    entry: &str,
+    depth: usize,
+) -> Result<(), FsError> {
+    match FileType::from_raw_mode(st.st_mode) {
+        FileType::Directory => {
+            zip.add_directory(format!("{entry}/"), options())
+                .map_err(zip_err)?;
+            add_folder(zip, scope, child, &format!("{entry}/"), depth + 1)?;
         }
+        FileType::RegularFile => add_file(zip, scope, child, entry)?,
+        // A link is followed only to a file inside the scope; links to folders or outside are left out.
+        FileType::Symlink => {
+            if let Ok(fd) = scope.open(child, OFlags::PATH)
+                && FileType::from_raw_mode(rustix::fs::fstat(&fd)?.st_mode) == FileType::RegularFile
+            {
+                add_file(zip, scope, child, entry)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -165,7 +186,8 @@ mod tests {
         }
         std::fs::create_dir_all(&p).unwrap();
         let scope = Scope::new(dir.path(), "/", None).unwrap();
-        let mut stream = stream_zip(scope, RelPath::parse("deep").unwrap()).into_data_stream();
+        let mut stream =
+            stream_zip(scope, RelPath::parse("deep").unwrap(), None).into_data_stream();
         let mut failed = false;
         while let Some(chunk) = stream.next().await {
             if chunk.is_err() {

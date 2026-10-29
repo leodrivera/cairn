@@ -1,5 +1,6 @@
 //! HTTP: the router every route hangs from.
 
+pub mod admin_routes;
 pub mod assets;
 pub mod auth_routes;
 pub mod client;
@@ -63,6 +64,7 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .merge(auth_routes::routes())
+        .merge(admin_routes::routes())
         .merge(users_routes::routes())
         .merge(files_routes::routes())
         .fallback(api_not_found)

@@ -232,6 +232,17 @@ impl Scope {
     }
 
     /// Device and inode of the scope folder itself.
+    /// Used and total bytes of the filesystem holding the scope.
+    pub fn space(&self) -> Result<(u64, u64), FsError> {
+        let v = rustix::fs::fstatvfs(&self.root)?;
+        let total = v.f_blocks.saturating_mul(v.f_frsize);
+        let used = v
+            .f_blocks
+            .saturating_sub(v.f_bfree)
+            .saturating_mul(v.f_frsize);
+        Ok((used, total))
+    }
+
     pub fn root_id(&self) -> Result<(u64, u64), FsError> {
         Ok(id_of(&rustix::fs::fstat(&self.root)?))
     }

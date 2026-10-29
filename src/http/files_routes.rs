@@ -22,8 +22,8 @@ pub fn routes() -> Router<AppState> {
         .route("/raw/{*path}", get(raw))
         .route("/folders/{*path}", axum::routing::post(new_folder))
         .route("/ops", axum::routing::post(run_ops))
-        .route("/zip", get(zip_root))
-        .route("/zip/{*path}", get(zip_path))
+        .route("/zip", get(zip_root).post(zip_root_items))
+        .route("/zip/{*path}", get(zip_path).post(zip_path_items))
         .route(
             "/text/{*path}",
             axum::routing::put(save_text).layer(axum::extract::DefaultBodyLimit::disable()),
@@ -103,9 +103,23 @@ async fn list_at(fu: FileUser, raw: String) -> Result<Json<Value>, ApiError> {
     fu.need(true, false)?;
     let path = RelPath::parse(&raw)?;
     let shown = path.to_string();
+    let admin = fu.user.perms.admin;
     let scope = fu.scope;
-    let entries = blocking(move || list::list(&scope, &path)).await?;
-    Ok(Json(json!({ "path": shown, "entries": entries })))
+    let (entries, space) = blocking(move || {
+        let entries = list::list(&scope, &path)?;
+        // Disk use is for admins only; a filesystem that cannot report it just leaves it out.
+        let space = admin.then(|| scope.space()).and_then(|r| {
+            r.inspect_err(|e| tracing::debug!(error = ?e, "no disk space figures"))
+                .ok()
+        });
+        Ok((entries, space))
+    })
+    .await?;
+    let mut body = json!({ "path": shown, "entries": entries });
+    if let Some((used, total)) = space {
+        body["space"] = json!({ "used": used, "total": total });
+    }
+    Ok(Json(body))
 }
 
 #[derive(serde::Deserialize)]
@@ -419,6 +433,56 @@ async fn zip_path(
 }
 
 async fn zip_at(fu: FileUser, raw_path: String) -> Result<axum::response::Response, ApiError> {
+    zip_response(fu, raw_path, None).await
+}
+
+async fn zip_root_items(
+    fu: FileUser,
+    body: axum::body::Bytes,
+) -> Result<axum::response::Response, ApiError> {
+    zip_response(fu, String::new(), Some(zip_items(&body)?)).await
+}
+
+async fn zip_path_items(
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<axum::response::Response, ApiError> {
+    zip_response(fu, raw_path, Some(zip_items(&body)?)).await
+}
+
+/// Most items one ZIP of chosen items takes.
+const ZIP_ITEMS_MAX: usize = 1000;
+
+/// The `item` values of a form body: each one name inside the folder, no repeats, 1 to 1000 of them.
+fn zip_items(body: &[u8]) -> Result<Vec<Vec<u8>>, ApiError> {
+    let bad = || ApiError::bad_request("Choose between 1 and 1000 items in one folder.");
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    for (key, value) in form_urlencoded::parse(body) {
+        if key != "item" || value.contains('/') {
+            return Err(bad());
+        }
+        let one = RelPath::parse(&value).map_err(|_| bad())?;
+        let [name] = one.segments() else {
+            return Err(bad());
+        };
+        if !seen.insert(name.clone()) || items.len() == ZIP_ITEMS_MAX {
+            return Err(bad());
+        }
+        items.push(name.clone());
+    }
+    if items.is_empty() {
+        return Err(bad());
+    }
+    Ok(items)
+}
+
+async fn zip_response(
+    fu: FileUser,
+    raw_path: String,
+    items: Option<Vec<Vec<u8>>>,
+) -> Result<axum::response::Response, ApiError> {
     use axum::http::header;
     use axum::response::IntoResponse;
 
@@ -429,10 +493,23 @@ async fn zip_at(fu: FileUser, raw_path: String) -> Result<axum::response::Respon
         None => "files.zip".into(),
     };
     let scope = fu.scope;
-    // Checked before the response starts, so a wrong path is an ordinary JSON error.
-    let (scope, path) = blocking(move || {
+    // Checked before the response starts, so a wrong path or a missing item is an ordinary JSON error.
+    let (scope, path, items) = blocking(move || {
         scope.open_dir(&path)?;
-        Ok((scope, path))
+        let items = match items {
+            None => None,
+            Some(names) => Some(
+                names
+                    .iter()
+                    .map(|n| {
+                        let item = path.join_bytes(n)?;
+                        scope.stat(&item)?;
+                        Ok(item)
+                    })
+                    .collect::<Result<Vec<_>, FsError>>()?,
+            ),
+        };
+        Ok((scope, path, items))
     })
     .await?;
     let headers = [
@@ -446,5 +523,5 @@ async fn zip_at(fu: FileUser, raw_path: String) -> Result<axum::response::Respon
         ),
         (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
     ];
-    Ok((headers, crate::fs::zip::stream_zip(scope, path)).into_response())
+    Ok((headers, crate::fs::zip::stream_zip(scope, path, items)).into_response())
 }

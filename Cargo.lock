@@ -133,6 +133,7 @@ dependencies = [
  "argon2",
  "axum",
  "base64",
+ "form_urlencoded",
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",

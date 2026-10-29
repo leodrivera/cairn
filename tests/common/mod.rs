@@ -119,6 +119,22 @@ impl Harness {
     }
 }
 
+impl Harness {
+    /// A session for the user without the sign-in form, for servers whose form needs a CAPTCHA.
+    pub fn session_for(&self, user: &User) -> String {
+        let token = cairn::auth::session::create(
+            &self.state.db,
+            user.id,
+            cairn::auth::session::Method::Password,
+            false,
+            "test",
+            cairn::now(),
+        )
+        .unwrap();
+        format!("{}={token}", cairn::http::current_user::COOKIE)
+    }
+}
+
 pub struct Req {
     method: Method,
     path: String,

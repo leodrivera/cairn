@@ -1245,3 +1245,168 @@ async fn replacing_keeps_the_original_mode() {
     assert_eq!(save.status, StatusCode::OK, "{}", save.json);
     assert_eq!(mode(&s.join("run.sh")), 0o750, "text save");
 }
+
+#[tokio::test]
+async fn space_for_admin_only() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, _) = maria(&h, &dir, RW).await;
+    let res = Req::get("/api/files").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.json.get("space").is_none(), "{}", res.json);
+    let admin = Perms {
+        read: true,
+        write: true,
+        share: true,
+        admin: true,
+    };
+    h.add_user_scoped("admin@example.com", PW, "/", admin);
+    let a = h.login("admin@example.com", PW).await;
+    let res = Req::get("/api/files").cookie(&a).send(&h.app).await;
+    assert!(
+        res.json["space"]["total"].as_u64().unwrap() > 0,
+        "{}",
+        res.json
+    );
+    assert!(res.json["space"]["used"].as_u64().is_some());
+}
+
+/// `album/a.txt`, `album/b.txt`, `album/sub/c.txt`.
+async fn album(h: &Harness, dir: &tempfile::TempDir) -> String {
+    let (c, s) = maria(h, dir, RW).await;
+    touch(&s.join("album/a.txt"), "a");
+    touch(&s.join("album/b.txt"), "b");
+    touch(&s.join("album/sub/c.txt"), "c");
+    c
+}
+
+/// A ZIP of chosen items as a browser form sends it: no X-Cairn, an Origin of the same host.
+fn zip_form(path: &str, form: &str, cookie: &str) -> Req {
+    Req::post(path)
+        .no_csrf()
+        .cookie(cookie)
+        .header("host", "files.example.com")
+        .header("origin", "https://files.example.com")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .bytes(form.as_bytes())
+}
+
+#[tokio::test]
+async fn zip_chosen_items() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let res = zip_form("/api/zip/album", "item=a.txt&item=sub", &c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''album.zip"
+    );
+    let files = unzip(&res.body);
+    assert_eq!(files.get("a.txt").map(Vec::as_slice), Some(&b"a"[..]));
+    assert_eq!(files.get("sub/c.txt").map(Vec::as_slice), Some(&b"c"[..]));
+    assert!(!files.contains_key("b.txt"), "{:?}", files.keys());
+}
+
+#[tokio::test]
+async fn zip_chosen_items_at_root() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let res = zip_form("/api/zip", "item=album", &c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''files.zip"
+    );
+    assert!(unzip(&res.body).contains_key("album/a.txt"));
+}
+
+#[tokio::test]
+async fn zip_items_unicode() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("album/Report #1 (50%) ✓ café.txt"), "r");
+    // Forms send spaces as `+`.
+    let form = format!(
+        "item={}",
+        enc("Report #1 (50%) ✓ café.txt").replace("%20", "+")
+    );
+    let res = zip_form("/api/zip/album", &form, &c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(unzip(&res.body).contains_key("Report #1 (50%) ✓ café.txt"));
+}
+
+#[tokio::test]
+async fn zip_items_refuses_slash_and_duplicates() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    for q in [
+        "item=sub%2Fc.txt",
+        "item=a.txt&item=a.txt",
+        "item=",
+        "item=..",
+        "",
+        "other=a.txt",
+    ] {
+        let res = zip_form("/api/zip/album", q, &c).send(&h.app).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{q}");
+        assert_eq!(res.code(), "bad_request", "{q}");
+    }
+}
+
+#[tokio::test]
+async fn zip_items_missing_404() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let res = zip_form("/api/zip/album", "item=a.txt&item=nope.txt", &c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(res.code(), "not_found");
+}
+
+#[tokio::test]
+async fn zip_items_cap() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let q: Vec<String> = (0..1001).map(|i| format!("item=f{i}")).collect();
+    let res = zip_form("/api/zip/album", &q.join("&"), &c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn zip_form_from_another_site_refused() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    for origin in [Some("https://evil.example.net"), Some("null"), None] {
+        let mut req = Req::post("/api/zip/album")
+            .no_csrf()
+            .cookie(&c)
+            .header("host", "files.example.com")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .bytes(b"item=a.txt");
+        if let Some(o) = origin {
+            req = req.header("origin", o);
+        }
+        let res = req.send(&h.app).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{origin:?}");
+        assert_eq!(res.code(), "csrf", "{origin:?}");
+    }
+}
+
+#[tokio::test]
+async fn other_posts_still_need_x_cairn() {
+    let (h, dir) = harness_with_root(&[]);
+    let c = album(&h, &dir).await;
+    let res = Req::post("/api/folders/new")
+        .no_csrf()
+        .cookie(&c)
+        .header("host", "files.example.com")
+        .header("origin", "https://files.example.com")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.code(), "csrf");
+}

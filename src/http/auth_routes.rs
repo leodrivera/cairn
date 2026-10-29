@@ -27,23 +27,35 @@ pub fn routes() -> Router<AppState> {
         .route("/me/password", put(change_password))
 }
 
-async fn config(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let auth = &s.config.auth;
+/// The sign-in methods in effect, in a fixed order.
+pub(crate) fn auth_methods(c: &crate::config::Config) -> Vec<&'static str> {
     let mut methods = Vec::new();
-    if auth.password {
+    if c.auth.password {
         methods.push("password");
     }
-    if auth.oauth.is_some() {
+    if c.auth.oauth.is_some() {
         methods.push("oauth");
     }
-    if !auth.oidc.is_empty() {
+    if !c.auth.oidc.is_empty() {
         methods.push("oidc");
     }
+    methods
+}
+
+async fn config(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
     let captcha = s
         .captcha
         .as_ref()
         .map(|c| json!({ "provider": c.vendor_name(), "siteKey": c.site_key() }));
-    let mut body = json!({ "authMethods": methods, "captcha": captcha, "providers": [] });
+    let look = crate::settings::load(&s.db).map_err(users::UserError::Db)?;
+    let mut body = json!({
+        "authMethods": auth_methods(&s.config),
+        "captcha": captcha,
+        "providers": [],
+        "theme": look.theme,
+        "thumbnails": look.thumbnails,
+        "editMax": s.config.edit_max,
+    });
     if users::count(&s.db)? == 0 {
         body["setupNeeded"] = json!(true);
     }

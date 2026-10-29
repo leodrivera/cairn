@@ -48,7 +48,8 @@ Target budget, checked in CI: binary under 12 MB, idle memory under 20 MB, front
 ## 3. Configuration
 
 All configuration comes from environment variables. Settings an admin changes in the UI (default theme,
-thumbnails) are stored in the database; everything that decides security or networking is environment only, so
+thumbnails) are stored in the database (`settings` rows `default_theme` and `thumbnails`, changed with
+`PUT /api/settings`); everything that decides security or networking is environment only, so
 the UI cannot be used to weaken it. The Server settings screen shows those values read-only.
 
 Every secret also accepts `<NAME>_FILE`, a path to a file holding the value (Docker and Compose secrets). Setting
@@ -231,7 +232,18 @@ generic 401/403 jails. Use `maxretry` between 6 and 10 and a `findtime` of at le
 their own password then gets Cairn's `429` after 5 tries, before any ban, while one address trying many accounts is
 banned before Cairn's own limit of 10 per address.
 
-### 4.7 Sessions
+### 4.7 Sign-in page data
+
+`GET /api/config` needs no session and answers what the sign-in page and the app need before anyone signs in:
+`authMethods`, `captcha` (`{ provider, siteKey }` or null), `providers` (one `{ name, href }` per sign-in button),
+`setupNeeded` (only while there are no users), the server default `theme` (`dark`, `light` or null for "match the
+device"), `thumbnails` and `editMax`.
+
+Admins read the environment on the Server screen through `GET /api/server`: root, public address, listen address,
+sign-in methods, CAPTCHA vendor, upload and edit limits, threads, trusted proxies and log level. Never a secret or
+an internal URL.
+
+### 4.8 Sessions
 
 - Token: 32 random bytes, base64url, in an HttpOnly, `SameSite=Lax` cookie. Over HTTPS the cookie is named
   `__Host-cairn_session` (Secure, Path=/, no Domain), so a sibling subdomain cannot plant one.
@@ -242,7 +254,8 @@ banned before Cairn's own limit of 10 per address.
 - Changing a password, removing a permission, changing a scope or deleting a user ends that user's other sessions.
 - Every state-changing request needs the `X-Cairn` header (any value). Browsers do not send custom headers
   cross-site without a CORS preflight, which Cairn never allows, so this plus `SameSite=Lax` stops CSRF without a
-  token dance.
+  token dance. The one `POST` that comes from a plain form, the ZIP of chosen items, changes nothing and needs an
+  `Origin` naming the host it was sent to instead.
 
 ## 5. Files
 
@@ -277,6 +290,7 @@ outside your folder" marker and cannot be opened.
 | List folder | `GET /api/files/{path}` | read |
 | Download file | `GET /api/raw/{path}` (supports `Range`, `If-None-Match`) | read |
 | Download folder | `GET /api/zip/{path}` (streamed ZIP, store only, no compression) | read |
+| Download chosen items | `POST /api/zip/{path}` with a form body `item=<name>&item=<name>` (1 to 1000 names inside that folder) | read |
 | Upload | `PUT /api/upload/{path}` | write |
 | New folder | `POST /api/folders/{path}` | write |
 | Rename, move, copy | `POST /api/ops` with a list of `{ op, from, to }` | write |
@@ -285,7 +299,11 @@ outside your folder" marker and cannot be opened.
 
 - Listings stream as JSON, sorted on the server (folders first, then natural name order), so the browser can window
   them without sorting 50 000 entries. Each entry: name, kind, size, modified time, and a MIME guess from the
-  extension only (no file sniffing).
+  extension only (no file sniffing). For admins the listing also carries `space`, the used and total bytes of the
+  disk that holds the scope.
+- Search is a filter of the open folder's listing, in the browser. There is no search index and no server search.
+- Several chosen items download as one ZIP. The list travels in a form body, not the URL, so a long selection never
+  hits a proxy's URL length limit. The form is a plain HTML form, so the browser saves the archive as it streams.
 - Uploads stream to a temporary file next to the target (`.cairn-upload-<random>`), then rename into place.
   Per-file progress, retry and cancel live in the browser. A cancelled or broken upload removes its temporary file.
   While a temporary file exists its path is recorded in an `uploads` table, so after a crash startup removes exactly

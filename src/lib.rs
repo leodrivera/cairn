@@ -9,3 +9,4 @@ pub mod http;
 pub mod log;
 pub mod serve;
 pub mod startup;
+pub mod users;

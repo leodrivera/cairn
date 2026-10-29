@@ -17,9 +17,10 @@ use crate::users::User;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/files", get(list_root))
+        .route("/files", get(list_root).delete(delete_paths))
         .route("/files/{*path}", get(list_path))
         .route("/raw/{*path}", get(raw))
+        .route("/folders/{*path}", axum::routing::post(new_folder))
         .route(
             "/upload/{*path}",
             axum::routing::put(upload).layer(axum::extract::DefaultBodyLimit::disable()),
@@ -233,4 +234,66 @@ async fn upload(
         StatusCode::CREATED
     };
     Ok((status, Json(json!({ "entry": entry }))).into_response())
+}
+
+async fn new_folder(
+    fu: FileUser,
+    Path(raw_path): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+
+    fu.need(false, true)?;
+    let path = RelPath::parse(&raw_path)?;
+    let user = fu.user.id;
+    let scope = fu.scope;
+    let shown = path.to_string();
+    let entry = blocking(move || {
+        crate::fs::edit::mkdir(&scope, &path)?;
+        list::entry(&scope, &path)
+    })
+    .await?;
+    tracing::info!(event = "file.mkdir", user, path = %shown);
+    Ok((StatusCode::CREATED, Json(json!({ "entry": entry }))).into_response())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteBody {
+    paths: Vec<String>,
+}
+
+/// One failure in a batch, with the same code and message a single request would get.
+pub fn failure(key: &str, value: &str, e: FsError) -> Value {
+    let api = ApiError::from(e);
+    json!({ key: value, "error": api.code, "message": api.message })
+}
+
+async fn delete_paths(
+    fu: FileUser,
+    crate::http::json::StrictJson(b): crate::http::json::StrictJson<DeleteBody>,
+) -> Result<Json<Value>, ApiError> {
+    fu.need(false, true)?;
+    if b.paths.is_empty() || b.paths.len() > 10_000 {
+        return Err(ApiError::bad_request("Send between 1 and 10000 paths."));
+    }
+    let user = fu.user.id;
+    let scope = fu.scope;
+    let (deleted, failed) = blocking(move || {
+        let (mut deleted, mut failed) = (0, Vec::new());
+        for raw in &b.paths {
+            match RelPath::parse(raw).and_then(|p| crate::fs::edit::remove(&scope, &p)) {
+                Ok(()) => deleted += 1,
+                Err(e) => failed.push(failure("path", raw, e)),
+            }
+        }
+        Ok((deleted, failed))
+    })
+    .await?;
+    tracing::info!(
+        event = "file.delete",
+        user,
+        paths = deleted,
+        failed = failed.len()
+    );
+    Ok(Json(json!({ "deleted": deleted, "failed": failed })))
 }

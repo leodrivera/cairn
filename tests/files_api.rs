@@ -431,3 +431,119 @@ async fn upload_bigger_than_json_limit() {
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
     assert_eq!(std::fs::metadata(s.join("big.bin")).unwrap().len(), 3 << 20);
 }
+
+async fn delete_paths(h: &Harness, c: &str, paths: &[&str]) -> common::Res {
+    Req::delete("/api/files")
+        .cookie(c)
+        .json(json!({ "paths": paths }))
+        .send(&h.app)
+        .await
+}
+
+#[tokio::test]
+async fn mkdir_then_list() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let res = Req::post(&format!("/api/folders/{}", enc("New folder ✓")))
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
+    assert_eq!(res.json["entry"]["kind"], "folder");
+    assert!(s.join("New folder ✓").is_dir());
+}
+
+#[tokio::test]
+async fn mkdir_exists_409() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    std::fs::create_dir(s.join("d")).unwrap();
+    let res = Req::post("/api/folders/d").cookie(&c).send(&h.app).await;
+    assert_eq!((res.status, res.code()), (StatusCode::CONFLICT, "exists"));
+    let temp = Req::post("/api/folders/.cairn-upload-x")
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert_eq!(temp.code(), "invalid_path");
+}
+
+#[tokio::test]
+async fn delete_file_and_folder_tree() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    touch(&s.join("tree/x/y/z.txt"), "z");
+    let res = delete_paths(&h, &c, &["a.txt", "tree"]).await;
+    assert_eq!(res.json, json!({ "deleted": 2, "failed": [] }));
+    assert!(!s.join("a.txt").exists() && !s.join("tree").exists());
+}
+
+#[tokio::test]
+async fn delete_link_keeps_target() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("sub/g.txt"), "g");
+    touch(&dir.path().join("srv/bo/secret.txt"), "s");
+    symlink("sub/g.txt", s.join("in")).unwrap();
+    symlink("../bo", s.join("up")).unwrap();
+    symlink("sub", s.join("dirlink")).unwrap();
+    let res = delete_paths(&h, &c, &["in", "up", "dirlink"]).await;
+    assert_eq!(res.json["deleted"], 3, "{}", res.json);
+    assert!(s.join("sub/g.txt").exists());
+    assert!(dir.path().join("srv/bo/secret.txt").exists());
+}
+
+#[tokio::test]
+async fn delete_reports_failures() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    let res = delete_paths(&h, &c, &["a.txt", "missing.txt"]).await;
+    assert_eq!(res.json["deleted"], 1);
+    assert_eq!(res.json["failed"][0]["path"], "missing.txt");
+    assert_eq!(res.json["failed"][0]["error"], "not_found");
+    let empty = delete_paths(&h, &c, &[]).await;
+    assert_eq!(
+        (empty.status, empty.code()),
+        (StatusCode::BAD_REQUEST, "bad_request")
+    );
+}
+
+#[tokio::test]
+async fn cannot_delete_scope_root() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let res = delete_paths(&h, &c, &[""]).await;
+    assert_eq!(res.json["failed"][0]["error"], "scope_root");
+    assert!(s.exists());
+}
+
+#[tokio::test]
+async fn delete_unicode_name() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    let name = "Report #1 (50%) ✓ café.txt";
+    touch(&s.join(name), "r");
+    let res = delete_paths(&h, &c, &[name]).await;
+    assert_eq!(res.json["deleted"], 1);
+    assert!(!s.join(name).exists());
+}
+
+#[tokio::test]
+async fn delete_needs_write() {
+    let (h, dir) = harness_with_root(&[]);
+    let ro = Perms {
+        read: true,
+        write: false,
+        share: false,
+        admin: false,
+    };
+    let (c, s) = maria(&h, &dir, ro).await;
+    touch(&s.join("a.txt"), "a");
+    let res = delete_paths(&h, &c, &["a.txt"]).await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::FORBIDDEN, "forbidden")
+    );
+    assert!(s.join("a.txt").exists());
+}

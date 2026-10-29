@@ -1,5 +1,6 @@
 //! Files: paths from clients, resolved beneath the user's scope, and the operations on them.
 
+pub mod edit;
 pub mod list;
 pub mod mime;
 pub mod path;

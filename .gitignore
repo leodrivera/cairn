@@ -5,3 +5,4 @@ secrets/
 /target/
 web/node_modules/
 web/dist/
+web/.test-out/

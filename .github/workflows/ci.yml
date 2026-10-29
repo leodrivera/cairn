@@ -17,9 +17,9 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Build the front-end
+      - name: Build and test the front-end
         working-directory: web
-        run: npm ci --ignore-scripts && npm run check && npm run build
+        run: npm ci --ignore-scripts && npm run check && npm test && npm run build
       - name: Rust toolchain
         run: rustup show active-toolchain
       - name: Format

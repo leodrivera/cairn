@@ -5,13 +5,16 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "build": "node build.mjs",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node test.mjs"
   },
   "dependencies": {
     "preact": "^11.1.0"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^21.0.4",
     "esbuild": "^0.28.2",
+    "happy-dom": "^21.0.4",
     "typescript": "^7.0.2"
   }
 }

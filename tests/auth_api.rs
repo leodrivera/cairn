@@ -432,3 +432,21 @@ async fn failed_login_logs_email_as_typed() {
         .expect("auth.login_failed logged");
     assert!(line.contains(r#""email":" Ana@Example.COM ""#), "{line}");
 }
+
+#[tokio::test]
+async fn login_ends_the_session_the_browser_had() {
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    h.add_user("bo@example.com", Some(PW), false);
+    let old = h.login("ana@example.com", PW).await;
+    let res = Req::post("/api/auth/login")
+        .cookie(&old)
+        .json(login_body("bo@example.com", PW))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        Req::get("/api/me").cookie(&old).send(&h.app).await.json,
+        json!({ "user": null })
+    );
+}

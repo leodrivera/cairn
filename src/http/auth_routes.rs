@@ -83,6 +83,7 @@ async fn login(
     State(s): State<AppState>,
     client: Client,
     headers: HeaderMap,
+    MaybeUser(previous): MaybeUser,
     StrictJson(b): StrictJson<Login>,
 ) -> Result<Response, ApiError> {
     if !s.config.auth.password {
@@ -125,6 +126,10 @@ async fn login(
         return Err(wrong_credentials());
     };
     s.limiters.login.succeeded(&key);
+    // The browser gets a new session; whatever it held before ends here.
+    if let Some(old) = previous {
+        session::delete(&s.db, &old.token)?;
+    }
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())

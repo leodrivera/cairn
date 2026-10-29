@@ -395,3 +395,40 @@ async fn plain_cookie_ignored_over_https() {
     let plain_http = Req::get("/api/me").cookie(&planted).send(&h.app).await;
     assert_eq!(plain_http.json["user"]["email"], "ana@example.com");
 }
+
+#[derive(Clone, Default)]
+struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn failed_login_logs_email_as_typed() {
+    let buf = LogBuf::default();
+    let writer = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    Req::post("/api/auth/login")
+        .json(login_body(" Ana@Example.COM ", "Wrong1!x"))
+        .send(&h.app)
+        .await;
+    let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+    let line = log
+        .lines()
+        .find(|l| l.contains("auth.login_failed"))
+        .expect("auth.login_failed logged");
+    assert!(line.contains(r#""email":" Ana@Example.COM ""#), "{line}");
+}

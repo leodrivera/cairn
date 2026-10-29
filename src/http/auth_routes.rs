@@ -94,14 +94,16 @@ async fn login(
     let key = email
         .clone()
         .unwrap_or_else(|| b.email.trim().to_lowercase().chars().take(254).collect());
+    // Logs carry the address as typed (cut to 254), as spec section 10 says; the limiter counts the normalized one.
+    let typed: String = b.email.chars().take(254).collect();
     if let Some(wait) = s.limiters.login.blocked(client.ip, &key, now) {
-        tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %key);
+        tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %typed);
         return Err(ApiError::too_many(wait));
     }
     if let Some(captcha) = &s.captcha
         && let Err(f) = captcha.verify(b.captcha_token.as_deref(), client.ip).await
     {
-        tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %key, reason = f.reason());
+        tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
         return Err(captcha_error(f));
     }
     let found = match &email {
@@ -119,7 +121,7 @@ async fn login(
     let Some((user, _)) = found.filter(|_| ok) else {
         s.limiters.login.failed(client.ip, &key, now);
         let reason = found_reason(email.is_some() && user_exists, hash.is_some());
-        tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %key, reason);
+        tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason);
         return Err(wrong_credentials());
     };
     s.limiters.login.succeeded(&key);

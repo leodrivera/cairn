@@ -42,12 +42,18 @@ pub fn verify_blocking(password: &str, stored: Option<&str>) -> bool {
             .verify_password(password.as_bytes(), stored)
             .is_ok(),
         None => {
-            static DUMMY: OnceLock<String> = OnceLock::new();
-            let dummy = DUMMY.get_or_init(|| hash_blocking("dummy password for timing"));
-            let _ = argon2().verify_password(password.as_bytes(), dummy.as_str());
+            let _ = argon2().verify_password(password.as_bytes(), dummy().as_str());
             false
         }
     }
+}
+
+/// Checked against when there is no real hash. Made once, before the first sign-in (see `Hasher::new`), so the
+/// first unknown e-mail after a restart does not pay for creating it and stand out by its timing.
+static DUMMY: OnceLock<String> = OnceLock::new();
+
+fn dummy() -> &'static String {
+    DUMMY.get_or_init(|| hash_blocking("dummy password for timing"))
 }
 
 fn well_formed(stored: &str) -> bool {
@@ -77,6 +83,7 @@ impl Default for Hasher {
 
 impl Hasher {
     pub fn new() -> Hasher {
+        dummy();
         Hasher {
             permits: Semaphore::new(2),
         }
@@ -173,5 +180,14 @@ mod tests {
             results.push(t.await.unwrap());
         }
         assert_eq!(results, [true, false, true, false]);
+    }
+
+    #[test]
+    fn hasher_prepares_the_dummy() {
+        let _h = Hasher::new();
+        assert!(
+            DUMMY.get().is_some(),
+            "the first unknown e-mail would pay for the dummy hash"
+        );
     }
 }

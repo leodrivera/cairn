@@ -1065,3 +1065,33 @@ async fn zip_needs_read() {
         (StatusCode::FORBIDDEN, "forbidden")
     );
 }
+
+#[tokio::test]
+async fn fallback_mode_lists_downloads_and_uploads() {
+    let (h, dir) = harness_with_root(&[]);
+    let h = h.with_fallback();
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("sub/a.txt"), "a");
+    let list = Req::get("/api/files/sub").cookie(&c).send(&h.app).await;
+    assert_eq!(names(&list.json), ["a.txt"]);
+    let dl = Req::get("/api/raw/sub/a.txt").cookie(&c).send(&h.app).await;
+    assert_eq!(dl.body, b"a");
+    let up = Req::put("/api/upload/sub/b.txt").cookie(&c).bytes(b"b").send(&h.app).await;
+    assert_eq!(up.status, StatusCode::CREATED, "{}", up.json);
+    assert_eq!(std::fs::read_to_string(s.join("sub/b.txt")).unwrap(), "b");
+}
+
+#[tokio::test]
+async fn fallback_mode_refuses_links() {
+    let (h, dir) = harness_with_root(&[]);
+    let h = h.with_fallback();
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "a");
+    touch(&dir.path().join("srv/bo/secret.txt"), "s");
+    symlink("a.txt", s.join("in")).unwrap();
+    symlink("../bo/secret.txt", s.join("leak")).unwrap();
+    for link in ["in", "leak"] {
+        let res = Req::get(&format!("/api/raw/{link}")).cookie(&c).send(&h.app).await;
+        assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"), "{link}");
+    }
+}

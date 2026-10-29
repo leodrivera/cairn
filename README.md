@@ -89,6 +89,8 @@ Then create the first admin. The command asks for the password without showing i
 docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password
 ```
 
+The container runs as uid 10001: the folders mounted at `/srv` and `/data` must be readable and writable by that user, or set `user:` in Compose to the owner of the files.
+
 Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to the proxy's network, or every visitor will look like the proxy.
 
 [TODO: tested instructions once there is a release]

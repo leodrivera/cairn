@@ -63,6 +63,13 @@ pub fn enc(path: &str) -> String {
 }
 
 impl Harness {
+    /// Resolves paths as on kernels without openat2.
+    pub fn with_fallback(mut self) -> Harness {
+        self.state.force_fallback = true;
+        self.app = router(self.state.clone());
+        self
+    }
+
     pub fn add_user_scoped(&self, email: &str, password: &str, scope: &str, perms: Perms) -> User {
         let new = NewUser {
             email: email.into(),

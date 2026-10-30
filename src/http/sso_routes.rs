@@ -322,13 +322,15 @@ async fn oidc_start(State(s): State<AppState>, client: Client, Path(id): Path<St
     res
 }
 
-fn read_pending(headers: &HeaderMap) -> Option<String> {
+/// Over HTTPS only the `__Host-` name counts, as for the session cookie.
+fn read_pending(headers: &HeaderMap, https: bool) -> Option<String> {
+    let name = flow::cookie_name(https);
     headers
         .get_all(header::COOKIE)
         .iter()
         .flat_map(|v| v.to_str().unwrap_or("").split(';'))
         .find_map(|part| match part.trim().split_once('=') {
-            Some((n, v)) if n == flow::COOKIE && !v.is_empty() => Some(v.to_string()),
+            Some((n, v)) if n == name && !v.is_empty() => Some(v.to_string()),
             _ => None,
         })
 }
@@ -354,7 +356,7 @@ async fn oidc_callback(
     let https = client.https;
     // Before the provider's answer is trusted, nothing about who is signed in changes: a reload of this URL after
     // signing in lands on the sign-in page, which sends a signed-in person on to their files.
-    let pending = read_pending(&headers)
+    let pending = read_pending(&headers, https)
         .and_then(|c| flow::open(&c, &s.oidc.mac_key, now))
         .filter(|p| p.provider == id);
     let state_ok = match (&pending, q.get("state")) {

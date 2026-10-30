@@ -175,8 +175,10 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oidc`. Authorization code flow with 
   is logged (`oidc.unreachable`) and its button is hidden; Cairn still starts and retries in the background every
   minute. A malformed configuration (missing client id, `http` issuer) stops startup instead.
 - **`GET /auth/oidc/{id}`.** Creates `state`, `nonce` and a PKCE verifier, keeps them in a 10-minute HttpOnly cookie
-  scoped to `/auth/oidc/` and signed (HMAC-SHA256) with a key the process makes at start, so a cookie planted by a
-  sibling site cannot choose them and a restart ends sign-ins in progress, and redirects to the provider's authorization endpoint with scope
+  signed (HMAC-SHA256) with a key the process makes at start, so nobody can choose them and a restart ends sign-ins
+  in progress. Over HTTPS the cookie is `__Host-cairn_oidc` (Secure, Path=/), so a sibling subdomain cannot plant one
+  that Cairn gave it and sign a victim in as someone else; over plain HTTP it is `cairn_oidc` scoped to
+  `/auth/oidc/`. Then Cairn redirects to the provider's authorization endpoint with scope
   `openid email profile` and redirect `CAIRN_PUBLIC_URL/auth/oidc/{id}/callback`. Rate limited per IP, sharing the
   limit of the broker route.
 - **`GET /auth/oidc/{id}/callback`.** Checks `state` against the cookie (each `state` works once), deletes the

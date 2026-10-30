@@ -528,3 +528,45 @@ async fn logout_after_oidc_next_null() {
     let res = Req::post("/api/auth/logout").cookie(&c).send(&h.app).await;
     assert_eq!(res.json, json!({ "next": null }));
 }
+
+fn https(r: Req) -> Req {
+    r.peer("10.0.0.1:5000")
+        .header("x-forwarded-for", "203.0.113.9")
+        .header("x-forwarded-proto", "https")
+}
+
+#[tokio::test]
+async fn https_pending_cookie_needs_host_prefix() {
+    let idp = FakeIdp::start(ISSUER).await;
+    let h = ready(&idp, &[("CAIRN_TRUSTED_PROXIES", "10.0.0.0/8")]).await;
+    h.add_user("ana@example.com", None, false);
+    let res = https(Req::get("/auth/oidc/fake")).send(&h.app).await;
+    let loc = res.header("location").to_string();
+    idp.authorize(&loc);
+    let set = cookie_named(&res, "__Host-cairn_oidc").expect("__Host- pending cookie");
+    for part in ["Path=/;", "Secure", "HttpOnly"] {
+        assert!(set.contains(part), "{set}");
+    }
+    let value = set
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("__Host-cairn_oidc=")
+        .to_string();
+    let url = format!(
+        "/auth/oidc/fake/callback?code=c1&state={}",
+        param(&loc, "state")
+    );
+    // The same sealed value under the plain name, as a sibling site could plant it, does not count.
+    let planted = https(Req::get(&url))
+        .cookie(&format!("cairn_oidc={value}"))
+        .send(&h.app)
+        .await;
+    assert_eq!(planted.header("location"), "/login?error=sso");
+    assert_eq!(idp.hits("token"), 0);
+    let res = https(Req::get(&url))
+        .cookie(&format!("__Host-cairn_oidc={value}"))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.header("location"), "/");
+}

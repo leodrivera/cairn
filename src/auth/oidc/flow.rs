@@ -9,6 +9,21 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const COOKIE: &str = "cairn_oidc";
+/// Over HTTPS: the browser refuses it from any other host, so a sibling subdomain cannot plant a sealed cookie it got
+/// from Cairn and replay it against a victim (login CSRF). The prefix needs `Path=/`.
+pub const COOKIE_HTTPS: &str = "__Host-cairn_oidc";
+
+pub fn cookie_name(https: bool) -> &'static str {
+    if https { COOKIE_HTTPS } else { COOKIE }
+}
+
+fn attributes(https: bool) -> &'static str {
+    if https {
+        "Path=/; HttpOnly; SameSite=Lax; Secure"
+    } else {
+        "Path=/auth/oidc/; HttpOnly; SameSite=Lax"
+    }
+}
 /// A sign-in must come back within this time.
 pub const MAX_AGE: i64 = 600;
 
@@ -74,19 +89,13 @@ pub fn open(cookie: &str, key: &[u8; 32], now: i64) -> Option<Pending> {
 }
 
 pub fn pending_cookie(value: &str, https: bool) -> HeaderValue {
-    let secure = if https { "; Secure" } else { "" };
-    HeaderValue::from_str(&format!(
-        "{COOKIE}={value}; Path=/auth/oidc/; HttpOnly; SameSite=Lax; Max-Age={MAX_AGE}{secure}"
-    ))
-    .expect("ASCII")
+    let (name, attrs) = (cookie_name(https), attributes(https));
+    HeaderValue::from_str(&format!("{name}={value}; {attrs}; Max-Age={MAX_AGE}")).expect("ASCII")
 }
 
 pub fn clear_pending(https: bool) -> HeaderValue {
-    let secure = if https { "; Secure" } else { "" };
-    HeaderValue::from_str(&format!(
-        "{COOKIE}=; Path=/auth/oidc/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
-    ))
-    .expect("ASCII")
+    let (name, attrs) = (cookie_name(https), attributes(https));
+    HeaderValue::from_str(&format!("{name}=; {attrs}; Max-Age=0")).expect("ASCII")
 }
 
 #[cfg(test)]

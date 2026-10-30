@@ -23,6 +23,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN mkdir -p /empty/srv /empty/data
 
 FROM scratch
+LABEL org.opencontainers.image.title="cairn" \
+      org.opencontainers.image.description="Self-hosted web file browser. Your files. One small binary." \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 COPY --from=bin /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=bin /cairn /cairn
 COPY docker/passwd /etc/passwd

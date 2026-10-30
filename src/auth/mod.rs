@@ -2,6 +2,7 @@
 
 pub mod broker;
 pub mod captcha;
+pub mod oidc;
 pub mod password;
 pub mod ratelimit;
 pub mod session;

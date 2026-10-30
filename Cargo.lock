@@ -142,6 +142,7 @@ dependencies = [
  "hyper-util",
  "ipnet",
  "lexopt",
+ "ring",
  "rpassword",
  "rusqlite",
  "rust-embed",

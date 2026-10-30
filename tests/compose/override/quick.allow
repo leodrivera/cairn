@@ -1,0 +1,3 @@
+# Keys tests/compose/override/quick.yml may change.
+services.cairn.image
+services.cairn.ports

@@ -1,0 +1,6 @@
+# The image under test, on a loopback port.
+services:
+  cairn:
+    image: ${CAIRN_TEST_IMAGE:?}
+    ports: !override
+      - 127.0.0.1:18080:8080

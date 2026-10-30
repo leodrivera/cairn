@@ -450,3 +450,22 @@ async fn login_ends_the_session_the_browser_had() {
         json!({ "user": null })
     );
 }
+
+#[tokio::test]
+async fn dev_user_is_every_request() {
+    let h = harness(&[("CAIRN_DEV_USER", "Admin@Example.com")]);
+    h.add_user("admin@example.com", Some(PW), true);
+    let res = Req::get("/api/me").send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.json["user"]["email"], json!("admin@example.com"));
+    let res = Req::get("/api/files").send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+}
+
+#[tokio::test]
+async fn dev_user_unknown_is_signed_out() {
+    let h = harness(&[("CAIRN_DEV_USER", "nobody@example.com")]);
+    h.add_user("admin@example.com", Some(PW), true);
+    let res = Req::get("/api/me").send(&h.app).await;
+    assert_eq!(res.json["user"], json!(null));
+}

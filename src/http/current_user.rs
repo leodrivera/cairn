@@ -81,6 +81,7 @@ pub async fn load(State(state): State<AppState>, mut req: Request, next: Next) -
         },
         None => None,
     };
+    let current = current.or_else(|| dev_user(&state));
     let renewed = current
         .as_ref()
         .filter(|c| c.session.renewed)
@@ -94,6 +95,23 @@ pub async fn load(State(state): State<AppState>, mut req: Request, next: Next) -
             .append(header::SET_COOKIE, set_cookie(&token, true, https));
     }
     res
+}
+
+/// `CAIRN_DEV_USER` (refused at startup outside debug builds): with no session, every request is this user.
+/// The token is empty, so no session row matches it and sign-out has nothing to delete.
+fn dev_user(state: &AppState) -> Option<CurrentUser> {
+    let email = state.config.dev_user.as_deref()?;
+    let (user, _) = crate::users::by_email(&state.db, email).ok().flatten()?;
+    Some(CurrentUser {
+        session: Session {
+            user,
+            method: session::Method::Password,
+            keep: false,
+            expires_at: i64::MAX,
+            renewed: false,
+        },
+        token: String::new(),
+    })
 }
 
 fn loaded(parts: &Parts) -> Option<CurrentUser> {

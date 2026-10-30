@@ -231,7 +231,6 @@ impl Scope {
         self.open(path, OFlags::PATH).is_ok()
     }
 
-    /// Device and inode of the scope folder itself.
     /// Used and total bytes of the filesystem holding the scope.
     pub fn space(&self) -> Result<(u64, u64), FsError> {
         let v = rustix::fs::fstatvfs(&self.root)?;
@@ -243,6 +242,7 @@ impl Scope {
         Ok((used, total))
     }
 
+    /// Device and inode of the scope folder itself.
     pub fn root_id(&self) -> Result<(u64, u64), FsError> {
         Ok(id_of(&rustix::fs::fstat(&self.root)?))
     }

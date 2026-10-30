@@ -238,7 +238,9 @@ store is needed; a restart clears them, which is acceptable.
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
-`http.rate_limited`. On the OAuth and OIDC starts, which are page navigations, the `429` body is a plain-text
+`http.rate_limited`. A sign-in or link-password try counts before the password is checked, in the same step as the
+limit check, so tries sent at the same moment cannot all slip past; a right password gives its try back, so only
+failures count against an address. On the OAuth and OIDC starts, which are page navigations, the `429` body is a plain-text
 sentence. The limits are fixed; there is no switch to turn them off.
 
 They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to

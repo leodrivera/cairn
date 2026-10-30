@@ -469,3 +469,48 @@ async fn dev_user_unknown_is_signed_out() {
     let res = Req::get("/api/me").send(&h.app).await;
     assert_eq!(res.json["user"], json!(null));
 }
+
+#[tokio::test]
+async fn parallel_logins_cannot_pass_the_limit() {
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    let tries = (0..15).map(|_| {
+        Req::post("/api/auth/login")
+            .json(login_body("ana@example.com", "Wrong1!x"))
+            .peer("203.0.113.9:4000")
+            .send(&h.app)
+    });
+    let results = futures_util::future::join_all(tries).await;
+    let wrong = results
+        .iter()
+        .filter(|r| r.status == StatusCode::UNAUTHORIZED)
+        .count();
+    let limited = results
+        .iter()
+        .filter(|r| r.status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((wrong, limited), (5, 10));
+}
+
+#[tokio::test]
+async fn right_passwords_do_not_use_up_the_address() {
+    // A household behind one address signs in often; only failures count against it.
+    let h = harness(&[]);
+    for i in 0..12 {
+        h.add_user(&format!("u{i}@example.com"), Some(PW), false);
+    }
+    for i in 0..12 {
+        let res = Req::post("/api/auth/login")
+            .json(login_body(&format!("u{i}@example.com"), PW))
+            .peer("203.0.113.10:4000")
+            .send(&h.app)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "sign-in {i}");
+    }
+    let res = Req::post("/api/auth/login")
+        .json(login_body("u0@example.com", "Wrong1!x"))
+        .peer("203.0.113.10:4000")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+}

@@ -123,6 +123,11 @@ async fn login(
         Some(e) => users::by_email(&s.db, e)?,
         None => None,
     };
+    // Counted before the slow check, so tries sent together cannot all pass; a right password gives it back.
+    if let Some(wait) = s.limiters.login.try_count(client.ip, &key, now) {
+        tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %typed);
+        return Err(ApiError::too_many(wait));
+    }
     let user_exists = found.is_some();
     let hash = found.as_ref().and_then(|(_, h)| h.clone());
     // Over-long passwords are checked against the dummy, so they cost the same time and never match.
@@ -132,11 +137,11 @@ async fn login(
         .verify(b.password, hash.clone().filter(|_| usable))
         .await;
     let Some((user, _)) = found.filter(|_| ok) else {
-        s.limiters.login.failed(client.ip, &key, now);
         let reason = found_reason(email.is_some() && user_exists, hash.is_some());
         tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason);
         return Err(wrong_credentials());
     };
+    s.limiters.login.undo(client.ip, &key);
     s.limiters.login.succeeded(&key);
     // The browser gets a new session; whatever it held before ends here.
     if let Some(old) = previous {

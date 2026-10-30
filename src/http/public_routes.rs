@@ -137,12 +137,11 @@ async fn unlock(
     let now = crate::now();
     let key = format!("{}|{}", at.id, ip_key(client.ip));
     let limiter = &s.limiters.share_password;
-    if let Some(wait) = limiter.blocked(client.ip, &key, now) {
+    // Counted before the slow check, so tries sent in parallel cannot all pass it; a right password clears it.
+    if let Some(wait) = limiter.try_count(client.ip, &key, now) {
         tracing::warn!(event = "http.rate_limited", route = "share_password", ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
-    // Counted before the slow check, so tries sent in parallel cannot all pass it; a right password clears it.
-    limiter.failed(client.ip, &key, now);
     if !s.hasher.verify(b.password, Some(hash.clone())).await {
         tracing::warn!(event = "share.password_failed", ip = %client.ip);
         return Err(ApiError::new(

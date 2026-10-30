@@ -54,7 +54,10 @@ impl FailureLimiter {
 
     /// Seconds to wait, or `None` to go ahead.
     pub fn blocked(&self, ip: IpAddr, key: &str, now: i64) -> Option<i64> {
-        let w = self.lock();
+        self.wait(&self.lock(), ip, key, now)
+    }
+
+    fn wait(&self, w: &Windows, ip: IpAddr, key: &str, now: i64) -> Option<i64> {
         let wait = |id: String, limit: u32| -> i64 {
             match w.map.get(&id) {
                 Some(&(start, count))
@@ -70,7 +73,35 @@ impl FailureLimiter {
     }
 
     pub fn failed(&self, ip: IpAddr, key: &str, now: i64) {
+        self.record(&mut self.lock(), ip, key, now);
+    }
+
+    /// Counts a try before the slow check, or says how long to wait. Check and count share one lock, so tries sent
+    /// at the same moment cannot all pass. A try that turns out right is given back with `undo`.
+    pub fn try_count(&self, ip: IpAddr, key: &str, now: i64) -> Option<i64> {
         let mut w = self.lock();
+        if let Some(wait) = self.wait(&w, ip, key, now) {
+            return Some(wait);
+        }
+        self.record(&mut w, ip, key, now);
+        None
+    }
+
+    /// Takes back one try counted by `try_count`: only failures count against an address.
+    pub fn undo(&self, ip: IpAddr, key: &str) {
+        let mut w = self.lock();
+        let mut ids = vec![format!("key:{key}")];
+        if self.per_ip > 0 {
+            ids.push(ip_key(ip));
+        }
+        for id in ids {
+            if let Some(entry) = w.map.get_mut(&id) {
+                entry.1 = entry.1.saturating_sub(1);
+            }
+        }
+    }
+
+    fn record(&self, w: &mut Windows, ip: IpAddr, key: &str, now: i64) {
         while let Some((id, start)) = w.order.front().cloned() {
             let current = w.map.get(&id).map(|e| e.0);
             if current == Some(start) && now - start < self.window {
@@ -223,5 +254,26 @@ mod tests {
         assert!(l.blocked(same_64, "new@example.com", 0).is_some());
         let other_64 = IpAddr::from([0x2001, 0xdb8, 0, 2, 0, 0, 0, 1]);
         assert!(l.blocked(other_64, "new@example.com", 0).is_none());
+    }
+
+    #[test]
+    fn try_count_counts_and_blocks_in_one_step() {
+        let l = FailureLimiter::new(10, 5, 900, 10_000);
+        for _ in 0..5 {
+            assert_eq!(l.try_count(ip(1), "ana@example.com", 0), None);
+        }
+        assert_eq!(l.try_count(ip(1), "ana@example.com", 0), Some(900));
+        assert_eq!(l.blocked(ip(1), "ana@example.com", 0), Some(900));
+    }
+
+    #[test]
+    fn undo_gives_a_try_back() {
+        let l = FailureLimiter::new(10, 5, 900, 10_000);
+        for i in 0..30 {
+            let key = format!("u{i}@example.com");
+            assert_eq!(l.try_count(ip(1), &key, 0), None, "try {i}");
+            l.undo(ip(1), &key);
+        }
+        assert_eq!(l.blocked(ip(1), "new@example.com", 0), None);
     }
 }

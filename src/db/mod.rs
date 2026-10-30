@@ -10,6 +10,7 @@ use rusqlite::Connection;
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0001_users.sql"),
     include_str!("migrations/0002_uploads.sql"),
+    include_str!("migrations/0003_shares.sql"),
 ];
 
 pub struct Db(Mutex<Connection>);
@@ -120,7 +121,7 @@ mod tests {
         let db = Db::open_in_memory();
         assert_eq!(version(&db), MIGRATIONS.len() as i64);
         let t = tables(&db);
-        for name in ["sessions", "settings", "users"] {
+        for name in ["sessions", "settings", "shares", "users"] {
             assert!(t.contains(&name.to_string()), "{name} missing in {t:?}");
         }
     }

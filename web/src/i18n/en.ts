@@ -266,7 +266,7 @@ export const en = {
   "links.sharedBy": "Shared by {name}",
   "links.deleteTitle": "Delete the link to {name}?",
   "links.deleteBody": "People who have it can no longer open it.",
-  "links.times": { one: "{n} time", other: "{n} times" },
+  "links.times": { one: "Opened {n} time", other: "Opened {n} times" },
   "public.goneTitle": "This link no longer works",
   "public.goneBody": "Ask the person who sent it for a new one.",
   "public.lockedTitle": "This link needs a password",

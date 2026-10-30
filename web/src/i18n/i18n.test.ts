@@ -74,3 +74,16 @@ test("offline", () => {
     "Can't reach the server. Check that Cairn is running, then try again.",
   );
 });
+
+test("pt-BR says 0 in the plural", () => {
+  setLang("pt-BR");
+  try {
+    assert.equal(tn("links.times", 0), "Aberto 0 vezes");
+    assert.equal(tn("links.times", 1), "Aberto 1 vez");
+    assert.equal(tn("links.times", 3), "Aberto 3 vezes");
+  } finally {
+    setLang("en");
+  }
+  assert.equal(tn("links.times", 0), "Opened 0 times");
+  assert.equal(tn("links.times", 1), "Opened 1 time");
+});

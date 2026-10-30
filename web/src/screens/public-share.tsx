@@ -8,6 +8,7 @@ import { isEditable } from "../lib/text";
 import { expiryText } from "../lib/shares";
 import { href, Link } from "../lib/router";
 import { errorText, lang, t } from "../i18n/index";
+import { FileIcon } from "../components/file-icon";
 import { StatePanel } from "../components/states";
 import { applyLang, applyTheme } from "../state/session";
 import type { Config, Entry, ShareInfo } from "../lib/types";
@@ -256,7 +257,10 @@ function FolderView({ id, path, root, download }: { id: string; path: string; ro
             const isFolder = e.kind === "folder";
             return (
               <li key={p}>
-                <Link href={to(p, !isFolder)}>{e.name}</Link>
+                <Link href={to(p, !isFolder)}>
+                  <FileIcon entry={e} />
+                  <span class="public-name">{e.name}</span>
+                </Link>
                 <span class="muted">{isFolder ? "" : formatSize(e.size)}</span>
                 <span class="muted">{formatWhen(e.modified)}</span>
               </li>

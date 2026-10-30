@@ -41,7 +41,9 @@ export function t(key: Key, vars?: Vars): string {
 
 export function tn(key: PluralKey, n: number, vars: Vars = {}): string {
   const forms = tables[current][key] as Plural;
-  const form = new Intl.PluralRules(current).select(n) === "one" ? forms.one : forms.other;
+  // CLDR puts 0 with 1 in Portuguese; Brazilian usage says "0 vezes", "0 itens".
+  const one = n !== 0 && new Intl.PluralRules(current).select(n) === "one";
+  const form = one ? forms.one : forms.other;
   return fill(form, { ...vars, n });
 }
 

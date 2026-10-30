@@ -1814,6 +1814,12 @@ fieldset.perms {
   font-weight: 600;
 }
 
+.links-list a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
 .links-list .soon {
   color: var(--cairn-danger);
 }
@@ -1948,6 +1954,7 @@ fieldset.perms {
   align-items: center;
   min-height: 44px;
   color: var(--cairn-text);
+  text-decoration: none;
 }
 
 .public-list {
@@ -1967,9 +1974,22 @@ fieldset.perms {
 .public-list a {
   display: flex;
   align-items: center;
+  gap: 12px;
+  min-width: 0;
   min-height: 44px;
   color: var(--cairn-text);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.public-name {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.public-list a:hover .public-name,
+.public-crumbs a:hover {
+  text-decoration: underline;
 }
 
 .public-foot {

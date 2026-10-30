@@ -20,6 +20,23 @@ export function opensInViewer(e: Entry): boolean {
   return e.mime.startsWith("image/") || isEditable(e.mime, e.name);
 }
 
+/**
+ * Ctrl/Cmd+click on an item toggles it (the checkbox and More keep their own clicks); otherwise the long-press
+ * swallow, if any, runs.
+ */
+export function toggleClick(e: Entry, onSelect: Props["onSelect"], after?: (ev: MouseEvent) => void) {
+  return (ev: MouseEvent) => {
+    const target = ev.target as HTMLElement | null;
+    if ((ev.ctrlKey || ev.metaKey) && !target?.closest?.(".check-button, .cell-more, .tile-more")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onSelect(e, ev);
+      return;
+    }
+    after?.(ev);
+  };
+}
+
 /** Shift+F10 or the context-menu key opens an item's menu from the keyboard. */
 export function menuKey(e: KeyboardEvent): boolean {
   return (e.key === "F10" && e.shiftKey) || e.key === "ContextMenu";
@@ -154,6 +171,7 @@ export function FileList({ dir, entries, selection, onSelect, onMore, onLongPres
             <div
               key={seg}
               {...press}
+              onClickCapture={toggleClick(e, onSelect, press.onClickCapture)}
               class={on ? "list-row on" : "list-row"}
               role="row"
               aria-rowindex={start + i + 2}

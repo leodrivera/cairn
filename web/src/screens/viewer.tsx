@@ -1,7 +1,7 @@
 // One file: its header (name, folder, size, when), then the image, the text editor, or a way to download it.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { api, ApiFailure, failureOf, offline, request } from "../lib/api";
-import { apiUrl, parent, segments } from "../lib/paths";
+import { ApiFailure, failureOf, offline, probe, request } from "../lib/api";
+import { apiUrl, displaySegment, parent, segments } from "../lib/paths";
 import { downloadUrl } from "../lib/actions";
 import { formatSize, formatWhen } from "../lib/format";
 import { isEditable } from "../lib/text";
@@ -12,9 +12,25 @@ import { folderLabel } from "../components/dialogs";
 import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
 import { useSession, useUser } from "../state/session";
-import type { Entry, Listing } from "../lib/types";
+import type { Entry } from "../lib/types";
 
 type Text = { text: string; saved: string; readOnly: boolean };
+
+/** What a one-byte read says about a file: size from Content-Range, type and date from their headers. */
+function entryOf(segment: string, res: Response): Entry {
+  const total = /\/(\d+)$/.exec(res.headers.get("content-range") ?? "")?.[1];
+  const size = total !== undefined ? Number(total) : Number(res.headers.get("content-length") ?? 0);
+  const when = Date.parse(res.headers.get("last-modified") ?? "");
+  const mime = (res.headers.get("content-type") ?? "application/octet-stream").split(";")[0].trim();
+  return {
+    name: displaySegment(segment),
+    kind: "file",
+    size,
+    modified: Number.isFinite(when) ? Math.floor(when / 1000) : 0,
+    mime,
+    ...(segment.startsWith("\u0000") ? { rawName: segment } : {}),
+  };
+}
 
 export function Viewer({ path }: { path: string }) {
   const user = useUser();
@@ -29,6 +45,8 @@ export function Viewer({ path }: { path: string }) {
   const [conflict, setConflict] = useState(false);
   const [saveError, setSaveError] = useState<ApiFailure | null>(null);
   const etag = useRef("");
+  // Only the latest load may fill the editor: a slow file just left must not land under this one.
+  const latest = useRef(0);
 
   const kind = !entry
     ? null
@@ -43,10 +61,12 @@ export function Viewer({ path }: { path: string }) {
   const dirty = !!doc && doc.text !== doc.saved;
 
   const loadText = async () => {
+    const n = ++latest.current;
     try {
       const res = await request(apiUrl("raw", path), { cache: "no-store" });
-      etag.current = res.headers.get("ETag") ?? "";
       const bytes = await res.arrayBuffer();
+      if (n !== latest.current) return;
+      etag.current = res.headers.get("ETag") ?? "";
       let text: string;
       let readOnly = !user.permissions.write;
       try {
@@ -59,24 +79,21 @@ export function Viewer({ path }: { path: string }) {
       setDoc({ text, saved: text, readOnly });
       setConflict(false);
     } catch (e) {
+      if (n !== latest.current) return;
       setError(e instanceof ApiFailure ? e : offline());
     }
   };
 
   useEffect(() => {
     let live = true;
+    latest.current++;
     setEntry(null);
     setError(null);
     setDoc(null);
     setConflict(false);
     setSaveError(null);
-    api<Listing>("GET", apiUrl("files", dir)).then(
-      (l) => {
-        if (!live) return;
-        const found = l.entries.find((e) => (e.rawName ?? e.name) === segment);
-        if (found && found.kind !== "folder") setEntry(found);
-        else setError(new ApiFailure(404, "not_found", ""));
-      },
+    probe(apiUrl("raw", path)).then(
+      (res) => live && setEntry(entryOf(segment, res)),
       (e) => live && setError(e instanceof ApiFailure ? e : offline()),
     );
     return () => {
@@ -117,14 +134,16 @@ export function Viewer({ path }: { path: string }) {
     setSaving(false);
   };
 
-  const keys = useRef(save);
-  keys.current = save;
+  // Ctrl/Cmd+S saves an editable file; elsewhere the browser keeps its own Save.
+  const keys = useRef<() => boolean>(() => false);
+  keys.current = () => {
+    if (!canSave) return false;
+    save();
+    return true;
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        keys.current();
-      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s" && keys.current()) e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -133,7 +152,10 @@ export function Viewer({ path }: { path: string }) {
   useEffect(() => {
     if (!dirty) return;
     setLeaveGuard(() => confirm(t("viewer.leave")));
-    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    const onUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
     addEventListener("beforeunload", onUnload);
     return () => {
       setLeaveGuard(null);

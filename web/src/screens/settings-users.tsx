@@ -123,6 +123,7 @@ export function Users() {
             showToast(editing === "new" ? t("users.created", { name }) : t("users.updated", { name }));
             load();
           }}
+          onChanged={load}
           onClose={() => setEditing(null)}
         />
       )}

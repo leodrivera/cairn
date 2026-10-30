@@ -22,7 +22,21 @@ export function Dialog({ title, onClose, children, wide }: DialogProps) {
   const [id] = useState(() => `dialog-${nextId++}`);
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
-    return () => before?.focus?.();
+    // Everything beside the dialog, at each level up to <body>, is inert while it is open, so screen-reader
+    // cursors stay inside too. Only what this dialog marked is unmarked.
+    const marked: Element[] = [];
+    for (let node: Element | null = ref.current!.parentElement; node && node !== document.body; node = node.parentElement) {
+      for (const sibling of node.parentElement?.children ?? []) {
+        if (sibling !== node && !sibling.hasAttribute("inert")) {
+          sibling.setAttribute("inert", "");
+          marked.push(sibling);
+        }
+      }
+    }
+    return () => {
+      for (const el of marked) el.removeAttribute("inert");
+      before?.focus?.();
+    };
   }, []);
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -31,7 +45,9 @@ export function Dialog({ title, onClose, children, wide }: DialogProps) {
       onClose();
     } else if (e.key === "Tab") {
       const all = [
-        ...ref.current!.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), [href]"),
+        ...ref.current!.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ),
       ];
       if (!all.length) return;
       const first = all[0];

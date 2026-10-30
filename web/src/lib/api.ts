@@ -37,6 +37,31 @@ export function offline(): ApiFailure {
   return new ApiFailure(0, "offline", "");
 }
 
+/** For callers outside `api`/`request` that meet a `signed_out` answer (the upload queue). */
+export function reportSignedOut(): void {
+  signedOut();
+}
+
+/**
+ * One byte of a file, for what its headers say (size, type, date) without downloading it. An empty file answers
+ * 416, which counts as found; anything else that is not ok throws like `request`.
+ */
+export async function probe(url: string): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store", credentials: "same-origin" });
+  } catch {
+    throw offline();
+  }
+  if (res.ok || res.status === 416) {
+    res.body?.cancel().catch(() => {});
+    return res;
+  }
+  const f = await failureOf(res);
+  if (f.code === "signed_out") signedOut();
+  throw f;
+}
+
 /** A request whose answer is not JSON (file bodies). Resolves to an ok response; failures throw like `api`. */
 export async function request(url: string, init: RequestInit = {}): Promise<Response> {
   const method = init.method ?? "GET";

@@ -11,6 +11,7 @@ export const en = {
   "shell.user": "User",
   "shell.settings": "Settings",
   "shell.signOut": "Sign out",
+  "shell.signOutUploads": "Uploads are still running. Sign out and stop them?",
   "shell.openMenu": "Open menu",
   "shell.closeMenu": "Close menu",
   "state.offline.title": "Can't reach the server",

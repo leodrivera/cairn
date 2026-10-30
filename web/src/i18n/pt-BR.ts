@@ -13,6 +13,7 @@ export const ptBR: Table = {
   "shell.user": "Usuário",
   "shell.settings": "Configurações",
   "shell.signOut": "Sair",
+  "shell.signOutUploads": "Ainda há envios em andamento. Sair e interromper os envios?",
   "shell.openMenu": "Abrir menu",
   "shell.closeMenu": "Fechar menu",
   "state.offline.title": "Não foi possível falar com o servidor",

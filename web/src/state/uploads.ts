@@ -13,6 +13,16 @@ function make(send: Transport): UploadQueue {
   return q;
 }
 
+// Closing or reloading the tab would cut running uploads off, so the browser asks first.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (e) => {
+    if (queue && queue.counts.active > 0) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+}
+
 export function uploads(): UploadQueue {
   queue ??= make(xhrTransport);
   return queue;

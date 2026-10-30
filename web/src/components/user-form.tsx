@@ -3,14 +3,23 @@ import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline } from "../lib/api";
 import { passwordOk } from "../lib/password";
 import { errorText, t } from "../i18n/index";
+import { showToast } from "./toast";
 import { Dialog } from "./dialogs";
 import type { Perms, User } from "../lib/types";
 
-type Props = { user?: User; sso: boolean; onSaved(user: User | null): void; onClose(): void };
+type Props = {
+  user?: User;
+  sso: boolean;
+  onSaved(user: User | null): void;
+  /** After a change that keeps the form open (Remove password). */
+  onChanged?(): void;
+  onClose(): void;
+};
 
 const permKeys = ["read", "write", "share", "admin"] as const;
 
-export function UserForm({ user, sso, onSaved, onClose }: Props) {
+export function UserForm({ user, sso, onSaved, onChanged, onClose }: Props) {
+  const [hasPassword, setHasPassword] = useState(user?.hasPassword ?? false);
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
@@ -72,11 +81,20 @@ export function UserForm({ user, sso, onSaved, onClose }: Props) {
     });
   };
 
-  const removePassword = () =>
-    run(async () => {
+  /** Acts at once and keeps the form open, so other edits in it are not lost. */
+  const removePassword = async () => {
+    setBusy(true);
+    setError("");
+    try {
       await api("DELETE", `/api/users/${user!.id}/password`);
-      return { ...user!, hasPassword: false };
-    });
+      setHasPassword(false);
+      showToast(t("users.passwordRemoved", { name: user!.name }));
+      onChanged?.();
+    } catch (e) {
+      setError(errorText(e instanceof ApiFailure ? e : offline()));
+    }
+    setBusy(false);
+  };
 
   const permLabels: Record<keyof Perms, string> = {
     read: t("form.read"),
@@ -127,7 +145,7 @@ export function UserForm({ user, sso, onSaved, onClose }: Props) {
           <p id={`${id}-password-hint`} class="hint">
             {t("form.passwordHint")} {user ? t("form.newPasswordHint") : sso ? t("form.passwordSso") : ""}
           </p>
-          {user && sso && user.hasPassword && (
+          {user && sso && hasPassword && (
             <button type="button" class="button quiet danger-text" disabled={busy} onClick={removePassword}>
               {t("form.removePassword")}
             </button>

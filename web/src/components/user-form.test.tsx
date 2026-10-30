@@ -118,11 +118,20 @@ test("remove password shows only with SSO and a password", async () => {
   const log = stubFetch({ "DELETE /api/users/2/password": () => json({ ok: true }) });
   let el = render(<UserForm user={reader} sso={false} onSaved={() => {}} onClose={() => {}} />);
   assert.ok(![...el.querySelectorAll("button")].some((b) => b.textContent === "Remove password"));
-  let saved = 0;
-  el = render(<UserForm user={reader} sso={true} onSaved={() => saved++} onClose={() => {}} />);
+  let changed = 0;
+  let closed = 0;
+  el = render(
+    <UserForm user={reader} sso={true} onSaved={() => {}} onChanged={() => changed++} onClose={() => closed++} />,
+  );
+  setValue(byLabel(el, "Scope"), "/docs");
+  await flush();
   buttonNamed(el, "Remove password").click();
-  await waitFor(() => assert.equal(saved, 1));
+  await waitFor(() => assert.equal(changed, 1));
   assert.ok(log.some((r) => r.method === "DELETE"));
+  // The form stays open with the other edit kept, and the button is gone.
+  assert.equal(closed, 0);
+  assert.equal(byLabel(el, "Scope").value, "/docs");
+  assert.ok(![...el.querySelectorAll("button")].some((b) => b.textContent === "Remove password"));
 });
 
 test("the form opens with Name focused", async () => {

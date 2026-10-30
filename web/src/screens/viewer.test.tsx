@@ -28,15 +28,28 @@ function save(el: HTMLElement) {
   textarea(el).dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
 }
 
-function raw(body: BodyInit, etag = '"5-1-0"') {
-  return () => new Response(body, { headers: { ETag: etag, "content-type": "text/plain" } });
+const modified = new Date(2026, 9, 24, 8, 0).toUTCString();
+
+/** A raw file as the server sends it: the whole body, or one byte for `Range: bytes=0-0` (the viewer's probe). */
+function raw(body: BodyInit, etag = '"5-1-0"', type = "text/plain", size?: number) {
+  return async (req: Request) => {
+    const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+    const total = size ?? bytes.length;
+    const headers = { ETag: etag, "content-type": type, "last-modified": modified };
+    if (req.headers.get("range") === "bytes=0-0") {
+      if (total === 0) return new Response(null, { status: 416, headers: { ...headers, "content-range": "bytes */0" } });
+      return new Response(bytes.slice(0, 1), { status: 206, headers: { ...headers, "content-range": `bytes 0-0/${total}` } });
+    }
+    return new Response(bytes, { headers });
+  };
 }
+
+const full = (r: Request) => r.url.includes("/api/raw/") && !r.headers.get("range");
 
 test("loads, then saves with If-Match and keeps the new ETag", async () => {
   const puts: { ifMatch: string | null; type: string | null; body: string }[] = [];
   let n = 1;
   const log = startAt("/view/scripts/backup.sh", admin, {
-    "GET /api/files/scripts": listing("scripts", [script]),
     "GET /api/raw/scripts/backup.sh": raw("hello"),
     "PUT /api/text/scripts/backup.sh": async (req) => {
       puts.push({ ifMatch: req.headers.get("if-match"), type: req.headers.get("content-type"), body: await req.text() });
@@ -54,7 +67,7 @@ test("loads, then saves with If-Match and keeps the new ETag", async () => {
   const el = render(<App />);
   await waitFor(() => assert.equal(textarea(el).value, "hello"));
   assert.ok(log.some((r) => r.url.includes("/api/raw/")));
-  assert.deepEqual(caches, ["no-store"]);
+  assert.deepEqual(caches, ["no-store", "no-store"]);
   assert.match(el.textContent!, /backup\.sh/);
   assert.match(el.textContent!, /scripts · 5 B · edited Oct 24/);
   assert.match(el.textContent!, /Shell · UTF-8 · LF/);
@@ -76,10 +89,9 @@ test("loads, then saves with If-Match and keeps the new ETag", async () => {
 test("a conflict keeps the text; Reload asks first", async () => {
   let raws = 0;
   startAt("/view/scripts/backup.sh", admin, {
-    "GET /api/files/scripts": listing("scripts", [script]),
-    "GET /api/raw/scripts/backup.sh": () => {
-      raws++;
-      return raw(raws === 1 ? "hello" : "server text", `"9-${raws}-0"`)();
+    "GET /api/raw/scripts/backup.sh": (req) => {
+      if (!req.headers.get("range")) raws++;
+      return raw(raws <= 1 ? "hello" : "server text", `"9-${raws}-0"`)(req);
     },
     "PUT /api/text/scripts/backup.sh": () =>
       json({ error: "changed", message: "This file changed on the server since you opened it." }, 412),
@@ -111,7 +123,6 @@ test("a conflict keeps the text; Reload asks first", async () => {
 
 test("leaving with changes asks", async () => {
   startAt("/view/scripts/backup.sh", admin, {
-    "GET /api/files/scripts": listing("scripts", [script]),
     "GET /api/raw/scripts/backup.sh": raw("hello"),
   });
   const asked: string[] = [];
@@ -134,19 +145,22 @@ test("leaving with changes asks", async () => {
 
 test("too large offers a download", async () => {
   const big = file("huge.log", { mime: "text/plain", size: 3 * 1024 * 1024 });
-  const log = startAt("/view/huge.log", admin, { "GET /api/files": listing("", [big]) });
+  const log = startAt("/view/huge.log", admin, {
+    "GET /api/raw/huge.log": raw("x", '"1-1-0"', "text/plain", big.size),
+  });
   const el = render(<App />);
   await waitFor(() =>
     assert.match(el.textContent!, /This file is too large to edit here \(3 MB\)\. Download it instead\./),
   );
   assert.ok(el.querySelector('a[href="/api/raw/huge.log?download=1"]'));
-  assert.ok(!log.some((r) => r.url.includes("/api/raw/")));
+  assert.ok(!log.some(full));
+  assert.ok(!log.some((r) => r.url.includes("/api/files")));
   assert.ok(!el.querySelector("textarea"));
 });
 
 test("an image shows an img", async () => {
   startAt("/view/photos/cover.png", admin, {
-    "GET /api/files/photos": listing("photos", [file("cover.png", { mime: "image/png" })]),
+    "GET /api/raw/photos/cover.png": raw("png", '"3-1-0"', "image/png"),
   });
   const el = render(<App />);
   await waitFor(() => assert.ok(el.querySelector("img.viewer-image")));
@@ -156,7 +170,7 @@ test("an image shows an img", async () => {
 
 test("other files have no preview", async () => {
   startAt("/view/site-backup.tar.gz", admin, {
-    "GET /api/files": listing("", [file("site-backup.tar.gz", { mime: "application/gzip" })]),
+    "GET /api/raw/site-backup.tar.gz": raw("gz", '"2-1-0"', "application/gzip"),
   });
   const el = render(<App />);
   await waitFor(() => assert.match(el.textContent!, /No preview for this kind of file\./));
@@ -165,7 +179,6 @@ test("other files have no preview", async () => {
 
 test("a reader has no Save and cannot type", async () => {
   startAt("/view/scripts/backup.sh", reader, {
-    "GET /api/files/scripts": listing("scripts", [script]),
     "GET /api/raw/scripts/backup.sh": raw("hello"),
   });
   const el = render(<App />);
@@ -176,7 +189,6 @@ test("a reader has no Save and cannot type", async () => {
 
 test("a body that is not UTF-8 is read-only", async () => {
   startAt("/view/notes.txt", admin, {
-    "GET /api/files": listing("", [file("notes.txt", { mime: "text/plain", size: 3 })]),
     "GET /api/raw/notes.txt": raw(new Uint8Array([0x63, 0xe9, 0x0a])),
   });
   const el = render(<App />);
@@ -186,7 +198,9 @@ test("a body that is not UTF-8 is read-only", async () => {
 });
 
 test("a file that is gone says so", async () => {
-  startAt("/view/missing.txt", admin, { "GET /api/files": listing("", []) });
+  startAt("/view/missing.txt", admin, {
+    "GET /api/raw/missing.txt": () => json({ error: "not_found", message: "No such file or folder." }, 404),
+  });
   const el = render(<App />);
   await waitFor(() => assert.match(el.textContent!, /No such file or folder\./));
 });
@@ -223,7 +237,6 @@ test("the browser Back button asks too, and stays when told to", async () => {
 
 test("final: Sign out with unsaved text asks first and stays signed in on Stay", async () => {
   const log = startAt("/view/scripts/backup.sh", admin, {
-    "GET /api/files/scripts": listing("scripts", [script]),
     "GET /api/raw/scripts/backup.sh": raw("hello"),
     "POST /api/auth/logout": () => json({ next: null }),
   });
@@ -240,7 +253,6 @@ test("final: Sign out with unsaved text asks first and stays signed in on Stay",
 
 test("final: any failed save offers Download my version", async () => {
   startAt("/view/scripts/backup.sh", admin, {
-    "GET /api/files/scripts": listing("scripts", [script]),
     "GET /api/raw/scripts/backup.sh": raw("hello"),
     "PUT /api/text/scripts/backup.sh": () => json({ error: "signed_out", message: "Sign in first." }, 403),
   });
@@ -251,4 +263,38 @@ test("final: any failed save offers Download my version", async () => {
   await waitFor(() => assert.match(el.textContent!, /Sign in first\./));
   assert.ok(button(el, "Download my version"));
   assert.equal(textarea(el).value, "mine");
+});
+
+test("minor: the viewer reads one byte, not the folder's listing", async () => {
+  const log = startAt("/view/scripts/backup.sh", admin, { "GET /api/raw/scripts/backup.sh": raw("hello", '"5-1-0"', "text/x-sh") });
+  const el = render(<App />);
+  await waitFor(() => assert.equal(textarea(el).value, "hello"));
+  assert.match(el.textContent!, /scripts · 5 B · edited Oct 24/);
+  assert.ok(!log.some((r) => r.url.includes("/api/files")));
+});
+
+test("minor: a slow file that lands after moving on is dropped", async () => {
+  let releaseA: (r: Response) => void = () => {};
+  startAt("/view/a.txt", admin, {
+    "GET /api/raw/a.txt": (req) =>
+      req.headers.get("range") ? raw("A", '"1-1-0"')(req) : new Promise<Response>((r) => (releaseA = r)),
+    "GET /api/raw/b.txt": raw("text of b", '"9-1-0"'),
+  });
+  const el = render(<App />);
+  await flush(5);
+  const { navigate } = await import("../lib/router");
+  navigate("/view/b.txt");
+  await waitFor(() => assert.equal(textarea(el).value, "text of b"));
+  releaseA(new Response("text of a", { headers: { ETag: '"9-1-0"' } }));
+  await flush(10);
+  assert.equal(textarea(el).value, "text of b");
+});
+
+test("minor: Ctrl+S is left to the browser where nothing can be saved", async () => {
+  startAt("/view/photos/cover.png", admin, { "GET /api/raw/photos/cover.png": raw("png", '"3-1-0"', "image/png") });
+  const el = render(<App />);
+  await waitFor(() => assert.ok(el.querySelector("img.viewer-image")));
+  const ev = new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true });
+  document.body.dispatchEvent(ev);
+  assert.ok(!ev.defaultPrevented);
 });

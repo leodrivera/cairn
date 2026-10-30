@@ -4,7 +4,7 @@ import { apiUrl, join, segmentOf } from "../lib/paths";
 import { formatSize } from "../lib/format";
 import { gridRange, useScroller } from "../lib/windowing";
 import { t } from "../i18n/index";
-import { below, EntryName, menuKey, useLongPress } from "./file-list";
+import { below, EntryName, menuKey, toggleClick, useLongPress } from "./file-list";
 import { FileIcon } from "./file-icon";
 import { Icon } from "./icons";
 import type { Entry } from "../lib/types";
@@ -47,6 +47,7 @@ export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore
             <li
               key={seg}
               {...press}
+              onClickCapture={toggleClick(e, onSelect, press.onClickCapture)}
               class={on ? "tile on" : "tile"}
               onContextMenu={(ev) => {
                 if (!onMore) return;

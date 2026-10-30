@@ -542,3 +542,103 @@ test("final: more than 1000 items are refused in the browser", async (t) => {
   await waitFor(() => assert.match(el.textContent!, /Choose between 1 and 1000 items in one folder\./));
   assert.equal(submitted, 0);
 });
+
+test("minor: Escape while typing in Search keeps the selection", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[3].querySelector(".check-button")!);
+  await waitFor(() => assert.ok(el.querySelector(".selection-bar")));
+  const search = el.querySelector<HTMLInputElement>("#explorer-search")!;
+  search.focus();
+  search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await flush();
+  assert.ok(el.querySelector(".selection-bar"));
+});
+
+test("minor: Ctrl or Cmd+click on a row toggles it", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
+  rows(el)[3].querySelector("a.name")!.dispatchEvent(ev);
+  assert.ok(ev.defaultPrevented);
+  await waitFor(() => assert.match(el.textContent!, /1 selected/));
+  assert.equal(location.pathname, "/files/");
+  click(rows(el)[5].querySelector(".cell-when")!, { metaKey: true });
+  await waitFor(() => assert.match(el.textContent!, /2 selected/));
+  click(rows(el)[3].querySelector(".cell-size")!, { ctrlKey: true });
+  await waitFor(() => assert.match(el.textContent!, /1 selected/));
+});
+
+test("minor: the Upload menu closes on Escape and on a press outside", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(button(el, "Upload"));
+  await waitFor(() => assert.ok(el.querySelector(".toolbar .menu")));
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await waitFor(() => assert.ok(!el.querySelector(".toolbar .menu")));
+  click(button(el, "Upload"));
+  await waitFor(() => assert.ok(el.querySelector(".toolbar .menu")));
+  el.querySelector(".list-body")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  await waitFor(() => assert.ok(!el.querySelector(".toolbar .menu")));
+});
+
+test("minor: closing the tab during uploads asks; Sign out asks too", async () => {
+  const log = startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "POST /api/auth/logout": () => json({ next: null }),
+  });
+  resetUploads(() => new Promise(() => {}));
+  const asked: string[] = [];
+  globalThis.confirm = (m?: string) => {
+    asked.push(String(m));
+    return false;
+  };
+  const el = render(<App />);
+  await shown(el);
+  pick(el.querySelector<HTMLInputElement>("input[data-pick=files]")!, [new File(["a"], "a.txt")]);
+  await waitFor(() => assert.match(el.textContent!, /Uploading 1 of 1/));
+  const ev = new Event("beforeunload", { cancelable: true });
+  dispatchEvent(ev);
+  assert.ok(ev.defaultPrevented);
+  el.querySelector<HTMLButtonElement>('button[aria-label="Sign out"]')!.click();
+  await flush(5);
+  assert.deepEqual(asked, ["Uploads are still running. Sign out and stop them?"]);
+  assert.ok(!log.some((r) => r.url.endsWith("/api/auth/logout")));
+  resetUploads(() => new Promise(() => {}));
+  const after = new Event("beforeunload", { cancelable: true });
+  dispatchEvent(after);
+  assert.ok(!after.defaultPrevented);
+});
+
+test("minor: Sign out that cannot reach the server stays signed in and says so", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "POST /api/auth/logout": () => {
+      throw new TypeError("network down");
+    },
+  });
+  resetUploads(okTransport([]));
+  const el = render(<App />);
+  await shown(el);
+  el.querySelector<HTMLButtonElement>('button[aria-label="Sign out"]')!.click();
+  await waitFor(() => assert.match(el.textContent!, /Can't reach the server\. Check that Cairn is running, then try again\./));
+  assert.equal(location.pathname, "/files/");
+  assert.ok(el.querySelector(".list-body"));
+});
+
+test("minor: the page behind a dialog is inert while it is open", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  click(el.querySelector('button[aria-label="New folder"]')!);
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"]')));
+  assert.ok(el.querySelector(".sidebar")!.hasAttribute("inert"));
+  assert.ok(el.querySelector(".toolbar")!.hasAttribute("inert"));
+  assert.ok(!el.querySelector('[role="dialog"]')!.closest("[inert]"));
+  button(el, "Cancel").click();
+  await waitFor(() => assert.ok(!el.querySelector('[role="dialog"]')));
+  assert.ok(!el.querySelector("[inert]"));
+});

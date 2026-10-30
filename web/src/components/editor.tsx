@@ -18,11 +18,10 @@ export function Editor({ name, text, readOnly, save, onInput }: Props) {
   const area = useRef<HTMLTextAreaElement>(null);
   const gutter = useRef<HTMLPreElement>(null);
   const [offset, setOffset] = useState(0);
-  const lines = useMemo(() => {
-    let n = 1;
-    for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) n++;
-    return Array.from({ length: n }, (_, i) => i + 1).join("\n");
-  }, [text]);
+  // Counting line breaks is cheap; building the numbers is not, so it happens only when the count changes.
+  let count = 1;
+  for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) count++;
+  const lines = useMemo(() => Array.from({ length: count }, (_, i) => i + 1).join("\n"), [count]);
   const pos = caret(text, Math.min(offset, text.length));
   // As an attribute: a property set from JSX does not always reach the markup, and "false" as a string is truthy.
   useLayoutEffect(() => area.current?.setAttribute("spellcheck", "false"), []);

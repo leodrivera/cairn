@@ -3,14 +3,14 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import wordmark from "../../../brand/cairn-wordmark.svg";
-import { api } from "../lib/api";
+import { api, ApiFailure } from "../lib/api";
 import { formatSize } from "../lib/format";
 import { Link, mayLeave, navigate, useRoute } from "../lib/router";
-import { t } from "../i18n/index";
+import { errorText, t } from "../i18n/index";
+import { showToast, Toast } from "./toast";
 import { useSession, useUser } from "../state/session";
 import { uploads } from "../state/uploads";
 import { Icon, Mark, type IconName } from "./icons";
-import { Toast } from "./toast";
 import { UploadPanel } from "./upload-panel";
 
 export function initials(name: string): string {
@@ -75,8 +75,21 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
   const place = route.name === "files" || route.name === "view" ? "files" : route.name === "settings" ? route.page : "";
 
   const signOut = async () => {
+    const queue = uploads();
+    if (queue.counts.active > 0 && !confirm(t("shell.signOutUploads"))) return;
     if (!mayLeave()) return;
-    const res = await api<{ next: string | null }>("POST", "/api/auth/logout").catch(() => ({ next: null }));
+    let res: { next: string | null };
+    try {
+      res = await api<{ next: string | null }>("POST", "/api/auth/logout");
+    } catch (e) {
+      // Unreachable server: the session is still alive there, so staying signed in here is the honest answer.
+      if (e instanceof ApiFailure && e.code === "offline") {
+        showToast(errorText(e));
+        return;
+      }
+      res = { next: null };
+    }
+    queue.cancelAll();
     if (res.next) {
       location.assign(res.next);
       return;

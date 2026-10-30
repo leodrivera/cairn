@@ -195,3 +195,25 @@ test("final: an unchanged name closes without renaming", async () => {
   assert.deepEqual(names, []);
   assert.equal(closed, 1);
 });
+
+test("minor: the Tab loop counts selects, textareas and tabindex", async () => {
+  const { Dialog } = await import("./dialogs");
+  const el = render(
+    <Dialog title="Pick" onClose={() => {}}>
+      <input id="first" />
+      <textarea id="mid" />
+      <div tabIndex={0} id="box" />
+      <select id="last">
+        <option>a</option>
+      </select>
+    </Dialog>,
+  );
+  const last = el.querySelector<HTMLSelectElement>("#last")!;
+  last.focus();
+  last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  assert.ok(document.activeElement === el.querySelector("#first"));
+  el.querySelector<HTMLInputElement>("#first")!.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }),
+  );
+  assert.ok(document.activeElement === last);
+});

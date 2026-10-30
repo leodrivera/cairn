@@ -1,5 +1,5 @@
 // Uploads: a queue in the browser with progress, retry, replace and cancel; folders are created first.
-import { api, ApiFailure, failureOf, offline } from "./api";
+import { api, ApiFailure, failureOf, offline, probe, reportSignedOut } from "./api";
 import { apiUrl, join, parent } from "./paths";
 
 export type Transport = (
@@ -255,6 +255,7 @@ export class UploadQueue {
         this.finish(job, "done", null);
       } else {
         const f = await failureOf(new Response(res.body, { status: res.status }));
+        if (f.code === "signed_out") reportSignedOut();
         this.finish(job, f.code === "exists" && !job.replace ? "exists" : "failed", f);
       }
     } catch {
@@ -280,14 +281,24 @@ export class UploadQueue {
   }
 }
 
-/** Creates a folder, or accepts one that is already there; a file in the way fails with not_a_folder. */
+/**
+ * Creates a folder, or accepts one that is already there; a file in the way fails with not_a_folder. What is there
+ * is asked with a one-byte read, never a listing: the folder may hold 50 000 entries.
+ */
 export async function ensureFolder(path: string): Promise<void> {
   try {
     await api("POST", apiUrl("folders", path));
+    return;
   } catch (e) {
     if (!(e instanceof ApiFailure) || e.code !== "exists") throw e;
-    await api("GET", apiUrl("files", path));
   }
+  try {
+    await probe(apiUrl("raw", path));
+  } catch (e) {
+    if (e instanceof ApiFailure && e.code === "is_a_folder") return;
+    throw e;
+  }
+  throw new ApiFailure(409, "not_a_folder", "");
 }
 
 export type TreeFile = { relPath: string; file: File | null };

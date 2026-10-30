@@ -187,7 +187,7 @@ test("a folder name that is a file fails the items under it", async () => {
 test("ensureFolder reuses an existing folder", async () => {
   stubFetch({
     "POST /api/folders/photos/a": () => json({ error: "exists", message: "x" }, 409),
-    "GET /api/files/photos/a": () => json({ path: "photos/a", entries: [] }),
+    "GET /api/raw/photos/a": () => json({ error: "is_a_folder", message: "That is a folder, not a file." }, 400),
   });
   await ensureFolder("photos/a");
 });
@@ -195,7 +195,7 @@ test("ensureFolder reuses an existing folder", async () => {
 test("ensureFolder refuses a file in the way", async () => {
   stubFetch({
     "POST /api/folders/a": () => json({ error: "exists", message: "x" }, 409),
-    "GET /api/files/a": () => json({ error: "not_a_folder", message: "That is a file, not a folder." }, 400),
+    "GET /api/raw/a": () => new Response("x", { status: 206, headers: { "content-range": "bytes 0-0/9" } }),
   });
   await assert.rejects(ensureFolder("a"), (e: ApiFailure) => e.code === "not_a_folder");
 });
@@ -269,4 +269,26 @@ test("final: 20 000 quick uploads finish in linear time", async () => {
   const ms = Date.now() - start;
   assert.ok(ms < 4000, `${ms} ms`);
   assert.ok(q.items.every((i) => i.state === "done"));
+});
+
+test("minor: ensureFolder checks with one byte, never a listing", async () => {
+  const log = stubFetch({
+    "POST /api/folders/photos/a": () => json({ error: "exists", message: "x" }, 409),
+    "GET /api/raw/photos/a": () => json({ error: "is_a_folder", message: "That is a folder, not a file." }, 400),
+  });
+  await ensureFolder("photos/a");
+  const probe = log.find((r) => r.method === "GET")!;
+  assert.equal(probe.headers.get("range"), "bytes=0-0");
+});
+
+test("minor: a signed-out answer ends the session for the whole app", async () => {
+  const { onSignedOut } = await import("./api");
+  let ended = 0;
+  onSignedOut(() => ended++);
+  const send: Transport = async () => ({ status: 403, body: JSON.stringify({ error: "signed_out", message: "Sign in first." }) });
+  const q = new UploadQueue(send, () => {});
+  q.add("", [f("a")]);
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(q.items[0].state, "failed");
+  assert.equal(ended, 1);
 });

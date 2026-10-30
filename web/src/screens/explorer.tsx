@@ -127,13 +127,19 @@ export function Explorer({ path }: { path: string }) {
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e: KeyboardEvent) => {
     if (dialog || itemMenu) return;
+    if (e.key === "Escape" && (menu || tools)) {
+      setMenu(false);
+      setTools(false);
+      return;
+    }
+    // While typing, keys belong to the field (Escape clears a search, Delete deletes a letter).
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("input, textarea, select, [contenteditable]")) return;
     if (e.key === "Escape" && selection.size > 0) {
       selection.clear();
       touch();
       return;
     }
-    const target = e.target as HTMLElement | null;
-    if (target?.closest?.("input, textarea, select, [contenteditable]")) return;
     if (!canWrite || chosen.length === 0) return;
     if (e.key === "F2" && chosen.length === 1) {
       e.preventDefault();
@@ -143,6 +149,19 @@ export function Explorer({ path }: { path: string }) {
       setDialog({ kind: "delete", items: chosen });
     }
   };
+
+  // An open Upload or More menu closes on a press anywhere outside it.
+  useEffect(() => {
+    if (!menu && !tools) return;
+    const away = (e: Event) => {
+      if (!(e.target as HTMLElement | null)?.closest?.(".menu-anchor")) {
+        setMenu(false);
+        setTools(false);
+      }
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [menu, tools]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => keys.current(e);

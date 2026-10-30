@@ -45,6 +45,8 @@ pub struct AppState {
     pub data_id: Option<(u64, u64)>,
     /// Tests only: resolve paths the way kernels without openat2 do.
     pub force_fallback: bool,
+    /// Signs share link unlock cookies. Made at start, so a restart asks for link passwords again.
+    pub share_key: [u8; 32],
 }
 
 impl AppState {
@@ -57,8 +59,11 @@ impl AppState {
             use std::os::unix::fs::MetadataExt;
             (m.dev(), m.ino())
         });
+        let mut share_key = [0u8; 32];
+        getrandom::fill(&mut share_key).expect("system random source");
         AppState {
             data_id,
+            share_key,
             force_fallback: false,
             config: Arc::new(config),
             db: Arc::new(db),
@@ -93,7 +98,7 @@ pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .nest("/api", api)
         .merge(sso_routes::routes(state.clone()))
-        .merge(public_routes::routes())
+        .merge(public_routes::routes(state.clone()))
         .fallback(assets::serve)
         .with_state(state);
     headers::apply(app, captcha.as_deref())

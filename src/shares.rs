@@ -249,6 +249,61 @@ pub fn resolve(
     })
 }
 
+/// The unlock cookie of a link with a password. Scoped to the link's own path, so one link's cookie never reaches
+/// another.
+pub const UNLOCK_COOKIE: &str = "cairn_share";
+const UNLOCK_SECS: i64 = 12 * 3600;
+
+fn unlock_mac(id: &str, exp: i64, password_hash: &str, key: &[u8; 32]) -> ring::hmac::Tag {
+    let k = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
+    ring::hmac::sign(&k, format!("{id}\n{exp}\n{password_hash}").as_bytes())
+}
+
+/// Proof the visitor typed the password: the expiry and a MAC over the link, the expiry and the password hash, so
+/// a new or removed password ends it.
+pub fn unlock_cookie(
+    id: &str,
+    password_hash: &str,
+    key: &[u8; 32],
+    now: i64,
+    https: bool,
+) -> axum::http::HeaderValue {
+    let exp = now + UNLOCK_SECS;
+    let tag = URL_SAFE_NO_PAD.encode(unlock_mac(id, exp, password_hash, key).as_ref());
+    let secure = if https { "; Secure" } else { "" };
+    axum::http::HeaderValue::from_str(&format!(
+        "{UNLOCK_COOKIE}={exp}.{tag}; Path=/s/{id}; HttpOnly; SameSite=Lax; Max-Age={UNLOCK_SECS}{secure}"
+    ))
+    .expect("cookie is ASCII")
+}
+
+pub fn read_unlock(
+    headers: &axum::http::HeaderMap,
+    id: &str,
+    password_hash: &str,
+    key: &[u8; 32],
+    now: i64,
+) -> bool {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or("").split(';'))
+        .filter_map(|part| part.trim().strip_prefix(UNLOCK_COOKIE)?.strip_prefix('='))
+        .any(|value| {
+            let Some((exp, tag)) = value.split_once('.') else {
+                return false;
+            };
+            let (Ok(exp), Ok(tag)) = (exp.parse::<i64>(), URL_SAFE_NO_PAD.decode(tag)) else {
+                return false;
+            };
+            exp > now
+                && crate::config::secret::ct_eq(
+                    unlock_mac(id, exp, password_hash, key).as_ref(),
+                    &tag,
+                )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +521,97 @@ mod tests {
         assert!(!update(&db, "missing", None, None, Some(true), NOW).unwrap());
         assert!(delete(&db, &r.id, NOW).unwrap());
         assert!(!delete(&db, &r.id, NOW).unwrap());
+    }
+    const KEY: [u8; 32] = [7; 32];
+    const ID: &str = "k7Qw3nTzAbCdEfGhIjKl-_";
+
+    fn cookie_headers(c: &axum::http::HeaderValue) -> axum::http::HeaderMap {
+        let pair = c.to_str().unwrap().split(';').next().unwrap().to_string();
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("cookie", format!("other=1; {pair}").parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn cookie_round_trip() {
+        let c = unlock_cookie(ID, "hash", &KEY, NOW, false);
+        let text = c.to_str().unwrap();
+        assert!(text.starts_with("cairn_share="), "{text}");
+        assert!(text.contains(&format!("; Path=/s/{ID}")), "{text}");
+        assert!(
+            text.contains("; HttpOnly; SameSite=Lax; Max-Age=43200"),
+            "{text}"
+        );
+        assert!(!text.contains("Secure"));
+        assert!(
+            unlock_cookie(ID, "hash", &KEY, NOW, true)
+                .to_str()
+                .unwrap()
+                .ends_with("; Secure")
+        );
+        assert!(read_unlock(
+            &cookie_headers(&c),
+            ID,
+            "hash",
+            &KEY,
+            NOW + 43_199
+        ));
+    }
+
+    #[test]
+    fn cookie_expires() {
+        let c = unlock_cookie(ID, "hash", &KEY, NOW, false);
+        assert!(!read_unlock(
+            &cookie_headers(&c),
+            ID,
+            "hash",
+            &KEY,
+            NOW + 43_200
+        ));
+    }
+
+    #[test]
+    fn cookie_bound_to_hash() {
+        let c = unlock_cookie(ID, "hash", &KEY, NOW, false);
+        assert!(!read_unlock(&cookie_headers(&c), ID, "other", &KEY, NOW));
+        assert!(!read_unlock(&cookie_headers(&c), ID, "hash", &[8; 32], NOW));
+    }
+
+    #[test]
+    fn cookie_bound_to_id() {
+        let c = unlock_cookie(ID, "hash", &KEY, NOW, false);
+        assert!(!read_unlock(
+            &cookie_headers(&c),
+            "Zt6yQn1wAbCdEfGhIjKl-_",
+            "hash",
+            &KEY,
+            NOW
+        ));
+    }
+
+    #[test]
+    fn cookie_tampered() {
+        let c = unlock_cookie(ID, "hash", &KEY, NOW, false);
+        let pair = c.to_str().unwrap().split(';').next().unwrap().to_string();
+        let value = pair.strip_prefix("cairn_share=").unwrap();
+        let (exp, tag) = value.split_once('.').unwrap();
+        let later = format!("cairn_share={}.{tag}", exp.parse::<i64>().unwrap() + 1000);
+        let flipped = {
+            let mut t = tag.to_string();
+            let last = if t.ends_with('A') { 'B' } else { 'A' };
+            t.pop();
+            t.push(last);
+            format!("cairn_share={exp}.{t}")
+        };
+        for bad in [
+            later,
+            flipped,
+            "cairn_share=".into(),
+            "cairn_share=x.y".into(),
+        ] {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert("cookie", bad.parse().unwrap());
+            assert!(!read_unlock(&h, ID, "hash", &KEY, NOW), "{bad}");
+        }
     }
 }

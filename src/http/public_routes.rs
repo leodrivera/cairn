@@ -4,29 +4,38 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::Response;
-use axum::routing::{MethodRouter, get};
-use axum::{Json, Router};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{MethodRouter, get, post};
+use axum::{Json, Router, middleware};
 use serde_json::{Value, json};
 
+use crate::auth::ratelimit::ip_key;
 use crate::fs::path::RelPath;
 use crate::fs::{FsError, list};
 use crate::http::AppState;
 use crate::http::assets;
+use crate::http::client::Client;
+use crate::http::csrf;
 use crate::http::error::ApiError;
 use crate::http::files_routes::{blocking, serve_file, serve_zip};
+use crate::http::json::StrictJson;
 use crate::http::sso_routes::not_found;
 use crate::shares::{self, Live, Target};
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
     // Other methods get the same plain 404 as any unknown /s path.
     let page = |m: MethodRouter<AppState>| m.fallback(page_not_found);
+    // The one state change here: like every POST under /api it needs X-Cairn, and a small body.
+    let unlock_route = post(unlock)
+        .route_layer(middleware::from_fn_with_state(state, csrf::require_header))
+        .route_layer(DefaultBodyLimit::max(1 << 20));
     Router::new()
         .route("/s/{id}", page(get(app_page)))
         .route("/s/{id}/info", page(get(info)))
+        .route("/s/{id}/unlock", page(unlock_route))
         .route("/s/{id}/list", page(get(list_folder)))
         .route("/s/{id}/list/{*path}", page(get(list_folder)))
         .route("/s/{id}/raw", page(get(raw)))
@@ -79,8 +88,8 @@ fn locked() -> ApiError {
     )
 }
 
-/// The link, when it works and the visitor may open it.
-async fn live(s: &AppState, id: &str, _headers: &HeaderMap) -> Result<Live, ApiError> {
+/// The link, when it works, whether or not the visitor has unlocked it.
+async fn find(s: &AppState, id: &str) -> Result<Live, ApiError> {
     let (db, root, data_id, fallback, id) = (
         s.db.clone(),
         s.config.root.clone(),
@@ -93,11 +102,55 @@ async fn live(s: &AppState, id: &str, _headers: &HeaderMap) -> Result<Live, ApiE
     })
     .await
     .map_err(|_| ApiError::internal())?;
-    let live = found.ok_or_else(gone)?;
-    if live.row.password_hash.is_some() {
+    found.ok_or_else(gone)
+}
+
+/// The link, when it works and the visitor may open it: no password, or a valid unlock cookie for this password.
+async fn live(s: &AppState, id: &str, headers: &HeaderMap) -> Result<Live, ApiError> {
+    let live = find(s, id).await?;
+    if let Some(hash) = &live.row.password_hash
+        && !shares::read_unlock(headers, id, hash, &s.share_key, crate::now())
+    {
         return Err(locked());
     }
     Ok(live)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnlockBody {
+    password: String,
+}
+
+/// A wrong password is 403, never 401: only a failed sign-in is 401, for Fail2ban.
+async fn unlock(
+    State(s): State<AppState>,
+    at: At,
+    client: Client,
+    StrictJson(b): StrictJson<UnlockBody>,
+) -> Result<Response, ApiError> {
+    let live = find(&s, &at.id).await?;
+    let Some(hash) = live.row.password_hash else {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    };
+    let now = crate::now();
+    let key = format!("{}|{}", at.id, ip_key(client.ip));
+    let limiter = &s.limiters.share_password;
+    if let Some(wait) = limiter.blocked(client.ip, &key, now) {
+        tracing::warn!(event = "http.rate_limited", route = "share_password", ip = %client.ip);
+        return Err(ApiError::too_many(wait));
+    }
+    if !s.hasher.verify(b.password, Some(hash.clone())).await {
+        limiter.failed(client.ip, &key, now);
+        tracing::warn!(event = "share.password_failed", ip = %client.ip);
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "wrong_password",
+            "That password is not right.",
+        ));
+    }
+    let cookie = shares::unlock_cookie(&at.id, &hash, &s.share_key, now, client.https);
+    Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response())
 }
 
 /// Where a path beneath the link leads: a file link has nothing beneath it.

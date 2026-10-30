@@ -458,3 +458,211 @@ async fn no_session_needed() {
     let me = Req::get("/api/me").send(&f.h.app).await;
     assert_eq!(me.json["user"], Value::Null);
 }
+
+async fn locked_link(f: &Fx) -> String {
+    f.share(json!({ "path": "photos", "expiresDays": 7, "password": "s3cret", "download": true }))
+        .await
+}
+
+fn unlock(id: &str, password: &str) -> Req {
+    Req::post(&format!("/s/{id}/unlock")).json(json!({ "password": password }))
+}
+
+fn pair(res: &Res) -> String {
+    res.cookie().expect("unlock cookie")
+}
+
+#[tokio::test]
+async fn unlock_right() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let res = unlock(&id, "s3cret").send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.json);
+    let set = res.set_cookie().unwrap();
+    for part in [
+        "cairn_share=".to_string(),
+        format!("Path=/s/{id}"),
+        "HttpOnly".into(),
+        "SameSite=Lax".into(),
+        "Max-Age=43200".into(),
+    ] {
+        assert!(set.contains(&part), "{part} in {set}");
+    }
+    assert!(!set.contains("Secure"), "{set}");
+    let c = pair(&res);
+    let res = Req::get(&format!("/s/{id}/info"))
+        .cookie(&c)
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let res = Req::get(&format!("/s/{id}/raw/notes.txt"))
+        .cookie(&c)
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.body, b"some notes");
+}
+
+#[tokio::test]
+async fn unlock_https_secure() {
+    let (h, dir) = harness_with_root(&[("CAIRN_TRUSTED_PROXIES", "10.0.0.0/8")]);
+    std::fs::write(dir.path().join("srv/notes.txt"), "n").unwrap();
+    h.add_user("admin@example.com", Some(PW), true);
+    let admin = h.login("admin@example.com", PW).await;
+    let res = Req::post("/api/shares")
+        .cookie(&admin)
+        .json(json!({ "path": "notes.txt", "expiresDays": 7, "password": "s3cret", "download": true }))
+        .send(&h.app)
+        .await;
+    let id = res.json["share"]["id"].as_str().unwrap().to_string();
+    let res = unlock(&id, "s3cret")
+        .peer("10.0.0.1:5000")
+        .header("x-forwarded-proto", "https")
+        .send(&h.app)
+        .await;
+    assert!(res.set_cookie().unwrap().ends_with("; Secure"));
+}
+
+#[tokio::test]
+async fn unlock_wrong_is_403() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let res = unlock(&id, "nope-wrong").send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.code(), "wrong_password");
+    assert_eq!(res.json["message"], "That password is not right.");
+    assert!(res.set_cookie().is_none());
+}
+
+#[tokio::test]
+async fn unlock_needs_x_cairn() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let res = unlock(&id, "s3cret").no_csrf().send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.code(), "csrf");
+}
+
+#[tokio::test]
+async fn unlock_unknown_field_400() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let res = Req::post(&format!("/s/{id}/unlock"))
+        .json(json!({ "password": "s3cret", "keep": true }))
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn unlock_gone_404() {
+    let f = fx().await;
+    let res = unlock("k7Qw3nTzAbCdEfGhIjKl-_", "s3cret")
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(res.code(), "share_gone");
+}
+
+#[tokio::test]
+async fn unlock_open_link_204_no_cookie() {
+    let f = fx().await;
+    let id = f.file().await;
+    let res = unlock(&id, "anything").send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert!(res.set_cookie().is_none());
+}
+
+#[tokio::test]
+async fn cookie_for_other_link_refused() {
+    let f = fx().await;
+    let a = locked_link(&f).await;
+    let b = locked_link(&f).await;
+    let c = pair(&unlock(&a, "s3cret").send(&f.h.app).await);
+    let res = Req::get(&format!("/s/{b}/info"))
+        .cookie(&c)
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.code(), "share_locked");
+}
+
+#[tokio::test]
+async fn password_change_ends_unlock() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let c = pair(&unlock(&id, "s3cret").send(&f.h.app).await);
+    let patch = |body: Value| {
+        Req::patch(&format!("/api/shares/{id}"))
+            .cookie(&f.admin)
+            .json(body)
+    };
+    patch(json!({ "password": "n3w-secret" }))
+        .send(&f.h.app)
+        .await;
+    let res = Req::get(&format!("/s/{id}/info"))
+        .cookie(&c)
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.code(), "share_locked");
+    patch(json!({ "password": null })).send(&f.h.app).await;
+    let res = Req::get(&format!("/s/{id}/info")).send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn restart_ends_unlock() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let c = pair(&unlock(&id, "s3cret").send(&f.h.app).await);
+    let restarted =
+        cairn::http::AppState::new((*f.h.state.config).clone(), cairn::db::Db::open_in_memory());
+    let mut state = f.h.state.clone();
+    state.share_key = restarted.share_key;
+    let app = cairn::http::router(state);
+    let res = Req::get(&format!("/s/{id}/info"))
+        .cookie(&c)
+        .send(&app)
+        .await;
+    assert_eq!(res.code(), "share_locked");
+}
+
+#[tokio::test]
+async fn wrong_password_limit() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let other = locked_link(&f).await;
+    let ip = "203.0.113.5:4000";
+    for _ in 0..10 {
+        let res = unlock(&id, "wrong-one").peer(ip).send(&f.h.app).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN);
+    }
+    let res = unlock(&id, "s3cret").peer(ip).send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(!res.header("retry-after").is_empty());
+    let res = unlock(&id, "s3cret")
+        .peer("203.0.113.6:4000")
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = unlock(&other, "s3cret").peer(ip).send(&f.h.app).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn limit_counts_per_64() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    for i in 1..=10 {
+        let peer = format!("[2001:db8:0:1::{i:x}]:4000");
+        unlock(&id, "wrong-one").peer(&peer).send(&f.h.app).await;
+    }
+    let res = unlock(&id, "s3cret")
+        .peer("[2001:db8:0:1:ffff::1]:4000")
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    let res = unlock(&id, "s3cret")
+        .peer("[2001:db8:0:2::1]:4000")
+        .send(&f.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 /// IPv4 per address; IPv6 per /64, the block one subscriber usually gets, so rotating addresses inside it does not
 /// reset the count.
-fn ip_key(ip: IpAddr) -> String {
+pub(crate) fn ip_key(ip: IpAddr) -> String {
     match ip {
         IpAddr::V4(v4) => format!("ip:{v4}"),
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -125,6 +125,8 @@ pub struct Limiters {
     pub password_change: FailureLimiter,
     /// Broker and OIDC sign-in starts, counted together: 20 per IP in 10 minutes.
     pub sso_start: FailureLimiter,
+    /// Wrong share link passwords: 10 per link and IP together in 15 minutes.
+    pub share_password: FailureLimiter,
 }
 
 impl Default for Limiters {
@@ -139,6 +141,7 @@ impl Limiters {
             login: FailureLimiter::new(10, 5, 15 * 60, 10_000),
             password_change: FailureLimiter::new(0, 5, 15 * 60, 10_000),
             sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
+            share_password: FailureLimiter::new(0, 10, 15 * 60, 10_000),
         }
     }
 }

@@ -31,10 +31,11 @@ fn no_such_link() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "not_found", "No such share link.")
 }
 
+/// At least 8: wrong guesses are limited per link and IP, so a short password falls to many addresses.
 fn check_password(p: &str) -> Result<(), ApiError> {
     let n = p.chars().count();
-    if n == 0 || n > 256 {
-        return Err(invalid("The link password needs 1 to 256 characters."));
+    if !(8..=256).contains(&n) {
+        return Err(invalid("The link password needs 8 to 256 characters."));
     }
     Ok(())
 }

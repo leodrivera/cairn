@@ -239,6 +239,7 @@ export const en = {
   "share.never": "Never",
   "share.password": "Require a password",
   "share.passwordField": "Link password",
+  "share.passwordRule": "At least 8 characters.",
   "share.passwordKeep": "Leave empty to keep the current password.",
   "share.download": "Allow download",
   "share.note": "With downloads off, the page has no download buttons. Anything a browser shows can still be saved.",
@@ -306,6 +307,6 @@ export const en = {
   "invalid.theme": "Theme must be dark or light.",
   "invalid.paths": "Send between 1 and 10000 paths.",
   "invalid.shareExpiry": "Expiry must be 1, 7 or 30 days, or never.",
-  "invalid.sharePassword": "The link password needs 1 to 256 characters.",
+  "invalid.sharePassword": "The link password needs 8 to 256 characters.",
   "invalid.zipItems": "Choose between 1 and 1000 items in one folder.",
 } as const;

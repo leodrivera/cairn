@@ -54,7 +54,7 @@ const sentences: Record<string, Key> = {
   "Send between 1 and 10000 paths.": "invalid.paths",
   "Choose between 1 and 1000 items in one folder.": "invalid.zipItems",
   "Expiry must be 1, 7 or 30 days, or never.": "invalid.shareExpiry",
-  "The link password needs 1 to 256 characters.": "invalid.sharePassword",
+  "The link password needs 8 to 256 characters.": "invalid.sharePassword",
 };
 
 export function errorText(f: ApiFailure): string {

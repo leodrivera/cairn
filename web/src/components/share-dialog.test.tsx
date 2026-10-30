@@ -85,18 +85,25 @@ test("password switch shows the field and sends it", async () => {
   assert.throws(() => byLabel(el, "Link password"));
   byLabel(el, "Require a password").click();
   await flush();
-  setValue(byLabel(el, "Link password"), "s3cret");
+  setValue(byLabel(el, "Link password"), "s3cret-pass");
   await flush();
   await created(el);
-  assert.equal((await log[0].json()).password, "s3cret");
+  assert.equal((await log[0].json()).password, "s3cret-pass");
 });
 
-test("empty password blocks Create", async () => {
+test("a password under 8 characters blocks Create", async () => {
   stubFetch({});
   const el = open();
   byLabel(el, "Require a password").click();
   await flush();
   assert.ok(buttonNamed(el, "Create link").disabled);
+  setValue(byLabel(el, "Link password"), "1234567");
+  await flush();
+  assert.ok(buttonNamed(el, "Create link").disabled);
+  assert.match(el.textContent!, /At least 8 characters\./);
+  setValue(byLabel(el, "Link password"), "12345678");
+  await flush();
+  assert.ok(!buttonNamed(el, "Create link").disabled);
 });
 
 test("url fallback is this origin", async () => {
@@ -207,7 +214,7 @@ test("share error codes are translated", () => {
     assert.equal(text("wrong_password"), "A senha atual está errada.");
     assert.equal(text("download_off"), "O download está desligado neste link.");
     const invalid = (m: string) => errorText(new ApiFailure(400, "invalid", m));
-    assert.equal(invalid("The link password needs 1 to 256 characters."), "A senha do link precisa ter de 1 a 256 caracteres.");
+    assert.equal(invalid("The link password needs 8 to 256 characters."), "A senha do link precisa ter de 8 a 256 caracteres.");
     assert.equal(invalid("Expiry must be 1, 7 or 30 days, or never."), "A validade deve ser 1, 7 ou 30 dias, ou nunca.");
   } finally {
     setLang("en");

@@ -183,7 +183,7 @@ async fn create_password_hashed() {
     let res = create(
         &h,
         &c,
-        json!({ "path": "other.txt", "expiresDays": null, "password": "s3cret", "download": true }),
+        json!({ "path": "other.txt", "expiresDays": null, "password": "s3cret-pass", "download": true }),
     )
     .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
@@ -193,26 +193,27 @@ async fn create_password_hashed() {
     let row = cairn::shares::get(&h.state.db, id).unwrap().unwrap();
     let hash = row.password_hash.unwrap();
     assert!(hash.starts_with("$argon2id$"), "{hash}");
-    assert!(!hash.contains("s3cret"));
+    assert!(!hash.contains("s3cret-pass"));
 }
 
 #[tokio::test]
 async fn create_bad_password() {
     let (h, _d) = setup(&[]).await;
     let c = sharer(&h, "ana@example.com", "/").await;
-    for pw in [String::new(), "x".repeat(257)] {
-        let res = create(
-            &h,
-            &c,
-            json!({ "path": "other.txt", "expiresDays": 7, "password": pw, "download": true }),
-        )
-        .await;
-        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let body = |pw: &str| json!({ "path": "other.txt", "expiresDays": 7, "password": pw, "download": true });
+    // Short ones fall to guessing from many addresses: the limit counts per link and IP.
+    for pw in [String::new(), "1234567".into(), "x".repeat(257)] {
+        let res = create(&h, &c, body(&pw)).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{pw}");
         assert_eq!(
             res.json["message"],
-            "The link password needs 1 to 256 characters."
+            "The link password needs 8 to 256 characters."
         );
     }
+    assert_eq!(
+        create(&h, &c, body("12345678")).await.status,
+        StatusCode::CREATED
+    );
 }
 
 #[tokio::test]
@@ -327,7 +328,7 @@ async fn patch_fields() {
     let res = patch(&h, &c, &id, json!({ "expiresDays": 30 })).await;
     let at = res.json["share"]["expiresAt"].as_i64().unwrap();
     assert!((at - (cairn::now() + 30 * 86_400)).abs() <= 5);
-    let res = patch(&h, &c, &id, json!({ "password": "s3cret" })).await;
+    let res = patch(&h, &c, &id, json!({ "password": "s3cret-pass" })).await;
     assert_eq!(res.json["share"]["hasPassword"], true);
     let res = patch(&h, &c, &id, json!({ "password": null })).await;
     assert_eq!(res.json["share"]["hasPassword"], false);

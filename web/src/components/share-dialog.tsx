@@ -29,8 +29,9 @@ export function ShareDialog({ entryPath, kind, onClose }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // A new password is needed unless the link already has one to keep.
-  const needsPassword = locked && password === "" && !share?.hasPassword;
+  // A new password of at least 8 characters is needed, unless the link already has one and the field is left empty.
+  const keeping = password === "" && !!share?.hasPassword;
+  const needsPassword = locked && !keeping && [...password].length < 8;
 
   const run = async (work: () => Promise<void>) => {
     if (busy) return;
@@ -139,14 +140,14 @@ export function ShareDialog({ entryPath, kind, onClose }: Props) {
               type="password"
               autocomplete="new-password"
               value={password}
-              aria-describedby={share?.hasPassword ? "share-password-hint" : undefined}
+              maxLength={256}
+              aria-describedby="share-password-hint"
               onInput={(e) => setPassword(e.currentTarget.value)}
             />
-            {share?.hasPassword && (
-              <p id="share-password-hint" class="hint">
-                {t("share.passwordKeep")}
-              </p>
-            )}
+            <p id="share-password-hint" class="hint">
+              {t("share.passwordRule")}
+              {share?.hasPassword && ` ${t("share.passwordKeep")}`}
+            </p>
           </div>
         )}
         <div class="field switch-field">

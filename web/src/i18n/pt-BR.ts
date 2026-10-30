@@ -241,6 +241,7 @@ export const ptBR: Table = {
   "share.never": "Nunca",
   "share.password": "Exigir senha",
   "share.passwordField": "Senha do link",
+  "share.passwordRule": "Pelo menos 8 caracteres.",
   "share.passwordKeep": "Deixe vazio para manter a senha atual.",
   "share.download": "Permitir download",
   "share.note": "Sem download, a página não mostra botões de baixar. Mesmo assim, tudo o que o navegador mostra pode ser salvo.",
@@ -308,6 +309,6 @@ export const ptBR: Table = {
   "invalid.theme": "O tema precisa ser escuro ou claro.",
   "invalid.paths": "Envie entre 1 e 10000 caminhos.",
   "invalid.shareExpiry": "A validade deve ser 1, 7 ou 30 dias, ou nunca.",
-  "invalid.sharePassword": "A senha do link precisa ter de 1 a 256 caracteres.",
+  "invalid.sharePassword": "A senha do link precisa ter de 8 a 256 caracteres.",
   "invalid.zipItems": "Escolha entre 1 e 1000 itens de uma pasta.",
 };

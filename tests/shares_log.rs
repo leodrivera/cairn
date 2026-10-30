@@ -44,7 +44,7 @@ async fn log_events() {
     let c = h.login("ana@example.com", PW).await;
     let res = Req::post("/api/shares")
         .cookie(&c)
-        .json(json!({ "path": "other.txt", "expiresDays": 7, "password": "s3cret", "download": true }))
+        .json(json!({ "path": "other.txt", "expiresDays": 7, "password": "s3cret-pass", "download": true }))
         .send(&h.app)
         .await;
     let id = res.json["share"]["id"].as_str().unwrap().to_string();
@@ -70,7 +70,7 @@ async fn log_events() {
     line("share.update");
     line("share.delete");
     assert!(!log.contains(&id), "the id is never logged");
-    assert!(!log.contains("s3cret"));
+    assert!(!log.contains("s3cret-pass"));
 }
 
 #[tokio::test]
@@ -89,7 +89,7 @@ async fn password_log() {
     let c = h.login("admin@example.com", PW).await;
     let res = Req::post("/api/shares")
         .cookie(&c)
-        .json(json!({ "path": "other.txt", "expiresDays": 7, "password": "s3cret", "download": true }))
+        .json(json!({ "path": "other.txt", "expiresDays": 7, "password": "s3cret-pass", "download": true }))
         .send(&h.app)
         .await;
     let id = res.json["share"]["id"].as_str().unwrap().to_string();
@@ -107,6 +107,6 @@ async fn password_log() {
         .expect("share.password_failed logged");
     assert!(failed.contains(r#""ip":"203.0.113.5""#), "{failed}");
     assert!(log.contains(r#""route":"share_password""#), "{log}");
-    assert!(!log.contains("wrong-one") && !log.contains("s3cret"));
+    assert!(!log.contains("wrong-one") && !log.contains("s3cret-pass"));
     assert!(!log.contains(&id));
 }

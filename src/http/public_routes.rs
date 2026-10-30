@@ -35,6 +35,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/s/{id}", page(get(app_page)))
         .route("/s/{id}/info", page(get(info)))
+        .route("/s/{id}/info/{*path}", page(get(info_item)))
         .route("/s/{id}/unlock", page(unlock_route))
         .route("/s/{id}/list", page(get(list_folder)))
         .route("/s/{id}/list/{*path}", page(get(list_folder)))
@@ -140,8 +141,9 @@ async fn unlock(
         tracing::warn!(event = "http.rate_limited", route = "share_password", ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
+    // Counted before the slow check, so tries sent in parallel cannot all pass it; a right password clears it.
+    limiter.failed(client.ip, &key, now);
     if !s.hasher.verify(b.password, Some(hash.clone())).await {
-        limiter.failed(client.ip, &key, now);
         tracing::warn!(event = "share.password_failed", ip = %client.ip);
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
@@ -149,6 +151,7 @@ async fn unlock(
             "That password is not right.",
         ));
     }
+    limiter.succeeded(&key);
     let cookie = shares::unlock_cookie(&at.id, &hash, &s.share_key, now, client.https);
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response())
 }
@@ -172,6 +175,13 @@ fn private(mut res: Response) -> Response {
     res
 }
 
+/// The last segment of the link's path, as people read it; `None` for the server root.
+fn link_name(stored: &str) -> Option<String> {
+    RelPath::parse(stored)
+        .ok()
+        .and_then(|p| p.name_lossy().map(|n| n.into_owned()))
+}
+
 async fn app_page(_: At, headers: HeaderMap) -> Response {
     assets::index(&headers)
 }
@@ -182,10 +192,7 @@ async fn info(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<R
         creator,
         target,
     } = live(&s, &at.id, &headers).await?;
-    let name = RelPath::parse(&row.path)
-        .ok()
-        .and_then(|p| p.name_lossy().map(|n| n.into_owned()))
-        .unwrap_or_else(|| "/".into());
+    let name = link_name(&row.path).unwrap_or_else(|| "/".into());
     let entry = blocking(move || match &target {
         Target::File { scope, path } => list::entry(scope, path),
         Target::Folder { scope } => {
@@ -205,6 +212,21 @@ async fn info(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<R
         }))
         .into_response(),
     ))
+}
+
+/// One item beneath a shared folder, for the page of a file inside it. Not counted in `hits`: the page was.
+async fn info_item(
+    State(s): State<AppState>,
+    at: At,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let live = live(&s, &at.id, &headers).await?;
+    let Target::Folder { scope } = live.target else {
+        return Err(FsError::NotAFolder.into());
+    };
+    let path = RelPath::parse(&at.path)?;
+    let entry = blocking(move || list::entry(&scope, &path)).await?;
+    Ok(private(Json(json!({ "entry": entry })).into_response()))
 }
 
 async fn list_folder(
@@ -258,5 +280,6 @@ async fn zip(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<Re
         return Err(FsError::NotAFolder.into());
     };
     let path = RelPath::parse(&at.path)?;
-    Ok(private(serve_zip(scope, path, None).await?))
+    let name = link_name(&live.row.path).unwrap_or_else(|| "files".into());
+    Ok(private(serve_zip(scope, path, None, &name).await?))
 }

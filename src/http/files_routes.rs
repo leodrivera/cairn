@@ -490,21 +490,22 @@ async fn zip_response(
 ) -> Result<axum::response::Response, ApiError> {
     fu.need(true, false)?;
     let path = RelPath::parse(&raw_path)?;
-    serve_zip(fu.scope, path, items).await
+    serve_zip(fu.scope, path, items, "files").await
 }
 
-/// A folder, or chosen items in it, as a streamed ZIP.
+/// A folder, or chosen items in it, as a streamed ZIP. `root_name` names the archive of the scope's own folder.
 pub(crate) async fn serve_zip(
     scope: Scope,
     path: RelPath,
     items: Option<Vec<Vec<u8>>>,
+    root_name: &str,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::http::header;
     use axum::response::IntoResponse;
 
     let name = match path.name_lossy() {
         Some(n) => format!("{n}.zip"),
-        None => "files.zip".into(),
+        None => format!("{root_name}.zip"),
     };
     // Checked before the response starts, so a wrong path or a missing item is an ordinary JSON error.
     let (scope, path, items) = blocking(move || {

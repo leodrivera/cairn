@@ -416,3 +416,36 @@ async fn user_delete_removes_links() {
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.json);
     assert!(list(&h, &adm).await.is_empty());
 }
+
+#[tokio::test]
+async fn patch_needs_share_delete_does_not() {
+    let (h, _d) = setup(&[]).await;
+    let c = sharer(&h, "ana@example.com", "/").await;
+    let id = create(&h, &c, file_body()).await.json["share"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ana = cairn::users::by_email(&h.state.db, "ana@example.com")
+        .unwrap()
+        .unwrap()
+        .0;
+    cairn::users::update(
+        &h.state.db,
+        ana.id,
+        cairn::users::UserPatch {
+            perms: Some(READER),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // Removing a permission ends other sessions; sign in again.
+    let c = h.login("ana@example.com", PW).await;
+    let res = patch(&h, &c, &id, json!({ "expiresDays": null })).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.json);
+    assert_eq!(res.code(), "forbidden");
+    let res = Req::delete(&format!("/api/shares/{id}"))
+        .cookie(&c)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}

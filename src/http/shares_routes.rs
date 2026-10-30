@@ -182,6 +182,14 @@ async fn update(
 ) -> Result<Json<Value>, ApiError> {
     let viewer = me.session.user;
     let (row, owner) = owned(&s, &viewer, &id)?;
+    // Without `share` a person may still delete their links, but not keep them going for later.
+    if !viewer.perms.admin && !viewer.perms.share {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "You do not have permission to do this here.",
+        ));
+    }
     let now = crate::now();
     let expires_at = match b.expires_days {
         Some(days) => Some(shares::expiry(days, now).map_err(invalid)?),

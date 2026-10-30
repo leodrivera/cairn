@@ -684,3 +684,84 @@ async fn json_routes_private() {
         assert_eq!(res.header("cache-control"), "private, no-cache", "{path}");
     }
 }
+
+#[tokio::test]
+async fn zip_named_after_shared_folder() {
+    let f = fx().await;
+    let id = f.folder(true).await;
+    let res = f.get(&format!("/s/{id}/zip")).await;
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''photos.zip"
+    );
+    let res = f.get(&format!("/s/{id}/zip/sub")).await;
+    assert_eq!(
+        res.header("content-disposition"),
+        "attachment; filename*=UTF-8''sub.zip"
+    );
+}
+
+#[tokio::test]
+async fn info_of_one_item_inside() {
+    let f = fx().await;
+    let id = f.folder(true).await;
+    let res = f.get(&format!("/s/{id}/info/sub/deep.txt")).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert_eq!(res.json["entry"]["name"], "deep.txt");
+    assert_eq!(res.json["entry"]["size"], 4);
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+    assert_eq!(f.hits().await, vec![0], "only the page itself counts");
+    let res = f.get(&format!("/s/{id}/info/nope.txt")).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let res = f.get(&format!("/s/{id}/info/../secret.txt")).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let file = f.file().await;
+    let res = f.get(&format!("/s/{file}/info/x")).await;
+    assert_eq!(res.code(), "not_a_folder");
+    let locked = locked_link(&f).await;
+    let res = f.get(&format!("/s/{locked}/info/notes.txt")).await;
+    assert_eq!(res.code(), "share_locked");
+}
+
+#[tokio::test]
+async fn right_password_resets_the_count() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let ip = "203.0.113.7:4000";
+    for _ in 0..9 {
+        unlock(&id, "wrong-one").peer(ip).send(&f.h.app).await;
+    }
+    assert_eq!(
+        unlock(&id, "s3cret-pass")
+            .peer(ip)
+            .send(&f.h.app)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    for i in 0..9 {
+        let res = unlock(&id, "wrong-one").peer(ip).send(&f.h.app).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "try {i}");
+    }
+}
+
+#[tokio::test]
+async fn parallel_tries_cannot_pass_the_limit() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let tries = (0..15).map(|_| {
+        unlock(&id, "wrong-one")
+            .peer("203.0.113.8:4000")
+            .send(&f.h.app)
+    });
+    let results = futures_util::future::join_all(tries).await;
+    let checked = results
+        .iter()
+        .filter(|r| r.status == StatusCode::FORBIDDEN)
+        .count();
+    let limited = results
+        .iter()
+        .filter(|r| r.status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((checked, limited), (10, 5));
+}

@@ -68,6 +68,12 @@ pub async fn serve(method: Method, uri: Uri, headers: HeaderMap) -> Response {
         )
             .into_response();
     }
+    // The proxy matches the sign-in routes exactly; a variant (`/auth/sso/`, `/AUTH/SSO`) must not reach the app
+    // page, or it would look like a route that skipped the broker.
+    let lower = uri.path().to_ascii_lowercase();
+    if lower == "/auth" || lower.starts_with("/auth/") {
+        return crate::http::sso_routes::not_found();
+    }
     let path = uri.path().trim_start_matches('/');
     let direct = !path.is_empty() && !path.ends_with(".br") && !path.ends_with(".gz");
     let path = if direct && Dist::get(path).is_some() {

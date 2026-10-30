@@ -11,11 +11,11 @@ use serde_json::{Value, json};
 use crate::auth::captcha::CaptchaFailure;
 use crate::auth::password::{POLICY, policy_ok};
 use crate::auth::session::{self, Method};
-use crate::http::AppState;
 use crate::http::client::Client;
 use crate::http::current_user::{CurrentUser, MaybeUser, clear_cookie, set_cookie};
 use crate::http::error::ApiError;
 use crate::http::json::{StrictJson, some};
+use crate::http::{AppState, sso_routes};
 use crate::users::{self, UserPatch};
 
 pub fn routes() -> Router<AppState> {
@@ -175,7 +175,17 @@ async fn logout(
     client: Client,
     MaybeUser(current): MaybeUser,
 ) -> Result<Response, ApiError> {
+    let mut next = None;
     if let Some(c) = current {
+        // After a broker sign-in the broker still holds its own session; `next` ends that one too.
+        if c.session.method == Method::Oauth {
+            next = s
+                .config
+                .auth
+                .oauth
+                .as_ref()
+                .and_then(|b| b.logout_url.clone());
+        }
         session::delete(&s.db, &c.token)?;
         tracing::info!(
             event = "auth.logout",
@@ -185,21 +195,34 @@ async fn logout(
     }
     Ok((
         [(header::SET_COOKIE, clear_cookie(client.https))],
-        Json(json!({ "next": null })),
+        Json(json!({ "next": next.map(|u| u.to_string()) })),
     )
         .into_response())
 }
 
-async fn me(State(s): State<AppState>, MaybeUser(current): MaybeUser) -> Json<Value> {
+async fn me(
+    State(s): State<AppState>,
+    client: Client,
+    headers: HeaderMap,
+    MaybeUser(current): MaybeUser,
+) -> Response {
     let Some(c) = current else {
-        return Json(json!({ "user": null }));
+        // Set by a provider sign-in for an e-mail with no account; read once.
+        return match sso_routes::read_denied(&headers) {
+            Some(email) => (
+                [(header::SET_COOKIE, sso_routes::clear_denied(client.https))],
+                Json(json!({ "user": null, "deniedEmail": email })),
+            )
+                .into_response(),
+            None => Json(json!({ "user": null })).into_response(),
+        };
     };
     let mut body = json!({ "user": c.session.user, "method": c.session.method.as_str() });
     if c.session.user.perms.admin {
         let off = s.config.auth.password && s.captcha.is_none();
         body["security"] = json!({ "captchaDisabled": off });
     }
-    Json(body)
+    Json(body).into_response()
 }
 
 #[derive(Deserialize)]

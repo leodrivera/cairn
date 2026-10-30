@@ -10,6 +10,7 @@ pub mod error;
 pub mod files_routes;
 pub mod headers;
 pub mod json;
+pub mod shares_routes;
 pub mod sso_routes;
 pub mod users_routes;
 
@@ -76,6 +77,7 @@ pub fn router(state: AppState) -> Router {
         .merge(admin_routes::routes())
         .merge(users_routes::routes())
         .merge(files_routes::routes())
+        .merge(shares_routes::routes())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

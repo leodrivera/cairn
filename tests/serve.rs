@@ -196,3 +196,75 @@ fn sigterm_with_a_half_sent_request() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// Starts `serve` with `env`, waits until healthy, stops it, and returns stdout.
+fn run_with(env: &[(&str, &str)]) -> String {
+    let f = folders();
+    let port = free_port();
+    let mut cmd = cairn(&f, port, &["serve"]);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.stdout(Stdio::piped()).spawn().unwrap();
+    wait_healthy(port);
+    std::thread::sleep(Duration::from_millis(500));
+    sigterm(&child);
+    child.wait().unwrap();
+    let mut out = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut out)
+        .unwrap();
+    out
+}
+
+#[test]
+fn starts_with_unreachable_oidc() {
+    let out = run_with(&[
+        ("CAIRN_AUTH_METHODS", "password,oidc"),
+        ("CAIRN_PUBLIC_URL", "https://files.example.com"),
+        ("CAIRN_OIDC_PROVIDERS", "fake"),
+        ("CAIRN_OIDC_FAKE_ISSUER", "https://127.0.0.1:1"),
+        ("CAIRN_OIDC_FAKE_CLIENT_ID", "cairn-client"),
+        ("CAIRN_OIDC_FAKE_CLIENT_SECRET", "client-secret-for-tests"),
+    ]);
+    assert!(out.contains(r#""event":"startup.listening""#), "{out}");
+    let line = out
+        .lines()
+        .find(|l| l.contains(r#""event":"oidc.unreachable""#))
+        .unwrap_or_else(|| panic!("no oidc.unreachable in:\n{out}"));
+    assert!(line.contains(r#""provider":"fake""#), "{line}");
+}
+
+#[test]
+fn starts_with_unreachable_broker() {
+    let out = run_with(&[
+        ("CAIRN_AUTH_METHODS", "password,oauth"),
+        ("CAIRN_PUBLIC_URL", "https://files.example.com"),
+        ("CAIRN_OAUTH_BROKER_URL", "http://127.0.0.1:1"),
+        ("CAIRN_OAUTH_SECRET", "0123456789abcdef0123456789abcdef"),
+    ]);
+    assert!(out.contains(r#""event":"startup.listening""#), "{out}");
+    assert!(
+        out.contains(r#""event":"oauth.broker_unreachable""#),
+        "{out}"
+    );
+}
+
+#[test]
+fn http_issuer_stops_startup() {
+    let f = folders();
+    let out = cairn(&f, free_port(), &["serve"])
+        .env("CAIRN_AUTH_METHODS", "password,oidc")
+        .env("CAIRN_PUBLIC_URL", "https://files.example.com")
+        .env("CAIRN_OIDC_PROVIDERS", "fake")
+        .env("CAIRN_OIDC_FAKE_ISSUER", "http://idp.example.com")
+        .env("CAIRN_OIDC_FAKE_CLIENT_ID", "cairn-client")
+        .env("CAIRN_OIDC_FAKE_CLIENT_SECRET", "x")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("CAIRN_OIDC_FAKE_ISSUER"));
+}

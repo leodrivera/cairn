@@ -113,7 +113,13 @@ async fn serve(config: Config, db: crate::db::Db) -> ExitCode {
         );
     }
 
-    let app = router(AppState::new(config, db));
+    let state = AppState::new(config, db);
+    // Never awaited: the socket opens before any provider or broker answers.
+    if let Some(broker) = state.broker.clone() {
+        tokio::spawn(async move { broker.refresh().await });
+    }
+    state.oidc.spawn_retry();
+    let app = router(state);
     serve_on(listener, app, Limits::DEFAULT, stop_signal()).await;
     tracing::info!(event = "shutdown");
     ExitCode::SUCCESS

@@ -155,3 +155,12 @@ test("a folder that is not UTF-8 shows readable", async () => {
   assert.ok(text.includes("/Relat\uFFFDrio"), text);
   assert.ok(!text.includes("\u0000"), text);
 });
+
+test("without a public address the list says so once", async () => {
+  const { el } = await screen([link({ url: null }), backup]);
+  await waitFor(() => assert.ok(el.querySelector(".links-list")));
+  assert.equal(el.textContent!.match(/no public address/g)?.length, 1);
+  const { el: el2 } = await screen([link()]);
+  await waitFor(() => assert.ok(el2.querySelector(".links-list")));
+  assert.doesNotMatch(el2.textContent!, /no public address/);
+});

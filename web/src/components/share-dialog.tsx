@@ -99,6 +99,7 @@ export function ShareDialog({ entryPath, kind, onClose }: Props) {
                 {t("share.copy")}
               </button>
             </div>
+            {share.url === null && <p class="hint">{t("share.noPublicUrl")}</p>}
           </div>
         )}
         <div class="field">

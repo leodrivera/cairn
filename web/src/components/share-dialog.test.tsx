@@ -227,3 +227,14 @@ test("a name that is not UTF-8 shows readable in the dialog", async () => {
   const shown = el.querySelector(".share-path")!.textContent!;
   assert.equal(shown, "Relat\uFFFDrio/notes.txt");
 });
+
+test("without a public address the dialog says the link may not work outside", async () => {
+  stubFetch({ "POST /api/shares": () => json({ share: { ...share, url: null } }, 201) });
+  const el = open();
+  await created(el);
+  assert.match(el.textContent!, /This server has no public address \(CAIRN_PUBLIC_URL\)/);
+  stubFetch({ "POST /api/shares": () => json({ share }, 201) });
+  const el2 = open();
+  await created(el2);
+  assert.doesNotMatch(el2.textContent!, /no public address/);
+});

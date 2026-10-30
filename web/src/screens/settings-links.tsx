@@ -94,6 +94,7 @@ export function Links() {
           </button>
         </StatePanel>
       )}
+      {shares?.some((s) => s.url === null) && <p class="hint links-notice">{t("share.noPublicUrl")}</p>}
       {shares?.length === 0 && <StatePanel icon="link" title={t("links.empty")} body={t("links.emptyBody")} />}
       {shares && shares.length > 0 && (
         <div class="table-wrap links-list">

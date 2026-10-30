@@ -62,7 +62,7 @@ Startup checks the whole configuration and exits with one clear message per prob
 | `CAIRN_ROOT` | `/srv` | Server root. Every user scope is a folder inside it. |
 | `CAIRN_DATA` | `/data` | Folder for `cairn.db`. Must not be inside `CAIRN_ROOT`. |
 | `CAIRN_ADDR` | `0.0.0.0:8080` | Listen address inside the container. |
-| `CAIRN_PUBLIC_URL` | none | The address people use, e.g. `https://files.example.com`. Required for OAuth, OIDC and CAPTCHA, and used to build share links. |
+| `CAIRN_PUBLIC_URL` | none | The address people use, e.g. `https://files.example.com`. Required for OAuth, OIDC and CAPTCHA, and used to build share links. Without it, share links use the address in the browser that made them, which may not open for people outside that network; the Share screens say so. |
 | `CAIRN_TRUSTED_PROXIES` | none | Comma-separated CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are believed. Without it the socket peer is the client IP. Set it whenever Cairn runs behind a reverse proxy (section 4.6). |
 | `CAIRN_AUTH_METHODS` | `password` | Comma-separated list of `password`, `oauth` (through a broker) and `oidc` (direct). Any combination; at least one. |
 | `CAIRN_OAUTH_BROKER_URL` | none | Internal URL of the OAuth broker, e.g. `http://tinyauth:3000`. Required with `oauth`. |

@@ -244,6 +244,7 @@ export const en = {
   "share.download": "Allow download",
   "share.note": "With downloads off, the page has no download buttons. Anything a browser shows can still be saved.",
   "share.create": "Create link",
+  "share.noPublicUrl": "This server has no public address (CAIRN_PUBLIC_URL), so links use the address in your browser. People outside your network may not be able to open them.",
   "share.copy": "Copy",
   "share.copied": "Link copied.",
   "share.copyFailed": "Could not copy. Select the link and copy it.",

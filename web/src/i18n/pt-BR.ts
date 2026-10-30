@@ -246,6 +246,7 @@ export const ptBR: Table = {
   "share.download": "Permitir download",
   "share.note": "Sem download, a página não mostra botões de baixar. Mesmo assim, tudo o que o navegador mostra pode ser salvo.",
   "share.create": "Criar link",
+  "share.noPublicUrl": "Este servidor não tem endereço público (CAIRN_PUBLIC_URL), então os links usam o endereço do seu navegador. Quem está fora da sua rede pode não conseguir abri-los.",
   "share.copy": "Copiar",
   "share.copied": "Link copiado.",
   "share.copyFailed": "Não foi possível copiar. Selecione o link e copie.",

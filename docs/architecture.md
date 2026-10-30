@@ -658,4 +658,6 @@ Cairn is meant to be published. The repository holds no personal data:
 ## 16. License
 
 AGPL-3.0-only. The full text is in `LICENSE`. Anyone who runs a modified Cairn for others over a network must
-offer them its source. Every planned dependency is under MIT or Apache-2.0, which AGPL-3.0 accepts.
+offer them its source. Everything that ships inside the binary is under licenses AGPL-3.0 accepts: MIT, Apache-2.0,
+ISC, BSD-3-Clause, Zlib, Unicode-3.0 (Unicode data tables) and CDLA-Permissive-2.0 (the built-in list of certificate
+authorities). `scripts/check-licenses.sh` checks this in CI and fails on anything else.

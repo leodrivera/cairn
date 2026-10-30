@@ -28,6 +28,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
+      - name: Licenses
+        run: scripts/check-licenses.sh
 
   image:
     needs: test

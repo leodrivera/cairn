@@ -147,9 +147,18 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oauth`. Two routes, both page naviga
 Routing is exact and case-sensitive: `/auth/sso/` and `/AUTH/SSO` are `404`, because the proxy matches the exact
 path and a variant would reach Cairn without passing the broker.
 
-The provider buttons come from the broker's provider list, cached in memory for 60 seconds and refreshed in the
-background. A slow or stopped broker never delays the sign-in page; the buttons then show the last good list, or
-none.
+The provider buttons come from the broker's provider list, cached in memory for 60 seconds (20 seconds after a
+failed fetch) and refreshed in the background. A slow or stopped broker never delays the sign-in page; the buttons
+then show the last good list, or none.
+
+Cairn speaks the Tinyauth v5 API: `GET /api/context/app` for the list (`auth.providers`, items `{ id, name, oauth }`,
+only those with `oauth: true`) and `GET /api/oauth/url/{id}?redirect_uri=...` for the start (`{ url }` plus the
+cookies the broker's callback needs; at most 8 are relayed). These are the broker's own endpoints, not a published
+interface, so pin the broker image to a v5 tag. If they move, the buttons disappear and Cairn logs
+`oauth.broker_unreachable` with a hint naming the API it expects.
+
+A finished sign-in, through the broker or OIDC, redirects to `/`. Its session lasts 12 hours, without "Keep me
+signed in": the provider's own session makes signing in again one click.
 
 Sign-out after an OAuth sign-in answers `{ next: CAIRN_OAUTH_LOGOUT_URL }`, so the browser also ends the broker's
 own session.
@@ -166,10 +175,12 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oidc`. Authorization code flow with 
   is logged (`oidc.unreachable`) and its button is hidden; Cairn still starts and retries in the background every
   minute. A malformed configuration (missing client id, `http` issuer) stops startup instead.
 - **`GET /auth/oidc/{id}`.** Creates `state`, `nonce` and a PKCE verifier, keeps them in a 10-minute HttpOnly cookie
-  scoped to `/auth/oidc/`, and redirects to the provider's authorization endpoint with scope
+  scoped to `/auth/oidc/` and signed (HMAC-SHA256) with a key the process makes at start, so a cookie planted by a
+  sibling site cannot choose them and a restart ends sign-ins in progress, and redirects to the provider's authorization endpoint with scope
   `openid email profile` and redirect `CAIRN_PUBLIC_URL/auth/oidc/{id}/callback`. Rate limited per IP, sharing the
   limit of the broker route.
-- **`GET /auth/oidc/{id}/callback`.** Checks `state` against the cookie, deletes the cookie, exchanges the code at
+- **`GET /auth/oidc/{id}/callback`.** Checks `state` against the cookie (each `state` works once), deletes the
+  cookie, exchanges the code at
   the token endpoint (client secret in the body, `client_secret_post`, or Basic when discovery lists only that), and
   verifies the ID token:
   - signature with a key from the JWKS, algorithm RS256 or ES256 only (never `none`, never HS256);
@@ -180,7 +191,9 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oidc`. Authorization code flow with 
     address on an account at some providers.
   An unknown `kid` triggers one JWKS refresh, at most once a minute, to follow key rotation.
 - Then, as with the broker: delete any session the browser brought, match the e-mail to a user, start a session
-  with method `oidc`.
+  with method `oidc`. A callback refused before the provider's answer is trusted (no cookie, wrong or reused
+  `state`, the provider's own error) leaves the browser's session alone, so reloading the callback after signing in
+  does not sign anyone out.
 - Cairn keeps no provider tokens. The access token is used for nothing and dropped; there is no refresh token.
 - Sign-out ends only the Cairn session. The provider session stays, as with any "Sign in with" button. RP-initiated
   logout is left out on purpose: it would sign people out of their Google or Microsoft account everywhere.
@@ -220,7 +233,8 @@ store is needed; a restart clears them, which is acceptable.
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
-`http.rate_limited`. The limits are fixed; there is no switch to turn them off.
+`http.rate_limited`. On the OAuth and OIDC starts, which are page navigations, the `429` body is a plain-text
+sentence. The limits are fixed; there is no switch to turn them off.
 
 They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to
 the proxy's network. Without it every request seems to come from the proxy: one person mistyping blocks sign-in
@@ -433,7 +447,8 @@ backup) while it runs.
 
 One JSON object per line on stdout: time, level, event, and fields. Events are stable names, for example
 `auth.login`, `auth.login_failed`, `auth.captcha_failed`, `auth.sso`, `auth.oidc`, `auth.oidc_failed`,
-`auth.unknown_email`, `startup.no_users`, `startup.captcha_disabled`, `file.delete`, `share.create`,
+`auth.unknown_email`, `auth.sso_failed`, `auth.proxy_secret_mismatch`, `auth.oauth_start_failed`,
+`oauth.broker_unreachable`, `oidc.ready`, `oidc.unreachable`, `startup.no_users`, `startup.captcha_disabled`, `file.delete`, `share.create`,
 `http.rate_limited`. A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
 (`unknown_user`, `no_password`, `bad_password`). Passwords, tokens and share passwords are never logged.
 
@@ -544,6 +559,7 @@ services:
 ```
 
 The broker must send `X-Auth-Secret` with the same value as `CAIRN_OAUTH_SECRET` on its forward-auth responses.
+Run a Tinyauth v5 image and pin its tag to v5 (section 4.3).
 
 Password and direct OIDC, no broker. Register `https://files.example.com/auth/oidc/google/callback` as the
 redirect URI at the provider.

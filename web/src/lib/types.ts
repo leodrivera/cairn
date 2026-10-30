@@ -47,3 +47,22 @@ export type Me = {
   method?: string;
   security?: { captchaDisabled: boolean };
 };
+
+/** A share link as its owner, or an admin, sees it. */
+export type Share = {
+  id: string;
+  /** Built from the server's public address; null when it has none. */
+  url: string | null;
+  path: string;
+  name: string;
+  /** Unix seconds, or null for never. */
+  expiresAt: number | null;
+  hasPassword: boolean;
+  download: boolean;
+  hits: number;
+  createdAt: number;
+  owner: { id: number; name: string };
+};
+
+/** What the public page of a link gets. */
+export type ShareInfo = { entry: Entry; download: boolean; expiresAt: number | null; sharedBy: string };

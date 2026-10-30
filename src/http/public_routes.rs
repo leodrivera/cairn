@@ -145,7 +145,7 @@ async fn unlock(
         tracing::warn!(event = "share.password_failed", ip = %client.ip);
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
-            "wrong_password",
+            "wrong_link_password",
             "That password is not right.",
         ));
     }

@@ -528,7 +528,7 @@ async fn unlock_wrong_is_403() {
     let id = locked_link(&f).await;
     let res = unlock(&id, "nope-wrong").send(&f.h.app).await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
-    assert_eq!(res.code(), "wrong_password");
+    assert_eq!(res.code(), "wrong_link_password");
     assert_eq!(res.json["message"], "That password is not right.");
     assert!(res.set_cookie().is_none());
 }

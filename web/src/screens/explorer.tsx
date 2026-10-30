@@ -26,6 +26,7 @@ import { StatePanel } from "../components/states";
 import { ContextMenu, entryMenu } from "../components/context-menu";
 import { DeleteDialog, FolderPicker, NewFolderDialog, RenameDialog, folderLabel } from "../components/dialogs";
 import { showToast } from "../components/toast";
+import { ShareDialog } from "../components/share-dialog";
 import { href, navigate } from "../lib/router";
 import { Selection } from "../state/selection";
 import { useSession, useUser } from "../state/session";
@@ -36,7 +37,8 @@ type DialogState =
   | { kind: "rename"; entry: Entry }
   | { kind: "newFolder" }
   | { kind: "move" | "copy"; items: Entry[] }
-  | { kind: "delete"; items: Entry[] };
+  | { kind: "delete"; items: Entry[] }
+  | { kind: "share"; entry: Entry };
 
 /** The name of the item a batch failure is about, from its path. */
 function failedName(f: Failed): string {
@@ -546,9 +548,10 @@ export function Explorer({ path }: { path: string }) {
         <ContextMenu
           at={itemMenu.at}
           label={t("menu.label", { name: itemMenu.entry.name })}
-          items={entryMenu(canWrite, {
+          items={entryMenu(canWrite, user.permissions.share, {
             open: () => open(itemMenu.entry),
             download: () => downloadItems([itemMenu.entry]),
+            share: () => setDialog({ kind: "share", entry: itemMenu.entry }),
             rename: () => setDialog({ kind: "rename", entry: itemMenu.entry }),
             move: () => setDialog({ kind: "move", items: targets(itemMenu.entry) }),
             copy: () => setDialog({ kind: "copy", items: targets(itemMenu.entry) }),
@@ -559,6 +562,13 @@ export function Explorer({ path }: { path: string }) {
       )}
       {dialog?.kind === "rename" && (
         <RenameDialog entry={dialog.entry} onRename={(n) => doRename(dialog.entry, n)} onClose={closeDialog} />
+      )}
+      {dialog?.kind === "share" && (
+        <ShareDialog
+          entryPath={join(path, segmentOf(dialog.entry))}
+          kind={dialog.entry.kind === "folder" ? "folder" : "file"}
+          onClose={closeDialog}
+        />
       )}
       {dialog?.kind === "newFolder" && <NewFolderDialog onCreate={doNewFolder} onClose={closeDialog} />}
       {(dialog?.kind === "move" || dialog?.kind === "copy") && (

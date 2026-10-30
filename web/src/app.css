@@ -1780,3 +1780,24 @@ fieldset.perms {
     flex-wrap: wrap;
   }
 }
+
+/* Share dialog. */
+.share-path {
+  margin: 0 0 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.share-link {
+  display: flex;
+  gap: 8px;
+}
+
+.share-link .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog-buttons .share-delete {
+  margin-right: auto;
+}

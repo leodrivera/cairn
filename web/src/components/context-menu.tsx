@@ -4,14 +4,23 @@ import { t } from "../i18n/index";
 
 export type MenuItem = { label: string; key?: string; danger?: boolean; run(): void } | "separator";
 
-type Handlers = { open(): void; download(): void; rename(): void; move(): void; copy(): void; remove(): void };
+type Handlers = {
+  open(): void;
+  download(): void;
+  share(): void;
+  rename(): void;
+  move(): void;
+  copy(): void;
+  remove(): void;
+};
 
-/** The items, in order. Write actions only for people who may write. */
-export function entryMenu(canWrite: boolean, h: Handlers): MenuItem[] {
+/** The items, in order. Share for people who may share, write actions for people who may write. */
+export function entryMenu(canWrite: boolean, canShare: boolean, h: Handlers): MenuItem[] {
   const items: MenuItem[] = [
     { label: t("menu.open"), key: "Enter", run: h.open },
     { label: t("explorer.download"), run: h.download },
   ];
+  if (canShare) items.push({ label: t("menu.share"), run: h.share });
   if (!canWrite) return items;
   return [
     ...items,

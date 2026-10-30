@@ -176,12 +176,13 @@ test("menu keyboard: arrows move, Enter runs, Escape closes and gives focus back
 
 test("menu hides write items for a reader", () => {
   const noop = () => {};
-  const h = { open: noop, download: noop, rename: noop, move: noop, copy: noop, remove: noop };
-  const labels = (canWrite: boolean) =>
-    entryMenu(canWrite, h).map((i) => (i === "separator" ? "-" : `${i.label}${i.key ? ` ${i.key}` : ""}`));
+  const h = { open: noop, download: noop, share: noop, rename: noop, move: noop, copy: noop, remove: noop };
+  const labels = (canWrite: boolean, canShare = false) =>
+    entryMenu(canWrite, canShare, h).map((i) => (i === "separator" ? "-" : `${i.label}${i.key ? ` ${i.key}` : ""}`));
   assert.deepEqual(labels(true), ["Open Enter", "Download", "-", "Rename F2", "Move to…", "Copy to…", "-", "Delete Del"]);
   assert.deepEqual(labels(false), ["Open Enter", "Download"]);
-  assert.equal((entryMenu(true, h).at(-1) as { danger?: boolean }).danger, true);
+  assert.deepEqual(labels(false, true), ["Open Enter", "Download", "Share…"]);
+  assert.equal((entryMenu(true, true, h).at(-1) as { danger?: boolean }).danger, true);
 });
 
 test("final: an unchanged name closes without renaming", async () => {

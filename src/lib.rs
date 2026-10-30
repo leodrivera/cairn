@@ -11,6 +11,7 @@ pub mod serve;
 pub mod settings;
 pub mod shares;
 pub mod startup;
+pub mod tls;
 pub mod user_cli;
 pub mod users;
 

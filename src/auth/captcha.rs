@@ -75,6 +75,7 @@ impl Captcha {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(5)))
             .http_status_as_error(false)
+            .tls_config(crate::tls::config())
             .build()
             .into();
         Some(Captcha {

@@ -268,3 +268,102 @@ fn http_issuer_stops_startup() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("CAIRN_OIDC_FAKE_ISSUER"));
 }
+
+/// A fake identity provider over TLS on 127.0.0.1, with a certificate from the test CA in `tests/fixtures`. It serves
+/// discovery and an empty JWKS, enough for a provider to become ready. Returns its issuer URL.
+fn tls_idp() -> String {
+    use rustls_pki_types::pem::PemObject;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+    use std::io::Write;
+    use std::sync::Arc;
+
+    let certs = vec![CertificateDer::from_pem_file("tests/fixtures/test-tls-cert.pem").unwrap()];
+    let key = PrivateKeyDer::from_pem_file("tests/fixtures/test-tls-key.pem").unwrap();
+    let config = Arc::new(
+        rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap(),
+    );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let issuer = format!(
+        "https://127.0.0.1:{}",
+        listener.local_addr().unwrap().port()
+    );
+    let base = issuer.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let conn = rustls::ServerConnection::new(config.clone()).unwrap();
+            let mut tls = rustls::StreamOwned::new(conn, stream);
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                match std::io::Read::read(&mut tls, &mut byte) {
+                    Ok(1) => head.push(byte[0]),
+                    _ => break,
+                }
+            }
+            let line = String::from_utf8_lossy(&head);
+            let body = if line.starts_with("GET /.well-known/openid-configuration") {
+                format!(
+                    r#"{{"issuer":"{base}","authorization_endpoint":"{base}/authorize","token_endpoint":"{base}/token","jwks_uri":"{base}/jwks"}}"#
+                )
+            } else {
+                r#"{"keys":[]}"#.to_string()
+            };
+            let _ = write!(
+                tls,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = tls.flush();
+            tls.conn.send_close_notify();
+            let _ = tls.flush();
+        }
+    });
+    issuer
+}
+
+fn oidc_env(issuer: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("CAIRN_AUTH_METHODS", "password,oidc".into()),
+        ("CAIRN_PUBLIC_URL", "https://files.example.com".into()),
+        ("CAIRN_OIDC_PROVIDERS", "fake".into()),
+        ("CAIRN_OIDC_FAKE_ISSUER", issuer.into()),
+        ("CAIRN_OIDC_FAKE_CLIENT_ID", "cairn-client".into()),
+        (
+            "CAIRN_OIDC_FAKE_CLIENT_SECRET",
+            "client-secret-for-tests".into(),
+        ),
+    ]
+}
+
+#[test]
+fn trusts_a_private_ca_from_ssl_cert_file() {
+    let issuer = tls_idp();
+    let ca = std::fs::canonicalize("tests/fixtures/test-ca.pem").unwrap();
+    let mut env = oidc_env(&issuer);
+    env.push(("SSL_CERT_FILE", ca.to_str().unwrap().into()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let out = run_with(&env);
+    assert!(
+        out.contains(r#""event":"oidc.ready""#),
+        "no oidc.ready in:\n{out}"
+    );
+}
+
+#[test]
+fn a_private_ca_is_not_trusted_unless_named() {
+    let issuer = tls_idp();
+    let env = oidc_env(&issuer);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let out = run_with(&env);
+    assert!(
+        out.contains(r#""event":"oidc.unreachable""#),
+        "no oidc.unreachable in:\n{out}"
+    );
+}

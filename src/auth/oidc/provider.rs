@@ -75,6 +75,7 @@ impl Provider {
             agent: ureq::Agent::config_builder()
                 .timeout_global(Some(TIMEOUT))
                 .http_status_as_error(false)
+                .tls_config(crate::tls::config())
                 .build()
                 .into(),
             test_base: Mutex::new(None),

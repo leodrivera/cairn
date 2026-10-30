@@ -37,7 +37,7 @@ Status: design. This document describes how Cairn is meant to be built. Nothing 
 | HTTP | `axum` on `tokio` (current-thread runtime by default) | Small, streaming bodies, tower middleware. One thread is enough on a low-end PC; `CAIRN_THREADS` raises it. |
 | Database | SQLite through `rusqlite` with the `bundled` feature | No server, one file, easy backups. WAL mode, one writer connection behind a mutex, short transactions. |
 | Password hash | `argon2` (Argon2id, m=7 MiB, t=5, p=1) | The lowest-memory row of the OWASP baseline, which rates all its rows as equal. RAM is held only while one hash runs (tens of ms) and at most 2 hashes run at once, so a burst of sign-ins peaks at 14 MiB. scrypt at the same rating needs 16 MiB and 5 times the CPU (N=2^14, r=8, p=5). Parameters are fixed and stored in the PHC string. |
-| Outbound HTTP | `ureq` with `rustls` | Only for CAPTCHA checks, the OAuth broker and OIDC providers. Blocking client on `spawn_blocking`; no OpenSSL. |
+| Outbound HTTP | `ureq` with `rustls` | Only for CAPTCHA checks, the OAuth broker and OIDC providers. Blocking client on `spawn_blocking`; no OpenSSL. Trusts Mozilla's CA list built into the binary plus the system's (section 3, `SSL_CERT_FILE`). |
 | OIDC tokens | `jsonwebtoken` (RS256, ES256) | Verifies ID tokens against the provider's JWKS. Reuses the `ring` that `rustls` already brings, so it adds little to the binary. |
 | Embedded assets | `rust-embed`, pre-compressed with gzip and brotli at build time | Served with `Content-Encoding` and a hashed file name, cached for a year. |
 | Front-end | TypeScript + Preact, bundled with esbuild | About 4 kB of runtime. No CSS framework: plain CSS on the variables in `tokens.css`. |
@@ -81,6 +81,7 @@ Startup checks the whole configuration and exits with one clear message per prob
 | `CAIRN_LOG` | `info` | `debug`, `info`, `warn` or `error`. |
 | `CAIRN_THREADS` | `1` | Worker threads, 1 to 64. 1 runs a single-thread runtime. |
 | `CAIRN_DEV_USER` | none | Development only: every request is this user, no sign-in. Refused unless the binary is a debug build. |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | the system's list | A PEM file (or folder) of extra certificate authorities, for an identity provider or broker whose certificate comes from your own CA. Cairn adds them to Mozilla's list built into the binary, so the file may hold only your CA; public sites (CAPTCHA vendors, Google) stay trusted. |
 
 ## 4. Sign-in
 
@@ -492,8 +493,9 @@ translated text for known codes. The language comes from the user's Profile, the
 ## 12. Docker image
 
 Multi-stage build: the front-end with Node, the binary with Rust for `x86_64-unknown-linux-musl` and
-`aarch64-unknown-linux-musl`, then a `scratch` image that holds only the binary, CA certificates (for CAPTCHA and
-broker calls over HTTPS) and `/etc/passwd` with one unprivileged user.
+`aarch64-unknown-linux-musl`, then a `scratch` image that holds only the binary, CA certificates (the system's list,
+added to the one built into the binary) and `/etc/passwd` with one unprivileged user. To trust your own CA, mount
+its PEM file and set `SSL_CERT_FILE` to its path.
 
 ```dockerfile
 FROM node:24-alpine AS web

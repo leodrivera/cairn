@@ -2,10 +2,14 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use std::path::Path;
+
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::db::Db;
 use crate::fs::path::RelPath;
+use crate::fs::scope::Scope;
+use crate::users::{self, User};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareRow {
@@ -189,10 +193,66 @@ pub fn hit(db: &Db, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// What a live link opens. A file is reached through the creator's scope; a folder is a scope of its own, so links
+/// inside it cannot lead to its siblings.
+pub enum Target {
+    File { scope: Scope, path: RelPath },
+    Folder { scope: Scope },
+}
+
+pub struct Live {
+    pub row: ShareRow,
+    pub creator: User,
+    pub target: Target,
+}
+
+/// The link, if it still works: not expired, its creator still may share, its target still inside the creator's
+/// scope and on disk. `None` for every way of being gone. Blocking.
+pub fn resolve(
+    db: &Db,
+    root: &Path,
+    data_id: Option<(u64, u64)>,
+    fallback: bool,
+    id: &str,
+    now: i64,
+) -> Option<Live> {
+    let logged = |e: &dyn std::fmt::Display| tracing::error!(event = "db.error", error = %e);
+    let row = get(db, id).inspect_err(|e| logged(e)).ok()??;
+    if row.expires_at.is_some_and(|at| at <= now) {
+        return None;
+    }
+    let creator = users::by_id(db, row.user_id).ok()??;
+    if !creator.perms.share || !creator.perms.read {
+        return None;
+    }
+    let rel = split_scope(&row.path, &creator.scope)?;
+    let scope = Scope::new(root, &creator.scope, data_id).ok()?;
+    let scope = if fallback {
+        scope.with_fallback()
+    } else {
+        scope
+    };
+    let fd = scope.open(&rel, rustix::fs::OFlags::PATH).ok()?;
+    let st = rustix::fs::fstat(&fd).ok()?;
+    let target =
+        if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory {
+            Target::Folder {
+                scope: scope.sub(&rel).ok()?,
+            }
+        } else {
+            Target::File { scope, path: rel }
+        };
+    Some(Live {
+        row,
+        creator,
+        target,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::users::{self, NewUser, Perms};
+    use crate::users::{NewUser, Perms};
 
     const NOW: i64 = 1_800_000_000;
 

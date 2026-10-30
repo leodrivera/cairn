@@ -18,6 +18,7 @@ pub struct Scope {
     mode: Resolve,
 }
 
+#[derive(Clone, Copy)]
 enum Resolve {
     /// Linux 5.6 and later: `openat2` keeps every lookup beneath the scope, even through symlinks.
     Openat2,
@@ -195,6 +196,16 @@ impl Scope {
 
     pub fn open_dir(&self, path: &RelPath) -> Result<OwnedFd, FsError> {
         self.open(path, OFlags::DIRECTORY | OFlags::RDONLY)
+    }
+
+    /// The folder at `path` as a scope of its own: nothing opened through it can reach outside that folder.
+    pub fn sub(&self, path: &RelPath) -> Result<Scope, FsError> {
+        let root = self.open_dir(path)?;
+        Ok(Scope {
+            root,
+            data_id: self.data_id,
+            mode: self.mode,
+        })
     }
 
     /// The parent folder and the final name, for `*at` calls that act on the name itself (never its link target).
@@ -400,5 +411,30 @@ mod tests {
             Err(FsError::NotFound)
         ));
         assert!(!modern.link_inside(&p("db-link")));
+    }
+
+    #[test]
+    fn sub_is_a_scope() {
+        let t = tree();
+        for s in scopes(&t) {
+            let sub = s.sub(&p("sub")).unwrap();
+            assert_eq!(read(&sub, "g.txt").unwrap(), "g");
+            assert!(matches!(s.sub(&p("f.txt")), Err(FsError::NotAFolder)));
+        }
+    }
+
+    #[test]
+    fn sub_confines_links() {
+        let t = tree();
+        // a/sub/back -> ../f.txt: inside the scope, outside the sub-scope.
+        symlink("../f.txt", t.dir.path().join("a/sub/back")).unwrap();
+        for s in scopes(&t) {
+            assert_eq!(
+                read(&s, "sub/back").is_ok(),
+                matches!(s.mode, Resolve::Openat2)
+            );
+            let sub = s.sub(&p("sub")).unwrap();
+            assert!(matches!(read(&sub, "back"), Err(FsError::Outside)));
+        }
     }
 }

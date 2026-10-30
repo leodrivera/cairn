@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use ipnet::IpNet;
 use url::Url;
 
-pub use secret::{Secret, read_secret};
+pub use secret::{Secret, ct_eq, read_secret};
 
 pub type Vars = BTreeMap<String, String>;
 

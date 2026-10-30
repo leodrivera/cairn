@@ -12,6 +12,23 @@ impl Secret {
     pub fn expose(&self) -> &str {
         &self.0
     }
+
+    /// Whether `candidate` is this secret, in time that tells nothing about where they differ. Empty never matches.
+    pub fn matches(&self, candidate: &[u8]) -> bool {
+        !candidate.is_empty() && ct_eq(self.0.as_bytes(), candidate)
+    }
+}
+
+/// Compares the SHA-256 of both sides over all 32 bytes, so neither the length nor the first difference shows in
+/// the time taken.
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    use sha2::{Digest, Sha256};
+    let (x, y) = (Sha256::digest(a), Sha256::digest(b));
+    let diff = x
+        .iter()
+        .zip(y.iter())
+        .fold(0u8, |acc, (p, q)| acc | (p ^ q));
+    std::hint::black_box(diff) == 0
 }
 
 impl fmt::Debug for Secret {
@@ -143,6 +160,37 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn matches_equal() {
+        let s = Secret("a".repeat(40));
+        assert!(s.matches("a".repeat(40).as_bytes()));
+    }
+
+    #[test]
+    fn refuses_other() {
+        let value = "a".repeat(40);
+        let s = Secret(value.clone());
+        let first = format!("b{}", &value[1..]);
+        let last = format!("{}b", &value[..39]);
+        let longer = format!("{value}a");
+        for other in [
+            first.as_str(),
+            last.as_str(),
+            &value[..39],
+            longer.as_str(),
+            "",
+        ] {
+            assert!(!s.matches(other.as_bytes()), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn ct_eq_basic() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(ct_eq(b"", b""));
     }
 
     #[test]

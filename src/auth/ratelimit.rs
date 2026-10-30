@@ -123,6 +123,8 @@ pub struct Limiters {
     pub login: FailureLimiter,
     /// Wrong current password on "Change password": 5 per user in 15 minutes.
     pub password_change: FailureLimiter,
+    /// Broker and OIDC sign-in starts, counted together: 20 per IP in 10 minutes.
+    pub sso_start: FailureLimiter,
 }
 
 impl Default for Limiters {
@@ -136,6 +138,7 @@ impl Limiters {
         Limiters {
             login: FailureLimiter::new(10, 5, 15 * 60, 10_000),
             password_change: FailureLimiter::new(0, 5, 15 * 60, 10_000),
+            sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
         }
     }
 }

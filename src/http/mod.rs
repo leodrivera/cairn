@@ -10,6 +10,7 @@ pub mod error;
 pub mod files_routes;
 pub mod headers;
 pub mod json;
+pub mod sso_routes;
 pub mod users_routes;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use axum::routing::get;
 use axum::{Json, Router, middleware};
 use serde_json::json;
 
+use crate::auth::broker::Broker;
 use crate::auth::captcha::Captcha;
 use crate::auth::password::Hasher;
 use crate::auth::ratelimit::Limiters;
@@ -34,6 +36,7 @@ pub struct AppState {
     pub hasher: Arc<Hasher>,
     pub limiters: Arc<Limiters>,
     pub captcha: Option<Arc<Captcha>>,
+    pub broker: Option<Arc<Broker>>,
     /// Device and inode of `CAIRN_DATA`: no path a client sends may pass through it.
     pub data_id: Option<(u64, u64)>,
     /// Tests only: resolve paths the way kernels without openat2 do.
@@ -44,6 +47,7 @@ impl AppState {
     pub fn new(config: Config, db: Db) -> AppState {
         let captcha =
             Captcha::from_config(&config.captcha, config.public_url.as_ref()).map(Arc::new);
+        let config_broker = config.auth.oauth.as_ref().map(|b| Arc::new(Broker::new(b)));
         let data_id = std::fs::metadata(&config.data).ok().map(|m| {
             use std::os::unix::fs::MetadataExt;
             (m.dev(), m.ino())
@@ -56,6 +60,7 @@ impl AppState {
             hasher: Arc::new(Hasher::new()),
             limiters: Arc::new(Limiters::new()),
             captcha,
+            broker: config_broker,
         }
     }
 }
@@ -80,6 +85,7 @@ pub fn router(state: AppState) -> Router {
     let captcha = state.captcha.clone();
     let app = Router::new()
         .nest("/api", api)
+        .merge(sso_routes::routes(state.clone()))
         .fallback(assets::serve)
         .with_state(state);
     headers::apply(app, captcha.as_deref())

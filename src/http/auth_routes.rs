@@ -51,7 +51,7 @@ async fn config(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
     let mut body = json!({
         "authMethods": auth_methods(&s.config),
         "captcha": captcha,
-        "providers": [],
+        "providers": crate::http::sso_routes::providers(&s),
         "theme": look.theme,
         "thumbnails": look.thumbnails,
         "editMax": s.config.edit_max,

@@ -1,6 +1,8 @@
 //! In-process test harness: the real router over an in-memory database.
 #![allow(dead_code)]
 
+pub mod broker;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -120,6 +122,16 @@ impl Harness {
 }
 
 impl Harness {
+    /// Waits for one fetch of the broker's provider list.
+    pub async fn broker_ready(&self) {
+        self.state
+            .broker
+            .as_ref()
+            .expect("oauth on")
+            .refresh()
+            .await;
+    }
+
     /// A session for the user without the sign-in form, for servers whose form needs a CAPTCHA.
     pub fn session_for(&self, user: &User) -> String {
         let token = cairn::auth::session::create(

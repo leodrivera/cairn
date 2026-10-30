@@ -23,6 +23,7 @@ use serde_json::json;
 
 use crate::auth::broker::Broker;
 use crate::auth::captcha::Captcha;
+use crate::auth::oidc::Oidc;
 use crate::auth::password::Hasher;
 use crate::auth::ratelimit::Limiters;
 use crate::config::Config;
@@ -37,6 +38,7 @@ pub struct AppState {
     pub limiters: Arc<Limiters>,
     pub captcha: Option<Arc<Captcha>>,
     pub broker: Option<Arc<Broker>>,
+    pub oidc: Arc<Oidc>,
     /// Device and inode of `CAIRN_DATA`: no path a client sends may pass through it.
     pub data_id: Option<(u64, u64)>,
     /// Tests only: resolve paths the way kernels without openat2 do.
@@ -48,6 +50,7 @@ impl AppState {
         let captcha =
             Captcha::from_config(&config.captcha, config.public_url.as_ref()).map(Arc::new);
         let config_broker = config.auth.oauth.as_ref().map(|b| Arc::new(Broker::new(b)));
+        let oidc = Arc::new(Oidc::new(&config.auth.oidc));
         let data_id = std::fs::metadata(&config.data).ok().map(|m| {
             use std::os::unix::fs::MetadataExt;
             (m.dev(), m.ino())
@@ -61,6 +64,7 @@ impl AppState {
             limiters: Arc::new(Limiters::new()),
             captcha,
             broker: config_broker,
+            oidc,
         }
     }
 }

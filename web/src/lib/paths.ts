@@ -32,6 +32,11 @@ export function displaySegment(segment: string): string {
   }
 }
 
+/** A whole path as people read it, each segment through `displaySegment`. */
+export function displayPath(path: string): string {
+  return path.split("/").map(displaySegment).join("/");
+}
+
 export function encodePath(path: string): string {
   return segments(path).map(encodeURIComponent).join("/");
 }

@@ -1,7 +1,7 @@
 // Share one file or folder: choose expiry, password and downloads, create the link, then copy, change or delete it.
 import { useState } from "preact/hooks";
 import { ApiFailure, offline } from "../lib/api";
-import { displaySegment, segments } from "../lib/paths";
+import { displayPath, displaySegment, segments } from "../lib/paths";
 import { copyText, createShare, deleteShare, shareUrl, updateShare, type Expiry, type ShareOptions } from "../lib/shares";
 import { errorText, t } from "../i18n/index";
 import { Dialog } from "./dialogs";
@@ -87,7 +87,7 @@ export function ShareDialog({ entryPath, kind, onClose }: Props) {
           else if (!needsPassword) create();
         }}
       >
-        <p class="mono share-path">{entryPath}</p>
+        <p class="mono share-path">{displayPath(entryPath)}</p>
         {share && (
           <div class="field">
             <label class="field-label" for="share-link">

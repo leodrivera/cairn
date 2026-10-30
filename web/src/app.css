@@ -1957,6 +1957,11 @@ fieldset.perms {
   text-decoration: none;
 }
 
+.public-scroll {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
 .public-list {
   margin: 0;
   padding: 0;
@@ -1964,6 +1969,8 @@ fieldset.perms {
 }
 
 .public-list li {
+  box-sizing: border-box;
+  height: 45px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;

@@ -1,6 +1,7 @@
 // Share links: every active link (an admin sees everyone's), with copy and delete.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ApiFailure, offline } from "../lib/api";
+import { displayPath } from "../lib/paths";
 import { copyText, deleteShare, expiryText, listShares, shareUrl } from "../lib/shares";
 import { errorText, t, tn } from "../i18n/index";
 import { Dialog } from "../components/dialogs";
@@ -48,7 +49,7 @@ export function Links() {
       file: (
         <span class="link-file">
           <span class="link-name">{s.name}</span>
-          <span class="muted mono">{folderOf(s.path)}</span>
+          <span class="muted mono">{displayPath(folderOf(s.path))}</span>
           {s.owner.id !== me.id && <span class="muted">{t("links.sharedBy", { name: s.owner.name })}</span>}
         </span>
       ),

@@ -1,10 +1,11 @@
 // The public page of a share link: no session, no sidebar. A password prompt, the file, or the folder's contents.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline, request } from "../lib/api";
 import { rawUrl, shareInfo, shareList, unlock, zipUrl } from "../lib/public";
 import { displaySegment, join, parent, segmentOf, segments } from "../lib/paths";
 import { formatSize, formatWhen } from "../lib/format";
 import { isEditable } from "../lib/text";
+import { useWindow } from "../lib/windowing";
 import { expiryText } from "../lib/shares";
 import { href, Link } from "../lib/router";
 import { errorText, lang, t } from "../i18n/index";
@@ -250,24 +251,36 @@ function FolderView({ id, path, root, download }: { id: string; path: string; ro
       </header>
       {error && <p class="error-line" role="alert">{errorText(error)}</p>}
       {entries?.length === 0 && <p class="muted public-none">{t("state.empty.title")}</p>}
-      {entries && entries.length > 0 && (
-        <ul class="public-list">
-          {entries.map((e) => {
-            const p = join(path, segmentOf(e));
-            const isFolder = e.kind === "folder";
-            return (
-              <li key={p}>
-                <Link href={to(p, !isFolder)}>
-                  <FileIcon entry={e} />
-                  <span class="public-name">{e.name}</span>
-                </Link>
-                <span class="muted">{isFolder ? "" : formatSize(e.size)}</span>
-                <span class="muted">{formatWhen(e.modified)}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {entries && entries.length > 0 && <Rows id={id} path={path} entries={entries} />}
     </article>
+  );
+}
+
+/** One row: a 44 px target plus its 1 px line. */
+const ROW = 45;
+
+/** The folder's entries, windowed: only the rows on screen are in the DOM. */
+function Rows({ id, path, entries }: { id: string; path: string; entries: Entry[] }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const { start, end, padTop, padBottom } = useWindow(scroller, entries.length, ROW);
+  return (
+    <div ref={scroller} class="public-scroll">
+      <ul class="public-list" style={{ paddingTop: `${padTop}px`, paddingBottom: `${padBottom}px` }}>
+        {entries.slice(start, end).map((e) => {
+          const p = join(path, segmentOf(e));
+          const isFolder = e.kind === "folder";
+          return (
+            <li key={p}>
+              <Link href={href({ name: "share", id, path: p, file: !isFolder })}>
+                <FileIcon entry={e} />
+                <span class="public-name">{e.name}</span>
+              </Link>
+              <span class="muted">{isFolder ? "" : formatSize(e.size)}</span>
+              <span class="muted">{formatWhen(e.modified)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

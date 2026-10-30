@@ -174,3 +174,14 @@ test("pt-BR public page", async () => {
     setLang("en");
   }
 });
+
+test("a large shared folder renders only the rows on screen", async () => {
+  const many = Array.from({ length: 5000 }, (_, i) => file(`photo-${i}.jpg`, { mime: "image/jpeg" }));
+  const { el } = visit(`/s/${ID}`, {
+    [`GET /s/${ID}/info`]: () => json(info({ entry: folder("photos") })),
+    [`GET /s/${ID}/list`]: () => json({ path: "", entries: many }),
+  });
+  await waitFor(() => assert.ok(el.querySelector(".public-list li")));
+  const rows = el.querySelectorAll(".public-list li").length;
+  assert.ok(rows > 0 && rows < 100, `${rows} rows in the DOM`);
+});

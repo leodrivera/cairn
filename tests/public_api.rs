@@ -668,3 +668,19 @@ async fn limit_counts_per_64() {
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn json_routes_private() {
+    // A listing behind a password must not sit in a shared cache either.
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let c = pair(&unlock(&id, "s3cret-pass").send(&f.h.app).await);
+    for path in ["info", "list"] {
+        let res = Req::get(&format!("/s/{id}/{path}"))
+            .cookie(&c)
+            .send(&f.h.app)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{path}");
+        assert_eq!(res.header("cache-control"), "private, no-cache", "{path}");
+    }
+}

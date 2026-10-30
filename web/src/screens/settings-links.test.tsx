@@ -147,3 +147,11 @@ test("pt-BR rows", async () => {
   await waitFor(() => assert.match(el.textContent!, /Em 7 dias/));
   assert.match(el.textContent!, /3 vezes/);
 });
+
+test("a folder that is not UTF-8 shows readable", async () => {
+  const { el } = await screen([link({ path: "/\u0000UmVsYXTzcmlv/notes.txt", name: "notes.txt" })]);
+  await waitFor(() => assert.ok(el.querySelector(".links-list .link-file")));
+  const text = el.querySelector(".links-list .link-file")!.textContent!;
+  assert.ok(text.includes("/Relat\uFFFDrio"), text);
+  assert.ok(!text.includes("\u0000"), text);
+});

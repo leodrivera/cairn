@@ -220,3 +220,10 @@ test("share error codes are translated", () => {
     setLang("en");
   }
 });
+
+test("a name that is not UTF-8 shows readable in the dialog", async () => {
+  stubFetch({});
+  const el = render(<ShareDialog entryPath={"\u0000UmVsYXTzcmlv/notes.txt"} kind="file" onClose={() => {}} />);
+  const shown = el.querySelector(".share-path")!.textContent!;
+  assert.equal(shown, "Relat\uFFFDrio/notes.txt");
+});

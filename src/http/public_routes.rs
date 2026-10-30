@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodRouter, get, post};
 use axum::{Json, Router, middleware};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::auth::ratelimit::ip_key;
 use crate::fs::path::RelPath;
@@ -163,7 +163,7 @@ fn place(target: Target, sub: &str) -> Result<(crate::fs::scope::Scope, RelPath)
     }
 }
 
-/// Files of a link may be behind a password: no shared cache may keep them.
+/// What a link shows may be behind a password: no shared cache may keep it.
 fn private(mut res: Response) -> Response {
     res.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -176,11 +176,7 @@ async fn app_page(_: At, headers: HeaderMap) -> Response {
     assets::index(&headers)
 }
 
-async fn info(
-    State(s): State<AppState>,
-    at: At,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
+async fn info(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<Response, ApiError> {
     let Live {
         row,
         creator,
@@ -200,19 +196,22 @@ async fn info(
     })
     .await?;
     shares::hit(&s.db, &row.id)?;
-    Ok(Json(json!({
-        "entry": entry,
-        "download": row.download,
-        "expiresAt": row.expires_at,
-        "sharedBy": creator.name,
-    })))
+    Ok(private(
+        Json(json!({
+            "entry": entry,
+            "download": row.download,
+            "expiresAt": row.expires_at,
+            "sharedBy": creator.name,
+        }))
+        .into_response(),
+    ))
 }
 
 async fn list_folder(
     State(s): State<AppState>,
     at: At,
     headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let live = live(&s, &at.id, &headers).await?;
     let Target::Folder { scope } = live.target else {
         return Err(FsError::NotAFolder.into());
@@ -220,7 +219,9 @@ async fn list_folder(
     let path = RelPath::parse(&at.path)?;
     let shown = path.to_string();
     let entries = blocking(move || list::list(&scope, &path)).await?;
-    Ok(Json(json!({ "path": shown, "entries": entries })))
+    Ok(private(
+        Json(json!({ "path": shown, "entries": entries })).into_response(),
+    ))
 }
 
 #[derive(serde::Deserialize)]

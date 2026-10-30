@@ -10,6 +10,7 @@ pub mod error;
 pub mod files_routes;
 pub mod headers;
 pub mod json;
+pub mod public_routes;
 pub mod shares_routes;
 pub mod sso_routes;
 pub mod users_routes;
@@ -92,6 +93,7 @@ pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .nest("/api", api)
         .merge(sso_routes::routes(state.clone()))
+        .merge(public_routes::routes())
         .fallback(assets::serve)
         .with_state(state);
     headers::apply(app, captcha.as_deref())

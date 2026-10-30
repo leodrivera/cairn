@@ -134,6 +134,18 @@ async fn raw(
     axum::extract::Query(q): axum::extract::Query<RawQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ApiError> {
+    fu.need(true, false)?;
+    let path = RelPath::parse(&raw_path)?;
+    serve_file(fu.scope, path, &headers, q.download.is_some()).await
+}
+
+/// One file as a download: `Range`, `If-None-Match`, the strict CSP, inline or as an attachment.
+pub(crate) async fn serve_file(
+    scope: Scope,
+    path: RelPath,
+    headers: &axum::http::HeaderMap,
+    attachment: bool,
+) -> Result<axum::response::Response, ApiError> {
     use axum::http::header;
     use axum::response::IntoResponse;
     use rustix::fs::{FileType, OFlags};
@@ -141,13 +153,10 @@ async fn raw(
 
     use crate::fs::raw::{ByteRange, encode_filename, etag, parse_range};
 
-    fu.need(true, false)?;
-    let path = RelPath::parse(&raw_path)?;
     let name = path
         .name_lossy()
         .map(|n| n.into_owned())
         .unwrap_or_else(|| "download".into());
-    let scope = fu.scope;
     let (file, st) = blocking(move || {
         let fd = scope.open(&path, OFlags::RDONLY)?;
         let st = rustix::fs::fstat(&fd)?;
@@ -161,11 +170,7 @@ async fn raw(
     let tag = etag(&st);
     let modified =
         std::time::UNIX_EPOCH + std::time::Duration::from_secs(st.st_mtime.max(0) as u64);
-    let disposition = if q.download.is_some() {
-        "attachment"
-    } else {
-        "inline"
-    };
+    let disposition = if attachment { "attachment" } else { "inline" };
     let common = [
         (header::ETAG, tag.clone()),
         (header::LAST_MODIFIED, httpdate::fmt_http_date(modified)),
@@ -483,16 +488,24 @@ async fn zip_response(
     raw_path: String,
     items: Option<Vec<Vec<u8>>>,
 ) -> Result<axum::response::Response, ApiError> {
+    fu.need(true, false)?;
+    let path = RelPath::parse(&raw_path)?;
+    serve_zip(fu.scope, path, items).await
+}
+
+/// A folder, or chosen items in it, as a streamed ZIP.
+pub(crate) async fn serve_zip(
+    scope: Scope,
+    path: RelPath,
+    items: Option<Vec<Vec<u8>>>,
+) -> Result<axum::response::Response, ApiError> {
     use axum::http::header;
     use axum::response::IntoResponse;
 
-    fu.need(true, false)?;
-    let path = RelPath::parse(&raw_path)?;
     let name = match path.name_lossy() {
         Some(n) => format!("{n}.zip"),
         None => "files.zip".into(),
     };
-    let scope = fu.scope;
     // Checked before the response starts, so a wrong path or a missing item is an ordinary JSON error.
     let (scope, path, items) = blocking(move || {
         scope.open_dir(&path)?;

@@ -70,8 +70,10 @@ pub async fn serve(method: Method, uri: Uri, headers: HeaderMap) -> Response {
     }
     // The proxy matches the sign-in routes exactly; a variant (`/auth/sso/`, `/AUTH/SSO`) must not reach the app
     // page, or it would look like a route that skipped the broker.
+    // Share links are matched exactly too: a variant of one is not a page of the app.
     let lower = uri.path().to_ascii_lowercase();
-    if lower == "/auth" || lower.starts_with("/auth/") {
+    let reserved = |prefix: &str| lower == prefix || lower.starts_with(&format!("{prefix}/"));
+    if reserved("/auth") || reserved("/s") {
         return crate::http::sso_routes::not_found();
     }
     let path = uri.path().trim_start_matches('/');
@@ -81,6 +83,15 @@ pub async fn serve(method: Method, uri: Uri, headers: HeaderMap) -> Response {
     } else {
         "index.html"
     };
+    respond(path, &headers)
+}
+
+/// The app page, for routes that are pages of the app but handled elsewhere (the public share page).
+pub fn index(headers: &HeaderMap) -> Response {
+    respond("index.html", headers)
+}
+
+fn respond(path: &str, headers: &HeaderMap) -> Response {
     let Some(file) = Dist::get(path) else {
         return (
             StatusCode::NOT_FOUND,

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod broker;
+pub mod idp;
 
 use std::sync::Arc;
 
@@ -130,6 +131,12 @@ impl Harness {
             .expect("oauth on")
             .refresh()
             .await;
+    }
+
+    /// Points OIDC provider `fake` at the fake identity provider and loads it.
+    pub async fn oidc_ready(&self, idp: &idp::FakeIdp) {
+        self.state.oidc.use_test_server("fake", &idp.base);
+        self.state.oidc.refresh_missing().await;
     }
 
     /// A session for the user without the sign-in form, for servers whose form needs a CAPTCHA.

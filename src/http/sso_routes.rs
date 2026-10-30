@@ -3,7 +3,9 @@
 
 use std::net::IpAddr;
 
-use axum::extract::{Path, State};
+use std::collections::HashMap;
+
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -13,6 +15,7 @@ use serde_json::{Value, json};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
+use crate::auth::oidc::flow::{self, Pending};
 use crate::auth::session::{self, Method};
 use crate::http::AppState;
 use crate::http::client::Client;
@@ -27,6 +30,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/auth/oauth/{provider}", get(oauth_start))
         .route("/auth/sso", get(sso))
+        .route("/auth/oidc/{id}", get(oidc_start))
+        .route("/auth/oidc/{id}/callback", get(oidc_callback))
         .layer(middleware::from_fn_with_state(state, current_user::load))
 }
 
@@ -85,6 +90,9 @@ pub fn providers(s: &AppState) -> Vec<Value> {
         for p in b.providers() {
             out.push(json!({ "name": p.name, "href": format!("/auth/oauth/{}", p.id) }));
         }
+    }
+    for (id, name) in s.oidc.ready() {
+        out.push(json!({ "name": name, "href": format!("/auth/oidc/{id}") }));
     }
     out
 }
@@ -287,4 +295,110 @@ async fn sso(
         None,
     )
     .await
+}
+
+fn oidc_failed(id: &str, ip: IpAddr, reason: &str) {
+    tracing::warn!(event = "auth.oidc_failed", provider = %id, ip = %ip, reason);
+}
+
+async fn oidc_start(State(s): State<AppState>, client: Client, Path(id): Path<String>) -> Response {
+    let Some(provider) = s.oidc.get(&id).cloned() else {
+        return not_found();
+    };
+    if let Some(res) = start_limited(&s, client.ip) {
+        return res;
+    }
+    let pending = Pending::new(&id, crate::now());
+    let redirect = public(&s, &format!("/auth/oidc/{id}/callback"));
+    let Some(target) = provider.authorize_url(&redirect, &pending) else {
+        oidc_failed(&id, client.ip, "not_ready");
+        return sign_in_failed();
+    };
+    let mut res = found(target.as_str());
+    res.headers_mut().append(
+        header::SET_COOKIE,
+        flow::pending_cookie(&pending.seal(&s.oidc.mac_key), client.https),
+    );
+    res
+}
+
+fn read_pending(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or("").split(';'))
+        .find_map(|part| match part.trim().split_once('=') {
+            Some((n, v)) if n == flow::COOKIE && !v.is_empty() => Some(v.to_string()),
+            _ => None,
+        })
+}
+
+fn with_cleared(mut res: Response, https: bool) -> Response {
+    res.headers_mut()
+        .append(header::SET_COOKIE, flow::clear_pending(https));
+    res
+}
+
+async fn oidc_callback(
+    State(s): State<AppState>,
+    client: Client,
+    headers: HeaderMap,
+    MaybeUser(previous): MaybeUser,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(provider) = s.oidc.get(&id).cloned() else {
+        return not_found();
+    };
+    let now = crate::now();
+    let https = client.https;
+    // Before the provider's answer is trusted, nothing about who is signed in changes: a reload of this URL after
+    // signing in lands on the sign-in page, which sends a signed-in person on to their files.
+    let pending = read_pending(&headers)
+        .and_then(|c| flow::open(&c, &s.oidc.mac_key, now))
+        .filter(|p| p.provider == id);
+    let state_ok = match (&pending, q.get("state")) {
+        (Some(p), Some(sent)) => crate::config::ct_eq(p.state.as_bytes(), sent.as_bytes()),
+        _ => false,
+    };
+    let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, now)) else {
+        oidc_failed(&id, client.ip, "state");
+        return with_cleared(sign_in_failed(), https);
+    };
+    let code = q.get("code").filter(|c| !c.is_empty());
+    let Some(code) = code.filter(|_| !q.contains_key("error")) else {
+        oidc_failed(&id, client.ip, "provider_error");
+        return with_cleared(sign_in_failed(), https);
+    };
+    let redirect = public(&s, &format!("/auth/oidc/{id}/callback"));
+    let token = match provider.exchange(code, &redirect, &pending.verifier).await {
+        Ok(t) => t,
+        Err(error) => {
+            tracing::warn!(event = "auth.oidc_failed", provider = %id, ip = %client.ip, reason = "token_exchange", error = %error);
+            return with_cleared(failed(&s, client, previous), https);
+        }
+    };
+    let identity = match provider.verify_id_token(&token, &pending.nonce, now).await {
+        Ok(i) => i,
+        Err(e) => {
+            oidc_failed(&id, client.ip, e.reason());
+            return with_cleared(failed(&s, client, previous), https);
+        }
+    };
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let res = finish(
+        &s,
+        client,
+        ua,
+        previous,
+        &identity.email,
+        identity.name.as_deref(),
+        Method::Oidc,
+        Some(&id),
+    )
+    .await;
+    with_cleared(res, https)
 }

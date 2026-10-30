@@ -216,10 +216,93 @@ impl Provider {
     }
 }
 
+impl Provider {
+    /// Where to send the browser: the authorization endpoint with the code flow and PKCE parameters.
+    pub fn authorize_url(
+        &self,
+        redirect_uri: &str,
+        p: &crate::auth::oidc::flow::Pending,
+    ) -> Option<Url> {
+        let mut url = self.ready_state()?.authorization;
+        url.query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", &self.client_id)
+            .append_pair("redirect_uri", redirect_uri)
+            .append_pair("scope", "openid email profile")
+            .append_pair("state", &p.state)
+            .append_pair("nonce", &p.nonce)
+            .append_pair("code_challenge", &p.challenge())
+            .append_pair("code_challenge_method", "S256");
+        Some(url)
+    }
+
+    /// Trades the code for an ID token. The access token in the answer is dropped unread.
+    pub async fn exchange(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        verifier: &str,
+    ) -> Result<String, String> {
+        let ready = self.ready_state().ok_or("provider not ready")?;
+        let (agent, id, secret) = (
+            self.agent.clone(),
+            self.client_id.clone(),
+            self.client_secret.expose().to_string(),
+        );
+        let (code, redirect_uri, verifier) = (
+            code.to_string(),
+            redirect_uri.to_string(),
+            verifier.to_string(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut form = vec![
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("redirect_uri", redirect_uri.as_str()),
+                ("code_verifier", verifier.as_str()),
+                ("client_id", id.as_str()),
+            ];
+            let mut req = agent.post(ready.token.as_str());
+            if ready.basic {
+                // RFC 6749 section 2.3.1: each part form-urlencoded, then Basic.
+                let enc =
+                    |s: &str| form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+                let pair = format!("{}:{}", enc(&id), enc(&secret));
+                use base64::Engine;
+                let basic = base64::engine::general_purpose::STANDARD.encode(pair);
+                req = req.header("authorization", &format!("Basic {basic}"));
+            } else {
+                form.push(("client_secret", secret.as_str()));
+            }
+            let mut res = req.send_form(form).map_err(|e| e.to_string())?;
+            if !res.status().is_success() {
+                return Err(format!(
+                    "HTTP {} from the token endpoint",
+                    res.status().as_u16()
+                ));
+            }
+            let body: serde_json::Value = res
+                .body_mut()
+                .with_config()
+                .limit(BODY_LIMIT)
+                .read_json()
+                .map_err(|e| e.to_string())?;
+            body["id_token"]
+                .as_str()
+                .map(String::from)
+                .ok_or_else(|| "no id_token in the answer".to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
 /// Every configured OIDC provider, and the key that signs pending-flow cookies.
 pub struct Oidc {
     providers: Vec<Arc<Provider>>,
     pub(crate) mac_key: [u8; 32],
+    /// `state` values already used, with when: a pending cookie works once even if a browser sends it again.
+    used: Mutex<std::collections::VecDeque<(String, i64)>>,
 }
 
 impl Oidc {
@@ -229,7 +312,26 @@ impl Oidc {
         Oidc {
             providers: list.iter().map(|c| Arc::new(Provider::new(c))).collect(),
             mac_key,
+            used: Mutex::default(),
         }
+    }
+
+    /// Marks `state` used; false when it already was. Entries leave after the cookie's lifetime, and the list is
+    /// capped, so it stays small.
+    pub fn first_use(&self, state: &str, now: i64) -> bool {
+        let mut used = self.used.lock().unwrap_or_else(|p| p.into_inner());
+        while used
+            .front()
+            .is_some_and(|(_, t)| now - t > crate::auth::oidc::flow::MAX_AGE)
+            || used.len() >= 10_000
+        {
+            used.pop_front();
+        }
+        if used.iter().any(|(s, _)| s == state) {
+            return false;
+        }
+        used.push_back((state.to_string(), now));
+        true
     }
 
     pub fn get(&self, id: &str) -> Option<&Arc<Provider>> {

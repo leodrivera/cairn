@@ -1,5 +1,6 @@
 // Share links: the management API and the address of a link.
 import { api } from "./api";
+import { t } from "../i18n/index";
 import type { Share } from "./types";
 
 export type Expiry = 1 | 7 | 30 | null;
@@ -34,4 +35,14 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** "Today", "Tomorrow", "In 5 days" or "Never", and whether it ends within two days. */
+export function expiryText(expiresAt: number | null, now = Date.now() / 1000): { text: string; soon: boolean } {
+  if (expiresAt === null) return { text: t("links.never"), soon: false };
+  const left = expiresAt - now;
+  const soon = left < 2 * 86_400;
+  if (left < 86_400) return { text: t("links.today"), soon };
+  if (left < 2 * 86_400) return { text: t("links.tomorrow"), soon };
+  return { text: t("links.inDays", { n: Math.ceil(left / 86_400) }), soon };
 }

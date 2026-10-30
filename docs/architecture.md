@@ -234,7 +234,7 @@ store is needed; a restart clears them, which is acceptable.
 | Failed sign-ins per IP | 10 per 15 min |
 | Failed sign-ins per e-mail | 5 per 15 min; a success clears it |
 | OAuth and OIDC starts per IP | 20 per 10 min |
-| Wrong share password per share and per IP | 10 per 15 min |
+| Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
@@ -316,6 +316,9 @@ outside your folder" marker and cannot be opened.
 | Rename, move, copy | `POST /api/ops` with a list of `{ op, from, to }` | write |
 | Delete | `DELETE /api/files` with a list of paths | write |
 | Save text file | `PUT /api/text/{path}` with `If-Match` | write |
+| List share links | `GET /api/shares` (own; admins all) | any |
+| Create a share link | `POST /api/shares` with `{ path, expiresDays, password?, download }` | share |
+| Change or delete a share link | `PATCH` / `DELETE /api/shares/{id}` | its creator, or an admin |
 
 - Listings stream as JSON, sorted on the server (folders first, then natural name order), so the browser can window
   them without sorting 50 000 entries. Each entry: name, kind, size, modified time, and a MIME guess from the
@@ -373,15 +376,31 @@ docker exec -it cairn /cairn user delete guest@example.com
 ## 7. Share links
 
 - A share is a random 22-character id (128 bits) pointing at one file or folder, with an expiry (1 day, 7 days,
-  30 days or never), an optional password and a download switch.
+  30 days or never), an optional password and a download switch. Creating one needs `share`; the target must lie
+  inside the creator's scope. Each person sees and manages their own links in Settings → Share links; admins see
+  everyone's.
+- A link password needs 8 to 256 characters. Wrong guesses are limited per link and address (section 4.6), so a
+  short password would fall to someone with many addresses.
 - `GET /s/{id}` is the public page. With a password, the page asks for it and, when right, sets a cookie scoped to
-  `/s/{id}` for 12 hours.
+  `/s/{id}` for 12 hours. The cookie carries an expiry and an HMAC over the link, the expiry and the password hash,
+  under a key the process makes at start: changing or removing the password, or restarting Cairn, ends every unlock.
+  A wrong password answers `403`, never `401`.
+- The page's data lives under the same path, so the cookie reaches it: `GET /s/{id}/info` (the item, the download
+  switch, the expiry and the creator's name), `POST /s/{id}/unlock`, and for files `GET /s/{id}/raw[/{path}]`,
+  `GET /s/{id}/list[/{path}]` and `GET /s/{id}/zip[/{path}]` beneath a shared folder. These routes need no session.
+  They are matched exactly and case-sensitively, like `/auth`: any other path under `/s` is a plain-text `404`.
 - With downloads off, the page lists the contents and previews text and images inline, but sends
-  `Content-Disposition: inline` and no download buttons. This is a convenience, not a protection: anything a browser
-  shows can be saved, and the share screen says so.
+  `Content-Disposition: inline` and no download buttons, and the ZIP route answers `403`. This is a convenience, not
+  a protection: anything a browser shows can be saved, and the share screen says so.
 - A share stops working when it expires, when it is deleted, when its creator loses `share`, or when its target
-  leaves the creator's scope.
-- Expired shares are removed lazily, on the next write to the shares table.
+  leaves the creator's scope (moved, deleted, or the scope changed). Every case gives the visitor the same answer:
+  "This link no longer works. Ask the person who sent it for a new one." Giving the permission or the scope back
+  makes the link work again.
+- A shared folder is opened as a scope of its own, so a symlink inside it reaches only what is beneath that folder,
+  never its siblings in the creator's scope.
+- `hits` counts openings of the public page (each answer of `info`); downloads are not counted.
+- Expired shares are removed lazily, on the next write to the shares table. Deleting a user deletes their shares.
+- Share ids are bearer secrets: they are never logged.
 
 ## 8. Database
 
@@ -442,7 +461,8 @@ backup) while it runs.
   adds the vendor's hosts to `script-src` and a `frame-src` (section 4.5).
 - Files served from `/api/raw` and `/s/` carry `X-Content-Type-Options: nosniff` and their own strict CSP
   (`default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox`), so an uploaded HTML or SVG file cannot
-  run script in Cairn's origin.
+  run script in Cairn's origin. Files and ZIPs from `/s/` also carry `Cache-Control: private, no-cache`, so a shared
+  cache never hands a password-protected file to someone without the cookie.
 - `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`. HSTS is left to the reverse proxy.
 - Request bodies other than uploads are capped at 1 MiB. JSON is parsed into fixed types; unknown fields are
   refused.
@@ -454,8 +474,9 @@ One JSON object per line on stdout: time, level, event, and fields. Events are s
 `auth.login`, `auth.login_failed`, `auth.captcha_failed`, `auth.sso`, `auth.oidc`, `auth.oidc_failed`,
 `auth.unknown_email`, `auth.sso_failed`, `auth.proxy_secret_mismatch`, `auth.oauth_start_failed`,
 `oauth.broker_unreachable`, `oidc.ready`, `oidc.unreachable`, `startup.no_users`, `startup.captcha_disabled`, `file.delete`, `share.create`,
-`http.rate_limited`. A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
-(`unknown_user`, `no_password`, `bad_password`). Passwords, tokens and share passwords are never logged.
+`share.update`, `share.delete`, `share.password_failed`, `http.rate_limited` (with a `route`, such as
+`share_password`). A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
+(`unknown_user`, `no_password`, `bad_password`). Passwords, tokens, share ids and share passwords are never logged.
 
 ## 11. Interface language
 

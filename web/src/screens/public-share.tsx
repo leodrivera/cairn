@@ -1,8 +1,8 @@
 // The public page of a share link: no session, no sidebar. A password prompt, the file, or the folder's contents.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, ApiFailure, offline, request } from "../lib/api";
-import { rawUrl, shareInfo, shareList, unlock, zipUrl } from "../lib/public";
-import { displaySegment, join, parent, segmentOf, segments } from "../lib/paths";
+import { itemInfo, rawUrl, shareInfo, shareList, unlock, zipUrl } from "../lib/public";
+import { displaySegment, join, segmentOf, segments } from "../lib/paths";
 import { formatSize, formatWhen } from "../lib/format";
 import { isEditable } from "../lib/text";
 import { useWindow } from "../lib/windowing";
@@ -75,15 +75,17 @@ export function PublicShare({ id, path, file }: Props) {
     );
   } else if (state.kind === "ready") {
     const { info } = state;
+    // The 12-hour unlock can run out while someone reads: back to the password prompt.
+    const onLocked = () => setState({ kind: "locked" });
     const folder = info.entry.kind === "folder";
     body = (
       <>
         {!folder ? (
-          <FileView id={id} path="" entry={info.entry} download={info.download} editMax={editMax} />
+          <FileView id={id} path="" entry={info.entry} download={info.download} editMax={editMax} onLocked={onLocked} />
         ) : file ? (
-          <FolderFile id={id} path={path} download={info.download} editMax={editMax} />
+          <FolderFile id={id} path={path} download={info.download} editMax={editMax} onLocked={onLocked} />
         ) : (
-          <FolderView id={id} path={path} root={info.entry.name} download={info.download} />
+          <FolderView id={id} path={path} root={info.entry.name} download={info.download} onLocked={onLocked} />
         )}
         <Footer info={info} />
       </>
@@ -157,20 +159,44 @@ function typeLabel(e: Entry): string {
   return (e.mime.split("/")[1] ?? "").toUpperCase();
 }
 
-type FileProps = { id: string; path: string; entry: Entry; download: boolean; editMax: number };
+type FileProps = {
+  id: string;
+  path: string;
+  entry: Entry;
+  download: boolean;
+  editMax: number;
+  onLocked(): void;
+};
 
-function FileView({ id, path, entry, download, editMax }: FileProps) {
+/** A failure while showing the link: a lapsed unlock asks for the password again, anything else is reported. */
+function useFailure(onLocked: () => void): [ApiFailure | null, (e: unknown) => void] {
+  const [error, setError] = useState<ApiFailure | null>(null);
+  const fail = (e: unknown) => {
+    const f = failure(e);
+    if (f.code === "share_locked") onLocked();
+    else setError(f);
+  };
+  return [error, fail];
+}
+
+function FileView({ id, path, entry, download, editMax, onLocked }: FileProps) {
   const [text, setText] = useState<string | null>(null);
+  const [error, fail] = useFailure(onLocked);
   const image = entry.mime.startsWith("image/");
   const textual = !image && isEditable(entry.mime, entry.name) && entry.size <= editMax;
+  useEffect(() => {
+    document.title = entry.name;
+  }, [entry.name]);
   useEffect(() => {
     setText(null);
     if (!textual) return;
     let live = true;
     request(rawUrl(id, path), { cache: "no-store" })
       .then((res) => res.arrayBuffer())
-      .then((b) => live && setText(new TextDecoder("utf-8").decode(b)))
-      .catch(() => live && setText(""));
+      .then(
+        (b) => live && setText(new TextDecoder("utf-8").decode(b)),
+        (e) => live && fail(e),
+      );
     return () => {
       live = false;
     };
@@ -191,51 +217,49 @@ function FileView({ id, path, entry, download, editMax }: FileProps) {
         )}
       </header>
       {image && <img class="public-image" src={rawUrl(id, path)} alt={entry.name} />}
+      {error && (
+        <p class="error-line" role="alert">
+          {errorText(error)}
+        </p>
+      )}
       {textual && text !== null && <pre class="public-text">{text}</pre>}
       {!image && !textual && <p class="muted public-none">{t("public.noPreview")}</p>}
     </article>
   );
 }
 
-/** A file inside a shared folder: its entry comes from its folder's listing. */
-function FolderFile({ id, path, download, editMax }: Omit<FileProps, "entry">) {
+/** A file inside a shared folder: its entry comes from the link's item route. */
+function FolderFile({ id, path, download, editMax, onLocked }: Omit<FileProps, "entry">) {
   const [entry, setEntry] = useState<Entry | null>(null);
-  const [error, setError] = useState<ApiFailure | null>(null);
+  const [error, fail] = useFailure(onLocked);
   useEffect(() => {
     setEntry(null);
-    const name = segments(path).at(-1) ?? "";
-    shareList(id, parent(path)).then(
-      (l) => {
-        const found = l.entries.find((e) => segmentOf(e) === name);
-        if (found) setEntry(found);
-        else setError(new ApiFailure(404, "not_found", ""));
-      },
-      (e) => setError(failure(e)),
-    );
+    itemInfo(id, path).then(setEntry, fail);
   }, [id, path]);
   if (error) return <StatePanel icon="alert" tone="danger" title={t("state.gone.title")} body={errorText(error)} />;
   if (!entry) return null;
-  return <FileView id={id} path={path} entry={entry} download={download} editMax={editMax} />;
+  return <FileView id={id} path={path} entry={entry} download={download} editMax={editMax} onLocked={onLocked} />;
 }
 
-function FolderView({ id, path, root, download }: { id: string; path: string; root: string; download: boolean }) {
+type FolderProps = { id: string; path: string; root: string; download: boolean; onLocked(): void };
+
+function FolderView({ id, path, root, download, onLocked }: FolderProps) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
-  const [error, setError] = useState<ApiFailure | null>(null);
+  const [error, fail] = useFailure(onLocked);
+  const crumbs = segments(path);
   useEffect(() => {
     setEntries(null);
-    setError(null);
-    shareList(id, path).then(
-      (l) => setEntries(l.entries),
-      (e) => setError(failure(e)),
-    );
+    shareList(id, path).then((l) => setEntries(l.entries), fail);
+    document.title = crumbs.length ? displaySegment(crumbs[crumbs.length - 1]) : root;
   }, [id, path]);
-  const crumbs = segments(path);
   const to = (p: string, file = false) => href({ name: "share", id, path: p, file });
   return (
     <article class="public-card">
       <header class="public-head">
         <nav class="public-crumbs" aria-label={root}>
-          <Link href={to("")}>{root}</Link>
+          <h1>
+            <Link href={to("")}>{root}</Link>
+          </h1>
           {crumbs.map((seg, i) => (
             <>
               <span aria-hidden="true">/</span>

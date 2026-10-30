@@ -48,3 +48,12 @@ test("every animation stops under prefers-reduced-motion", () => {
   const reduced = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
   for (const sel of animated) assert.ok(reduced.includes(sel), `${sel} keeps its animation under reduced motion`);
 });
+
+test("a name in a list row is a 44 px target on phones too", () => {
+  // On phones the name sits over its date; its ::after covers the whole name cell, which fills the 52 px row.
+  const css = readFileSync("src/app.css", "utf8");
+  const cell = /\.narrow \.cell-name\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(cell, /position:\s*relative/);
+  assert.match(cell, /align-self:\s*stretch/, "the cell is as tall as the row, not just its text");
+  assert.match(css, /\.narrow \.cell-name \.name::after\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
+});

@@ -122,6 +122,7 @@ const tree = {
     json({ path: "", entries: [folder("sub"), file("notes.txt", { mime: "text/plain", size: 10 })] }),
   [`GET /s/${ID}/list/sub`]: () => json({ path: "sub", entries: [file("deep.txt", { mime: "text/plain", size: 4 })] }),
   [`GET /s/${ID}/raw/notes.txt`]: () => new Response("some notes"),
+  [`GET /s/${ID}/info/notes.txt`]: () => json({ entry: file("notes.txt", { mime: "text/plain", size: 10 }) }),
 };
 
 test("folder rows and navigation", async () => {
@@ -184,4 +185,45 @@ test("a large shared folder renders only the rows on screen", async () => {
   await waitFor(() => assert.ok(el.querySelector(".public-list li")));
   const rows = el.querySelectorAll(".public-list li").length;
   assert.ok(rows > 0 && rows < 100, `${rows} rows in the DOM`);
+});
+
+test("a file inside a folder asks only for itself", async () => {
+  const { el, log } = visit(`/s/${ID}?file=sub%2Fdeep.txt`, {
+    [`GET /s/${ID}/info`]: () => json(info({ entry: folder("photos") })),
+    [`GET /s/${ID}/info/sub/deep.txt`]: () => json({ entry: file("deep.txt", { mime: "text/plain", size: 4 }) }),
+    [`GET /s/${ID}/raw/sub/deep.txt`]: () => new Response("deep"),
+  });
+  await waitFor(() => assert.equal(el.querySelector("pre.public-text")?.textContent, "deep"));
+  assert.ok(!log.some((r) => new URL(r.url).pathname.includes("/list")));
+});
+
+test("an unlock that ran out while reading asks for the password again", async () => {
+  const { el } = visit(`/s/${ID}`, {
+    [`GET /s/${ID}/info`]: () => json(info({ entry: file("notes.txt", { mime: "text/plain", size: 10 }) })),
+    [`GET /s/${ID}/raw`]: () => json({ error: "share_locked", message: "x" }, 403),
+  });
+  await waitFor(() => assert.match(el.textContent!, /This link needs a password/));
+  const { el: el2 } = visit(`/s/${ID}`, {
+    [`GET /s/${ID}/info`]: () => json(info({ entry: folder("photos") })),
+    [`GET /s/${ID}/list`]: () => json({ error: "share_locked", message: "x" }, 403),
+  });
+  await waitFor(() => assert.match(el2.textContent!, /This link needs a password/));
+});
+
+test("a preview that fails says so", async () => {
+  const { el } = visit(`/s/${ID}`, {
+    [`GET /s/${ID}/info`]: () => json(info({ entry: file("notes.txt", { mime: "text/plain", size: 10 }) })),
+    [`GET /s/${ID}/raw`]: () => json({ error: "internal", message: "x" }, 500),
+  });
+  await waitFor(() => assert.match(el.querySelector('[role="alert"]')?.textContent ?? "", /Something went wrong/));
+  assert.ok(!el.querySelector("pre.public-text"));
+});
+
+test("the page has a heading and a tab title", async () => {
+  const { el } = visit(`/s/${ID}`, tree);
+  await waitFor(() => assert.equal(el.querySelector("h1")?.textContent, "photos"));
+  assert.equal(document.title, "photos");
+  const { el: el2 } = visit(`/s/${ID}`, { [`GET /s/${ID}/info`]: () => json(info()) });
+  await waitFor(() => assert.equal(el2.querySelector("h1")?.textContent, "trail-ridge.jpg"));
+  assert.equal(document.title, "trail-ridge.jpg");
 });

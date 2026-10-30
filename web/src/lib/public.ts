@@ -7,6 +7,11 @@ export function shareInfo(id: string): Promise<ShareInfo> {
   return api<ShareInfo>("GET", `/s/${id}/info`);
 }
 
+/** One item beneath a shared folder. */
+export async function itemInfo(id: string, path: string): Promise<Entry> {
+  return (await api<{ entry: Entry }>("GET", `/s/${id}/info/${encodePath(path)}`)).entry;
+}
+
 export function unlock(id: string, password: string): Promise<void> {
   return api<void>("POST", `/s/${id}/unlock`, { password });
 }

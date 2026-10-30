@@ -1656,6 +1656,7 @@ fieldset.perms {
 /* The whole row opens the item on a phone, not just the 21 px line of its name. */
 .narrow .cell-name {
   position: relative;
+  align-self: stretch;
 }
 
 .narrow .cell-name .name::after {
@@ -1947,6 +1948,12 @@ fieldset.perms {
   gap: 4px 8px;
   min-width: 0;
   font-weight: 600;
+}
+
+.public-crumbs h1 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .public-crumbs a {

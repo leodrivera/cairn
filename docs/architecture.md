@@ -378,16 +378,18 @@ docker exec -it cairn /cairn user delete guest@example.com
 - A share is a random 22-character id (128 bits) pointing at one file or folder, with an expiry (1 day, 7 days,
   30 days or never), an optional password and a download switch. Creating one needs `share`; the target must lie
   inside the creator's scope. Each person sees and manages their own links in Settings → Share links; admins see
-  everyone's.
+  everyone's. Someone who lost `share` can still delete their links, but not change them.
 - A link password needs 8 to 256 characters. Wrong guesses are limited per link and address (section 4.6), so a
   short password would fall to someone with many addresses.
 - `GET /s/{id}` is the public page. With a password, the page asks for it and, when right, sets a cookie scoped to
   `/s/{id}` for 12 hours. The cookie carries an expiry and an HMAC over the link, the expiry and the password hash,
   under a key the process makes at start: changing or removing the password, or restarting Cairn, ends every unlock.
-  A wrong password answers `403`, never `401`.
+  A wrong password answers `403`, never `401`. Each try counts toward the limit before the password is checked, so
+  tries sent at once cannot slip past it; the right password clears the count.
 - The page's data lives under the same path, so the cookie reaches it: `GET /s/{id}/info` (the item, the download
   switch, the expiry and the creator's name), `POST /s/{id}/unlock`, and for files `GET /s/{id}/raw[/{path}]`,
-  `GET /s/{id}/list[/{path}]` and `GET /s/{id}/zip[/{path}]` beneath a shared folder. These routes need no session.
+  `GET /s/{id}/list[/{path}]`, `GET /s/{id}/info/{path}` (one item, for the page of a file inside) and
+  `GET /s/{id}/zip[/{path}]` beneath a shared folder. A folder's archive is named after the folder. These routes need no session.
   They are matched exactly and case-sensitively, like `/auth`: any other path under `/s` is a plain-text `404`.
 - With downloads off, the page lists the contents and previews text and images inline, but sends
   `Content-Disposition: inline` and no download buttons, and the ZIP route answers `403`. This is a convenience, not

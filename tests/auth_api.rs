@@ -514,3 +514,50 @@ async fn right_passwords_do_not_use_up_the_address() {
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn parallel_password_changes_cannot_pass_the_limit() {
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    let a = h.login("ana@example.com", PW).await;
+    let tries = (0..8).map(|_| {
+        Req::put("/api/me/password")
+            .cookie(&a)
+            .json(json!({ "current": "Nope123!", "next": "Ghijkl2?" }))
+            .send(&h.app)
+    });
+    let results = futures_util::future::join_all(tries).await;
+    let wrong = results
+        .iter()
+        .filter(|r| r.status == StatusCode::BAD_REQUEST)
+        .count();
+    let limited = results
+        .iter()
+        .filter(|r| r.status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((wrong, limited), (5, 3));
+}
+
+#[tokio::test]
+async fn right_current_password_is_not_counted() {
+    // A right current password with a weak new one is a slip in the new one, not a guess.
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    let a = h.login("ana@example.com", PW).await;
+    let put = |current: &str| {
+        Req::put("/api/me/password")
+            .cookie(&a)
+            .json(json!({ "current": current, "next": "weak" }))
+    };
+    for _ in 0..4 {
+        put("Nope123!").send(&h.app).await;
+    }
+    for _ in 0..3 {
+        assert_eq!(put(PW).send(&h.app).await.code(), "weak_password");
+    }
+    assert_eq!(put("Nope123!").send(&h.app).await.code(), "wrong_password");
+    assert_eq!(
+        put("Nope123!").send(&h.app).await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}

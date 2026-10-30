@@ -282,12 +282,13 @@ async fn change_password(
     };
     let now = crate::now();
     let key = format!("user:{}", user.id);
-    if let Some(wait) = s.limiters.password_change.blocked(client.ip, &key, now) {
+    let limiter = &s.limiters.password_change;
+    // Counted before the slow check, so tries sent together cannot all pass; a right one is given back.
+    if let Some(wait) = limiter.try_count(client.ip, &key, now) {
         tracing::warn!(event = "http.rate_limited", route = "me_password", user = user.id, ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
     if b.current.chars().count() > 256 || !s.hasher.verify(b.current, Some(stored)).await {
-        s.limiters.password_change.failed(client.ip, &key, now);
         // 400, not 401: a slip inside the app must not feed Fail2ban.
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -295,6 +296,7 @@ async fn change_password(
             "The current password is wrong.",
         ));
     }
+    limiter.undo(client.ip, &key);
     if !policy_ok(&b.next) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -302,7 +304,7 @@ async fn change_password(
             POLICY,
         ));
     }
-    s.limiters.password_change.succeeded(&key);
+    limiter.succeeded(&key);
     let hash = s.hasher.hash(b.next).await;
     users::set_password(&s.db, user.id, Some(hash))?;
     session::delete_for_user(&s.db, user.id, Some(&current.token))?;

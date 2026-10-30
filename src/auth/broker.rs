@@ -128,6 +128,12 @@ impl Broker {
         self.refreshing.store(false, Ordering::Release);
     }
 
+    /// Tests only: makes the cached list due for a refresh now, keeping it. Nothing in the environment reaches this.
+    #[doc(hidden)]
+    pub fn mark_stale(&self) {
+        self.lock().1 = 0;
+    }
+
     /// The last good list, and whether it is due for a refresh.
     pub fn cached(&self, now: i64) -> (Vec<BrokerProvider>, bool) {
         let cache = self.lock();

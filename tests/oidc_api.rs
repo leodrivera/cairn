@@ -45,10 +45,11 @@ fn set_cookies(res: &Res) -> Vec<String> {
         .collect()
 }
 
+/// The cookie whose name is `name`, or starts with `name-` (the pending cookie carries a suffix).
 fn cookie_named(res: &Res, name: &str) -> Option<String> {
     set_cookies(res)
         .into_iter()
-        .find(|c| c.starts_with(&format!("{name}=")))
+        .find(|c| c.starts_with(&format!("{name}=")) || c.starts_with(&format!("{name}-")))
 }
 
 fn param(location: &str, name: &str) -> String {
@@ -547,26 +548,40 @@ async fn https_pending_cookie_needs_host_prefix() {
     for part in ["Path=/;", "Secure", "HttpOnly"] {
         assert!(set.contains(part), "{set}");
     }
-    let value = set
-        .split(';')
-        .next()
-        .unwrap()
-        .trim_start_matches("__Host-cairn_oidc=")
-        .to_string();
+    let (host_name, value) = set.split(';').next().unwrap().split_once('=').unwrap();
+    let (host_name, value) = (host_name.to_string(), value.to_string());
+    let plain_name = host_name.trim_start_matches("__Host-").to_string();
     let url = format!(
         "/auth/oidc/fake/callback?code=c1&state={}",
         param(&loc, "state")
     );
     // The same sealed value under the plain name, as a sibling site could plant it, does not count.
     let planted = https(Req::get(&url))
-        .cookie(&format!("cairn_oidc={value}"))
+        .cookie(&format!("{plain_name}={value}"))
         .send(&h.app)
         .await;
     assert_eq!(planted.header("location"), "/login?error=sso");
     assert_eq!(idp.hits("token"), 0);
     let res = https(Req::get(&url))
-        .cookie(&format!("__Host-cairn_oidc={value}"))
+        .cookie(&format!("{host_name}={value}"))
         .send(&h.app)
         .await;
+    assert_eq!(res.header("location"), "/");
+}
+
+#[tokio::test]
+async fn two_tabs() {
+    let idp = FakeIdp::start(ISSUER).await;
+    let h = ready(&idp, &[]).await;
+    h.add_user("ana@example.com", None, false);
+    let (first, a) = start(&h, &idp).await;
+    let (_, b) = start(&h, &idp).await;
+    assert_ne!(
+        a.split('=').next(),
+        b.split('=').next(),
+        "each sign-in has its own cookie"
+    );
+    idp.authorize(&first);
+    let res = callback(&h, &param(&first, "state"), &format!("{a}; {b}")).await;
     assert_eq!(res.header("location"), "/");
 }

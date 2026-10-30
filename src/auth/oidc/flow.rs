@@ -13,8 +13,16 @@ pub const COOKIE: &str = "cairn_oidc";
 /// from Cairn and replay it against a victim (login CSRF). The prefix needs `Path=/`.
 pub const COOKIE_HTTPS: &str = "__Host-cairn_oidc";
 
-pub fn cookie_name(https: bool) -> &'static str {
-    if https { COOKIE_HTTPS } else { COOKIE }
+/// Each sign-in has its own cookie, named after the start of its `state`, so a second tab or a second provider does
+/// not overwrite the first. The callback finds it by the `state` the provider sends back.
+pub fn cookie_name(https: bool, state: &str) -> String {
+    let base = if https { COOKIE_HTTPS } else { COOKIE };
+    let tag: String = state
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(16)
+        .collect();
+    format!("{base}-{tag}")
 }
 
 fn attributes(https: bool) -> &'static str {
@@ -88,13 +96,13 @@ pub fn open(cookie: &str, key: &[u8; 32], now: i64) -> Option<Pending> {
     (now - p.created <= MAX_AGE && p.created <= now).then_some(p)
 }
 
-pub fn pending_cookie(value: &str, https: bool) -> HeaderValue {
-    let (name, attrs) = (cookie_name(https), attributes(https));
+pub fn pending_cookie(value: &str, https: bool, state: &str) -> HeaderValue {
+    let (name, attrs) = (cookie_name(https, state), attributes(https));
     HeaderValue::from_str(&format!("{name}={value}; {attrs}; Max-Age={MAX_AGE}")).expect("ASCII")
 }
 
-pub fn clear_pending(https: bool) -> HeaderValue {
-    let (name, attrs) = (cookie_name(https), attributes(https));
+pub fn clear_pending(https: bool, state: &str) -> HeaderValue {
+    let (name, attrs) = (cookie_name(https, state), attributes(https));
     HeaderValue::from_str(&format!("{name}=; {attrs}; Max-Age=0")).expect("ASCII")
 }
 

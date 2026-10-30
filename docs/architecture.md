@@ -138,7 +138,8 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oauth`. Two routes, both page naviga
 
 - `GET /auth/oauth/{provider}`: Cairn asks the broker (server to server) to open a pending OAuth session for
   `{provider}` with redirect `CAIRN_PUBLIC_URL/auth/sso`, relays the broker's cookies, and redirects the browser to
-  the provider's authorize URL. The authorize URL must be `https`. Rate limited per IP.
+  the provider's authorize URL. The authorize URL must be `https`. Rate limited per IP. A provider that is not in
+the broker's list (a button from before a restart, for example) goes back to `/login?error=sso`.
 - `GET /auth/sso`: the only route the reverse proxy puts behind the broker's forward-auth. Cairn reads
   `Remote-Email` and `Remote-Name` only here and only when `X-Auth-Secret` matches `CAIRN_OAUTH_SECRET`
   (constant-time compare). Any session cookie the browser brought is deleted first, so a planted session cannot
@@ -176,9 +177,10 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oidc`. Authorization code flow with 
   minute. A malformed configuration (missing client id, `http` issuer) stops startup instead.
 - **`GET /auth/oidc/{id}`.** Creates `state`, `nonce` and a PKCE verifier, keeps them in a 10-minute HttpOnly cookie
   signed (HMAC-SHA256) with a key the process makes at start, so nobody can choose them and a restart ends sign-ins
-  in progress. Over HTTPS the cookie is `__Host-cairn_oidc` (Secure, Path=/), so a sibling subdomain cannot plant one
-  that Cairn gave it and sign a victim in as someone else; over plain HTTP it is `cairn_oidc` scoped to
-  `/auth/oidc/`. Then Cairn redirects to the provider's authorization endpoint with scope
+  in progress. Each sign-in has its own cookie, named after the start of its `state`, so a second tab does not
+  overwrite the first. Over HTTPS the name starts with `__Host-cairn_oidc-` (Secure, Path=/), so a sibling
+  subdomain cannot plant one that Cairn gave it and sign a victim in as someone else; over plain HTTP it starts
+  with `cairn_oidc-` and is scoped to `/auth/oidc/`. Then Cairn redirects to the provider's authorization endpoint with scope
   `openid email profile` and redirect `CAIRN_PUBLIC_URL/auth/oidc/{id}/callback`. Rate limited per IP, sharing the
   limit of the broker route.
 - **`GET /auth/oidc/{id}/callback`.** Checks `state` against the cookie (each `state` works once), deletes the
@@ -186,7 +188,8 @@ Enabled by `CAIRN_AUTH_METHODS` containing `oidc`. Authorization code flow with 
   the token endpoint (client secret in the body, `client_secret_post`, or Basic when discovery lists only that), and
   verifies the ID token:
   - signature with a key from the JWKS, algorithm RS256 or ES256 only (never `none`, never HS256);
-  - `iss` equals the configured issuer, `aud` contains the client id, `azp` (when present) is the client id;
+  - `iss` equals the configured issuer (a trailing `/` aside; for `https://accounts.google.com` also the bare
+    `accounts.google.com` that Google documents), `aud` contains the client id, `azp` (when present) is the client id;
   - `exp` in the future and `iat` not more than 5 minutes ahead, with 60 seconds of clock leeway;
   - `nonce` equals the one in the cookie;
   - `email` present and `email_verified` true. An unverified address is refused, because anyone can put any

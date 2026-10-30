@@ -28,10 +28,17 @@ pub const DENIED_COOKIE: &str = "cairn_denied";
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/auth/oauth/{provider}", get(oauth_start))
-        .route("/auth/sso", get(sso))
-        .route("/auth/oidc/{id}", get(oidc_start))
-        .route("/auth/oidc/{id}/callback", get(oidc_callback))
+        // Other methods get the same plain 404 as any unknown /auth path.
+        .route(
+            "/auth/oauth/{provider}",
+            get(oauth_start).fallback(page_not_found),
+        )
+        .route("/auth/sso", get(sso).fallback(page_not_found))
+        .route("/auth/oidc/{id}", get(oidc_start).fallback(page_not_found))
+        .route(
+            "/auth/oidc/{id}/callback",
+            get(oidc_callback).fallback(page_not_found),
+        )
         .layer(middleware::from_fn_with_state(state, current_user::load))
 }
 
@@ -43,6 +50,22 @@ pub(crate) fn not_found() -> Response {
         "Not found.",
     )
         .into_response()
+}
+
+async fn page_not_found() -> Response {
+    not_found()
+}
+
+/// Percent-encodes one path segment: everything but the unreserved characters.
+fn segment(id: &str) -> String {
+    id.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Broker and OIDC starts share one limit per IP; every start counts. Over it: the 429 page.
@@ -88,7 +111,7 @@ pub fn providers(s: &AppState) -> Vec<Value> {
     let mut out = Vec::new();
     if let Some(b) = &s.broker {
         for p in b.providers() {
-            out.push(json!({ "name": p.name, "href": format!("/auth/oauth/{}", p.id) }));
+            out.push(json!({ "name": p.name, "href": format!("/auth/oauth/{}", segment(&p.id)) }));
         }
     }
     for (id, name) in s.oidc.ready() {
@@ -116,8 +139,10 @@ async fn oauth_start(
     let Some(broker) = &s.broker else {
         return not_found();
     };
+    // Not in the list: a button from before a restart, or a stale page. Back to the sign-in page, not a dead end.
     if !broker.providers().iter().any(|p| p.id == provider) {
-        return not_found();
+        tracing::warn!(event = "auth.oauth_start_failed", provider = %provider, ip = %client.ip, error = "unknown provider");
+        return sign_in_failed();
     }
     if let Some(res) = start_limited(&s, client.ip) {
         return res;
@@ -240,7 +265,7 @@ pub(crate) async fn finish(
         Ok(t) => t,
         Err(e) => {
             tracing::error!(event = "db.error", error = %e);
-            return sign_in_failed();
+            return failed(s, client, None);
         }
     };
     match method {
@@ -317,14 +342,14 @@ async fn oidc_start(State(s): State<AppState>, client: Client, Path(id): Path<St
     let mut res = found(target.as_str());
     res.headers_mut().append(
         header::SET_COOKIE,
-        flow::pending_cookie(&pending.seal(&s.oidc.mac_key), client.https),
+        flow::pending_cookie(&pending.seal(&s.oidc.mac_key), client.https, &pending.state),
     );
     res
 }
 
 /// Over HTTPS only the `__Host-` name counts, as for the session cookie.
-fn read_pending(headers: &HeaderMap, https: bool) -> Option<String> {
-    let name = flow::cookie_name(https);
+fn read_pending(headers: &HeaderMap, https: bool, state: &str) -> Option<String> {
+    let name = flow::cookie_name(https, state);
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -335,9 +360,10 @@ fn read_pending(headers: &HeaderMap, https: bool) -> Option<String> {
         })
 }
 
-fn with_cleared(mut res: Response, https: bool) -> Response {
+/// Spends the pending cookie of this sign-in (named after its `state`), whatever happened.
+fn with_cleared(mut res: Response, https: bool, state: &str) -> Response {
     res.headers_mut()
-        .append(header::SET_COOKIE, flow::clear_pending(https));
+        .append(header::SET_COOKIE, flow::clear_pending(https, state));
     res
 }
 
@@ -354,37 +380,37 @@ async fn oidc_callback(
     };
     let now = crate::now();
     let https = client.https;
+    let sent_state = q.get("state").cloned().unwrap_or_default();
     // Before the provider's answer is trusted, nothing about who is signed in changes: a reload of this URL after
     // signing in lands on the sign-in page, which sends a signed-in person on to their files.
-    let pending = read_pending(&headers, https)
+    let pending = read_pending(&headers, https, &sent_state)
         .and_then(|c| flow::open(&c, &s.oidc.mac_key, now))
         .filter(|p| p.provider == id);
-    let state_ok = match (&pending, q.get("state")) {
-        (Some(p), Some(sent)) => crate::config::ct_eq(p.state.as_bytes(), sent.as_bytes()),
-        _ => false,
-    };
+    let state_ok = pending
+        .as_ref()
+        .is_some_and(|p| crate::config::ct_eq(p.state.as_bytes(), sent_state.as_bytes()));
     let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, now)) else {
         oidc_failed(&id, client.ip, "state");
-        return with_cleared(sign_in_failed(), https);
+        return with_cleared(sign_in_failed(), https, &sent_state);
     };
     let code = q.get("code").filter(|c| !c.is_empty());
     let Some(code) = code.filter(|_| !q.contains_key("error")) else {
         oidc_failed(&id, client.ip, "provider_error");
-        return with_cleared(sign_in_failed(), https);
+        return with_cleared(sign_in_failed(), https, &sent_state);
     };
     let redirect = public(&s, &format!("/auth/oidc/{id}/callback"));
     let token = match provider.exchange(code, &redirect, &pending.verifier).await {
         Ok(t) => t,
         Err(error) => {
             tracing::warn!(event = "auth.oidc_failed", provider = %id, ip = %client.ip, reason = "token_exchange", error = %error);
-            return with_cleared(failed(&s, client, previous), https);
+            return with_cleared(failed(&s, client, previous), https, &sent_state);
         }
     };
     let identity = match provider.verify_id_token(&token, &pending.nonce, now).await {
         Ok(i) => i,
         Err(e) => {
             oidc_failed(&id, client.ip, e.reason());
-            return with_cleared(failed(&s, client, previous), https);
+            return with_cleared(failed(&s, client, previous), https, &sent_state);
         }
     };
     let ua = headers
@@ -402,5 +428,5 @@ async fn oidc_callback(
         Some(&id),
     )
     .await;
-    with_cleared(res, https)
+    with_cleared(res, https, &sent_state)
 }

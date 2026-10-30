@@ -12,6 +12,7 @@ use serde_json::Value;
 const LEEWAY_SECS: i64 = 60;
 /// How far in the future `iat` may be.
 const IAT_AHEAD_SECS: i64 = 300;
+const GOOGLE: &str = "https://accounts.google.com";
 
 #[derive(Debug, Clone)]
 enum Material {
@@ -175,11 +176,14 @@ pub fn verify(token: &str, jwks: &Jwks, expect: &Expect) -> Result<Identity, Tok
         _ => return Err(TokenError::Alg),
     };
     let kid = header["kid"].as_str();
-    let candidates: Vec<&Jwk> = jwks
-        .keys
-        .iter()
-        .filter(|k| fits(alg, k) && (kid.is_none() || k.kid.as_deref() == kid))
+    let of_type = || jwks.keys.iter().filter(|k| fits(alg, k));
+    let mut candidates: Vec<&Jwk> = of_type()
+        .filter(|k| kid.is_none() || k.kid.as_deref() == kid)
         .collect();
+    // Some providers publish keys without a `kid` while their tokens carry one.
+    if candidates.is_empty() {
+        candidates = of_type().filter(|k| k.kid.is_none()).collect();
+    }
     if candidates.is_empty() {
         return Err(TokenError::UnknownKey);
     }
@@ -194,7 +198,12 @@ pub fn verify(token: &str, jwks: &Jwks, expect: &Expect) -> Result<Identity, Tok
         return Err(TokenError::Signature);
     }
     let c = part(p)?;
-    if c["iss"].as_str().map(trim) != Some(trim(expect.issuer)) {
+    let want = trim(expect.issuer);
+    let iss_ok = c["iss"].as_str().map(trim).is_some_and(|iss| {
+        // Google documents `iss` as either form for its ID tokens.
+        iss == want || (want == GOOGLE && iss == &GOOGLE["https://".len()..])
+    });
+    if !iss_ok {
         return Err(TokenError::Issuer);
     }
     let aud_ok = match &c["aud"] {
@@ -210,14 +219,13 @@ pub fn verify(token: &str, jwks: &Jwks, expect: &Expect) -> Result<Identity, Tok
     {
         return Err(TokenError::Azp);
     }
-    match c["exp"].as_i64() {
+    // NumericDate may have a fraction.
+    let seconds = |v: &Value| v.as_f64().map(|f| f.floor() as i64);
+    match seconds(&c["exp"]) {
         Some(exp) if exp > expect.now - LEEWAY_SECS => {}
         _ => return Err(TokenError::Expired),
     }
-    if c["iat"]
-        .as_i64()
-        .is_none_or(|iat| iat > expect.now + IAT_AHEAD_SECS)
-    {
+    if seconds(&c["iat"]).is_none_or(|iat| iat > expect.now + IAT_AHEAD_SECS) {
         return Err(TokenError::Iat);
     }
     if c["nonce"]
@@ -558,6 +566,43 @@ mod tests {
                 "{v}"
             );
         }
+    }
+
+    #[test]
+    fn google_iss_without_scheme() {
+        let k = rsa(RSA_A);
+        let google = Expect {
+            issuer: "https://accounts.google.com",
+            ..expect()
+        };
+        for iss in ["accounts.google.com", "https://accounts.google.com"] {
+            let t = k.sign(Some("k1"), &with(json!({ "iss": iss })));
+            assert!(verify(&t, &jwks(&[(&k, "k1")]), &google).is_ok(), "{iss}");
+        }
+        // Only Google documents the bare form; for any other issuer it is refused.
+        let t = k.sign(Some("k1"), &with(json!({ "iss": "idp.example.com" })));
+        assert_eq!(
+            verify(&t, &jwks(&[(&k, "k1")]), &expect()),
+            Err(TokenError::Issuer)
+        );
+    }
+
+    #[test]
+    fn float_times_ok() {
+        let k = rsa(RSA_A);
+        let c = with(json!({ "exp": (NOW + 300) as f64 + 0.5, "iat": (NOW - 10) as f64 }));
+        assert!(check(&k, c).is_ok());
+        let c = with(json!({ "exp": (NOW - 61) as f64 + 0.5 }));
+        assert_eq!(check(&k, c).unwrap_err(), TokenError::Expired);
+    }
+
+    #[test]
+    fn kid_falls_back_to_keys_without_kid() {
+        let k = rsa(RSA_A);
+        let mut jwk = k.jwk("unused");
+        jwk.as_object_mut().unwrap().remove("kid");
+        let set = Jwks::parse(json!({ "keys": [jwk] }).to_string().as_bytes()).unwrap();
+        assert!(verify(&k.sign(Some("x"), &claims()), &set, &expect()).is_ok());
     }
 
     #[test]

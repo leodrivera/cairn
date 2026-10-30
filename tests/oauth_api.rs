@@ -93,12 +93,13 @@ async fn start_redirects_and_relays_cookies() {
 }
 
 #[tokio::test]
-async fn start_unknown_provider_404() {
+async fn start_unknown_provider_goes_to_login() {
     let b = FakeBroker::start(google()).await;
     let h = ready(&b, &[]).await;
     let res = Req::get("/auth/oauth/github").send(&h.app).await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND);
-    assert!(res.header("content-type").starts_with("text/plain"));
+    assert_eq!(res.status, StatusCode::FOUND);
+    assert_eq!(res.header("location"), "/login?error=sso");
+    assert_eq!(b.last_redirect_uri(), None, "the broker was not asked");
 }
 
 #[tokio::test]
@@ -454,4 +455,88 @@ async fn unknown_email_log_has_name() {
     assert!(line.contains(r#""name":"Ana""#), "{line}");
     assert!(line.contains(r#""email":"nobody@example.com""#), "{line}");
     assert!(!log.contains(SECRET));
+}
+
+#[tokio::test]
+async fn href_encodes_provider_id() {
+    let b =
+        FakeBroker::start(json!([{ "id": "my provider/x", "name": "Odd", "oauth": true }])).await;
+    let h = ready(&b, &[]).await;
+    let res = Req::get("/api/config").send(&h.app).await;
+    let href = res.json["providers"][0]["href"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(href, "/auth/oauth/my%20provider%2Fx");
+    let res = Req::get(&href).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::FOUND);
+    assert!(
+        res.header("location")
+            .starts_with("https://provider.example.com/")
+    );
+}
+
+#[tokio::test]
+async fn start_before_first_list_goes_to_login() {
+    let b = FakeBroker::start(google()).await;
+    b.set_delay(Duration::from_secs(3));
+    let h = oauth(&b, &[]);
+    let res = Req::get("/auth/oauth/google").send(&h.app).await;
+    assert_eq!(res.status, StatusCode::FOUND);
+    assert_eq!(res.header("location"), "/login?error=sso");
+}
+
+#[tokio::test]
+async fn session_failure_clears_cookie() {
+    let b = FakeBroker::start(google()).await;
+    let h = oauth(&b, &[]);
+    h.add_user("ana@example.com", None, false);
+    h.state
+        .db
+        .with(|c| c.execute_batch("DROP TABLE sessions"))
+        .unwrap();
+    let res = sso("ana@example.com", Some(SECRET)).send(&h.app).await;
+    assert_eq!(res.header("location"), "/login?error=sso");
+    let c = cookie_named(&res, "cairn_session").expect("clearing cookie");
+    assert!(c.contains("Max-Age=0"), "{c}");
+}
+
+#[tokio::test]
+async fn config_serves_stale_list_while_broker_hangs() {
+    let b = FakeBroker::start(google()).await;
+    let h = ready(&b, &[]).await;
+    b.set_delay(Duration::from_secs(3));
+    h.state.broker.as_ref().unwrap().mark_stale();
+    let t = Instant::now();
+    let res = Req::get("/api/config").send(&h.app).await;
+    assert!(
+        t.elapsed() < Duration::from_millis(200),
+        "{:?}",
+        t.elapsed()
+    );
+    assert_eq!(
+        res.json["providers"],
+        json!([{ "name": "Google", "href": "/auth/oauth/google" }])
+    );
+}
+
+#[tokio::test]
+async fn other_methods_on_auth_are_404() {
+    let b = FakeBroker::start(google()).await;
+    let h = ready(&b, &[]).await;
+    for path in [
+        "/auth/sso",
+        "/auth/oauth/google",
+        "/auth/oidc/fake",
+        "/auth/oidc/fake/callback",
+    ] {
+        for req in [Req::post(path), Req::put(path), Req::delete(path)] {
+            let res = req.send(&h.app).await;
+            assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+            assert!(
+                res.header("content-type").starts_with("text/plain"),
+                "{path}"
+            );
+        }
+    }
 }

@@ -89,7 +89,8 @@ if docker run -d --name "$name-run" --health-interval=2s --health-start-period=0
     sleep 1
   done
   [[ $status == healthy ]] && ok healthy || fail healthy "status '$status' after 30 s"
-  if docker cp "$name-run:/data" - 2>/dev/null | tar -tv 2>/dev/null | grep -q -E '^-.* 10001/10001 .* data/cairn\.db$'; then
+  data=$(docker cp "$name-run:/data" - 2>/dev/null | tar -tv 2>/dev/null)
+  if grep -q -E '^-.* 10001/10001 .* data/cairn\.db$' <<< "$data"; then
     ok db_owner
   else
     fail db_owner "/data/cairn.db missing or not owned by 10001"

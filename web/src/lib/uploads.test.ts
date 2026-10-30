@@ -242,3 +242,31 @@ test("the folder picker uses the relative path", () => {
     ["trip/day1/c.txt", "plain.txt"],
   );
 });
+
+test("final: progress notifies at most once per 100 ms, and the last value lands", async () => {
+  const { send, calls } = fakeTransport();
+  const q = new UploadQueue(send, () => {});
+  q.add("", [f("a", 1000)]);
+  await tick();
+  let seen = 0;
+  q.subscribe(() => seen++);
+  for (let i = 1; i <= 100; i++) calls[0].progress(i * 10);
+  assert.ok(seen <= 1, `${seen} notifications for 100 progress events`);
+  assert.equal(q.items[0].sent, 1000);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(seen >= 2, "the last progress was never announced");
+});
+
+test("final: 20 000 quick uploads finish in linear time", async () => {
+  const send: Transport = async () => ({ status: 201, body: "{}" });
+  const q = new UploadQueue(send, () => {}, 2);
+  const files = Array.from({ length: 20_000 }, (_, i) => f(`f-${i}`, 1));
+  const start = Date.now();
+  let done = false;
+  q.onDone = () => (done = true);
+  q.add("", files);
+  while (!done) await tick();
+  const ms = Date.now() - start;
+  assert.ok(ms < 4000, `${ms} ms`);
+  assert.ok(q.items.every((i) => i.state === "done"));
+});

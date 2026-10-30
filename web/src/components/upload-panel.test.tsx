@@ -38,3 +38,13 @@ test("names the upload while it runs", async () => {
   assert.equal(el.querySelectorAll("progress").length, 3);
   assert.match(el.textContent!, /Queued/);
 });
+
+test("final: a big batch renders a window of rows, not all of them", async () => {
+  const send: Transport = () => new Promise(() => {});
+  const q = new UploadQueue(send, () => {});
+  const el = render(<UploadPanel queue={q} />);
+  q.add("photos", Array.from({ length: 5000 }, (_, i) => new File(["x"], `img-${i}.jpg`)));
+  await waitFor(() => assert.match(el.textContent!, /Uploading 1 of 5,000/));
+  const rows = el.querySelectorAll(".upload-row").length;
+  assert.ok(rows > 0 && rows < 60, `${rows} rows in the DOM`);
+});

@@ -1,7 +1,7 @@
 import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { downloadUrl, newFolder, remove, rename, transfer, zipForm } from "./actions";
+import { downloadUrl, newFolder, remove, rename, startDownload, transfer, zipForm } from "./actions";
 import { ApiFailure } from "./api";
 import { json, stubFetch } from "../test/dom";
 import { file, folder } from "../test/fixtures";
@@ -81,4 +81,24 @@ test("zipForm posts the chosen names, raw names as they are", () => {
     ["item", "\u0000Y2Fm6S50eHQ"],
   ]);
   assert.equal(form.isConnected, false);
+});
+
+test("final: downloads go through a hidden frame, so an error page never replaces the app", () => {
+  let sent: HTMLFormElement | null = null;
+  const original = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function (this: HTMLFormElement) {
+    sent = this;
+  };
+  try {
+    zipForm("photos", [file("a.txt"), file("b.txt")]);
+  } finally {
+    HTMLFormElement.prototype.submit = original;
+  }
+  const frame = document.querySelector<HTMLIFrameElement>("iframe[name=cairn-download]");
+  assert.ok(frame);
+  assert.ok(frame!.hidden);
+  assert.equal((sent as unknown as HTMLFormElement).target, "cairn-download");
+  startDownload("/api/raw/a.txt?download=1");
+  assert.equal(new URL(frame!.src).pathname + new URL(frame!.src).search, "/api/raw/a.txt?download=1");
+  assert.equal(document.querySelectorAll("iframe[name=cairn-download]").length, 1);
 });

@@ -44,11 +44,29 @@ type Job = { item: UploadItem; file: Blob; replace: boolean; abort: AbortControl
 
 let nextId = 1;
 
+const isActive = (s: UploadState) => s === "queued" || s === "sending" || s === "exists";
+
+/** Counts the panel reads on every render, kept as items change state instead of scanning the list. */
+export type UploadCounts = { total: number; cancelled: number; done: number; failed: number; active: number };
+
+/**
+ * Every state change goes through `move`, which keeps the counters, so a batch of 20 000 files costs linear time:
+ * the waiting line is a FIFO with a moving head, and a root's batch is settled when its active count reaches zero.
+ */
 export class UploadQueue {
   items: UploadItem[] = [];
   onDone: (dir: string) => void = () => {};
+  counts: UploadCounts = { total: 0, cancelled: 0, done: 0, failed: 0, active: 0 };
   private jobs = new Map<number, Job>();
   private listeners = new Set<() => void>();
+  private waiting: number[] = [];
+  private head = 0;
+  private running = 0;
+  private activeByRoot = new Map<string, number>();
+  private doneByRoot = new Map<string, number>();
+  private progressTimer: ReturnType<typeof setTimeout> | null = null;
+  private progressPending = false;
+  private quiet = false;
 
   constructor(
     private send: Transport,
@@ -56,22 +74,18 @@ export class UploadQueue {
     private concurrency = 2,
   ) {}
 
+  /** Calls `fn` after every change, besides the constructor's onChange. Returns the unsubscribe. */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
   /** Queues files into `dir`. `labels` (same order) name them in the panel; the file name by default. */
   add(dir: string, files: File[], into: string[] = [], labels: string[] = [], root = dir): void {
     files.forEach((file, i) => {
-      const item: UploadItem = {
-        id: nextId++,
-        root,
-        dir: into[i] ?? dir,
-        name: file.name,
-        label: labels[i] ?? file.name,
-        size: file.size,
-        sent: 0,
-        state: "queued",
-        error: null,
-      };
-      this.items.push(item);
+      const item = this.push(root, into[i] ?? dir, file, labels[i] ?? file.name, "queued", null);
       this.jobs.set(item.id, { item, file, replace: false, abort: null });
+      this.waiting.push(item.id);
     });
     this.changed();
     this.pump();
@@ -79,24 +93,8 @@ export class UploadQueue {
 
   /** An item that never started because its folder could not be made. */
   addFailed(root: string, dir: string, file: File, label: string, error: ApiFailure): void {
-    this.items.push({
-      id: nextId++,
-      root,
-      dir,
-      name: file.name,
-      label,
-      size: file.size,
-      sent: 0,
-      state: "failed",
-      error,
-    });
+    this.push(root, dir, file, label, "failed", error);
     this.changed();
-  }
-
-  /** Calls `fn` after every change, besides the constructor's onChange. Returns the unsubscribe. */
-  subscribe(fn: () => void): () => void {
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
   }
 
   retry(id: number): void {
@@ -122,16 +120,71 @@ export class UploadQueue {
     this.finish(job, "cancelled", null);
   }
 
+  /** One notification for the whole batch, not one per item. */
   cancelAll(): void {
-    for (const item of this.items) this.cancel(item.id);
+    this.quiet = true;
+    try {
+      for (const item of this.items) this.cancel(item.id);
+    } finally {
+      this.quiet = false;
+    }
+    this.changed();
   }
 
   clearFinished(): void {
-    this.items = this.items.filter((i) => i.state === "queued" || i.state === "sending" || i.state === "exists");
-    for (const id of [...this.jobs.keys()]) {
-      if (!this.items.some((i) => i.id === id)) this.jobs.delete(id);
-    }
+    this.items = this.items.filter((i) => isActive(i.state));
+    for (const [id, job] of this.jobs) if (!isActive(job.item.state)) this.jobs.delete(id);
+    this.counts = { total: this.items.length, cancelled: 0, done: 0, failed: 0, active: this.items.length };
+    this.doneByRoot.clear();
     this.changed();
+  }
+
+  private push(root: string, dir: string, file: File, label: string, state: UploadState, error: ApiFailure | null) {
+    const item: UploadItem = {
+      id: nextId++,
+      root,
+      dir,
+      name: file.name,
+      label,
+      size: file.size,
+      sent: 0,
+      state: "cancelled",
+      error,
+    };
+    this.items.push(item);
+    this.counts.total++;
+    this.counts.cancelled++;
+    this.move(item, state);
+    return item;
+  }
+
+  /** The one place an item changes state; keeps every counter right. */
+  private move(item: UploadItem, to: UploadState): void {
+    const from = item.state;
+    if (from === to) return;
+    const c = this.counts;
+    if (from === "cancelled") c.cancelled--;
+    if (from === "done") {
+      c.done--;
+      this.doneByRoot.set(item.root, (this.doneByRoot.get(item.root) ?? 1) - 1);
+    }
+    if (from === "failed") c.failed--;
+    if (from === "sending") this.running--;
+    if (to === "cancelled") c.cancelled++;
+    if (to === "done") {
+      c.done++;
+      this.doneByRoot.set(item.root, (this.doneByRoot.get(item.root) ?? 0) + 1);
+    }
+    if (to === "failed") c.failed++;
+    if (to === "sending") this.running++;
+    const was = isActive(from);
+    const is = isActive(to);
+    if (was !== is) {
+      const d = is ? 1 : -1;
+      c.active += d;
+      this.activeByRoot.set(item.root, (this.activeByRoot.get(item.root) ?? 0) + d);
+    }
+    item.state = to;
   }
 
   private requeue(id: number, replace: boolean): void {
@@ -140,31 +193,48 @@ export class UploadQueue {
     job.replace = replace;
     job.item.sent = 0;
     job.item.error = null;
-    job.item.state = "queued";
+    this.move(job.item, "queued");
+    this.waiting.push(id);
     this.changed();
     this.pump();
   }
 
   private changed(): void {
+    if (this.quiet) return;
     this.onChange();
     for (const fn of this.listeners) fn();
   }
 
+  /** Progress events come many times a second per file: announce the first at once, then at most every 100 ms. */
+  private progressed(): void {
+    if (this.progressTimer) {
+      this.progressPending = true;
+      return;
+    }
+    this.changed();
+    this.progressTimer = setTimeout(() => {
+      this.progressTimer = null;
+      if (this.progressPending) {
+        this.progressPending = false;
+        this.changed();
+      }
+    }, 100);
+  }
+
   private pump(): void {
-    let running = this.items.filter((i) => i.state === "sending").length;
-    for (const item of this.items) {
-      if (running >= this.concurrency) break;
-      if (item.state !== "queued") continue;
-      const job = this.jobs.get(item.id);
-      if (!job) continue;
-      running++;
-      this.start(job);
+    while (this.running < this.concurrency && this.head < this.waiting.length) {
+      const job = this.jobs.get(this.waiting[this.head++]);
+      if (job && job.item.state === "queued") this.start(job);
+    }
+    if (this.head > 1024 && this.head * 2 > this.waiting.length) {
+      this.waiting = this.waiting.slice(this.head);
+      this.head = 0;
     }
   }
 
   private async start(job: Job): Promise<void> {
     const { item } = job;
-    item.state = "sending";
+    this.move(item, "sending");
     const abort = new AbortController();
     job.abort = abort;
     this.changed();
@@ -175,7 +245,7 @@ export class UploadQueue {
         job.file,
         (sent) => {
           item.sent = sent;
-          this.changed();
+          this.progressed();
         },
         abort.signal,
       );
@@ -194,20 +264,19 @@ export class UploadQueue {
   }
 
   private finish(job: Job, state: UploadState, error: ApiFailure | null): void {
-    const wasActive = job.item.state === "sending";
-    job.item.state = state;
+    const wasSending = job.item.state === "sending";
+    this.move(job.item, state);
     job.item.error = error;
     job.abort = null;
     this.changed();
-    if (wasActive) this.pump();
+    if (wasSending) this.pump();
     this.settle(job.item.root);
   }
 
   /** Tells the explorer to reload a folder once nothing for it is still on its way. */
   private settle(root: string): void {
-    const batch = this.items.filter((i) => i.root === root);
-    if (batch.some((i) => i.state === "queued" || i.state === "sending" || i.state === "exists")) return;
-    if (batch.some((i) => i.state === "done")) this.onDone(root);
+    if ((this.activeByRoot.get(root) ?? 0) > 0) return;
+    if ((this.doneByRoot.get(root) ?? 0) > 0) this.onDone(root);
   }
 }
 

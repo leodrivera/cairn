@@ -1503,14 +1503,22 @@ fieldset.perms {
   padding: 0;
   list-style: none;
   overflow-y: auto;
+  max-height: 384px;
+}
+
+.upload-line .button.quiet {
+  padding: 0 10px;
 }
 
 .upload-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 8px 12px 18px;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px 0 18px;
   border-bottom: 1px solid var(--cairn-line);
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .upload-line {
@@ -1546,7 +1554,10 @@ fieldset.perms {
 }
 
 .upload-error {
-  font-size: var(--cairn-text-small);
+  font-size: var(--cairn-text-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .upload-row progress {
@@ -1632,6 +1643,14 @@ fieldset.perms {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* A long press selects on a phone: no link callout, no text selection fighting it (iOS fires no contextmenu). */
+.narrow .list-row,
+.narrow .tile {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* The whole row opens the item on a phone, not just the 21 px line of its name. */

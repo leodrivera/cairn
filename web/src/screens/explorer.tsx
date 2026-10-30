@@ -3,7 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { api, ApiFailure, offline } from "../lib/api";
 import { apiUrl, displaySegment, join, segmentOf } from "../lib/paths";
 import { filterEntries } from "../lib/filter";
-import { downloadUrl, failureOfItem, newFolder, remove, rename, transfer, zipForm, type Failed } from "../lib/actions";
+import {
+  downloadUrl,
+  failureOfItem,
+  newFolder,
+  remove,
+  rename,
+  startDownload,
+  transfer,
+  zipForm,
+  ZIP_MAX,
+  type Failed,
+} from "../lib/actions";
 import { addTree, entriesFromDrop, filesFromPicker, type TreeFile } from "../lib/uploads";
 import { errorText, t, tn } from "../i18n/index";
 import { Shell, useNarrow } from "../components/shell";
@@ -52,12 +63,18 @@ export function Explorer({ path }: { path: string }) {
   const pickFiles = useRef<HTMLInputElement>(null);
   const pickFolder = useRef<HTMLInputElement>(null);
 
+  // Only the latest request may fill the screen: a slow answer for the folder just left must not land under this one,
+  // or actions would join this path with that folder's names.
+  const latest = useRef(0);
   const load = async () => {
+    const n = ++latest.current;
     try {
       const l = await api<Listing>("GET", apiUrl("files", path));
+      if (n !== latest.current) return;
       setListing(l);
       setError(null);
     } catch (e) {
+      if (n !== latest.current) return;
       setError(e instanceof ApiFailure ? e : offline());
     }
   };
@@ -168,7 +185,8 @@ export function Explorer({ path }: { path: string }) {
 
   const downloadItems = (items: Entry[]) => {
     const url = downloadUrl(path, items);
-    if (url) location.assign(url);
+    if (url) startDownload(url);
+    else if (items.length > ZIP_MAX) showToast(t("invalid.zipItems"));
     else zipForm(path, items);
   };
   const download = () => downloadItems(chosen);

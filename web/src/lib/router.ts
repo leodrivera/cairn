@@ -83,6 +83,13 @@ export function setLeaveGuard(g: (() => boolean) | null): void {
   guard = g;
 }
 
+/** Asks the leave guard, if any; true when it is fine to leave. Clears the guard once the person agreed. */
+export function mayLeave(): boolean {
+  if (guard && !guard()) return false;
+  guard = null;
+  return true;
+}
+
 /** The address the app shows, so a Back the guard refuses can be put back. */
 let shown = typeof location === "undefined" ? "/" : location.pathname + location.search;
 

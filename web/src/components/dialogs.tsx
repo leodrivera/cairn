@@ -156,7 +156,7 @@ export function RenameDialog({
       submit={t("menu.rename")}
       initial={entry.name}
       select={[0, end]}
-      onSave={onRename}
+      onSave={(name) => (name === entry.name ? Promise.resolve() : onRename(name))}
       onClose={onClose}
     />
   );

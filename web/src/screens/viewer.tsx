@@ -205,10 +205,18 @@ export function Viewer({ path }: { path: string }) {
             </span>
           </div>
         )}
-        {saveError && (
+        {saveError && saveError.code === "not_text" && (
           <p class="error-line" role="alert">
             {errorText(saveError)}
           </p>
+        )}
+        {saveError && saveError.code !== "not_text" && (
+          <div class="notice viewer-notice" role="alert">
+            <span>{errorText(saveError)}</span>
+            <button type="button" class="button" onClick={downloadMine}>
+              {t("viewer.downloadMine")}
+            </button>
+          </div>
         )}
         <Editor
           name={entry!.name}

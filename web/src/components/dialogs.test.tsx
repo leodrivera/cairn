@@ -183,3 +183,15 @@ test("menu hides write items for a reader", () => {
   assert.deepEqual(labels(false), ["Open Enter", "Download"]);
   assert.equal((entryMenu(true, h).at(-1) as { danger?: boolean }).danger, true);
 });
+
+test("final: an unchanged name closes without renaming", async () => {
+  const names: string[] = [];
+  let closed = 0;
+  const raw = file("caf�.txt", { rawName: "\u0000Y2Fm6S50eHQ" });
+  const el = render(<RenameDialog entry={raw} onRename={async (n) => void names.push(n)} onClose={() => closed++} />);
+  await flush();
+  el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(names, []);
+  assert.equal(closed, 1);
+});

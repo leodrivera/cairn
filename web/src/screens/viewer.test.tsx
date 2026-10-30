@@ -220,3 +220,35 @@ test("the browser Back button asks too, and stays when told to", async () => {
   await waitFor(() => assert.ok(!el.querySelector("textarea")));
   assert.equal(asked.length, 2);
 });
+
+test("final: Sign out with unsaved text asks first and stays signed in on Stay", async () => {
+  const log = startAt("/view/scripts/backup.sh", admin, {
+    "GET /api/files/scripts": listing("scripts", [script]),
+    "GET /api/raw/scripts/backup.sh": raw("hello"),
+    "POST /api/auth/logout": () => json({ next: null }),
+  });
+  globalThis.confirm = () => false;
+  const el = render(<App />);
+  await waitFor(() => assert.equal(textarea(el).value, "hello"));
+  await edit(el, "changed");
+  el.querySelector<HTMLButtonElement>('button[aria-label="Sign out"]')!.click();
+  await flush(5);
+  assert.ok(!log.some((r) => r.url.endsWith("/api/auth/logout")));
+  assert.equal(location.pathname, "/view/scripts/backup.sh");
+  assert.equal(textarea(el).value, "changed");
+});
+
+test("final: any failed save offers Download my version", async () => {
+  startAt("/view/scripts/backup.sh", admin, {
+    "GET /api/files/scripts": listing("scripts", [script]),
+    "GET /api/raw/scripts/backup.sh": raw("hello"),
+    "PUT /api/text/scripts/backup.sh": () => json({ error: "signed_out", message: "Sign in first." }, 403),
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.equal(textarea(el).value, "hello"));
+  await edit(el, "mine");
+  save(el);
+  await waitFor(() => assert.match(el.textContent!, /Sign in first\./));
+  assert.ok(button(el, "Download my version"));
+  assert.equal(textarea(el).value, "mine");
+});

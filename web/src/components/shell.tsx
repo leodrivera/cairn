@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import wordmark from "../../../brand/cairn-wordmark.svg";
 import { api } from "../lib/api";
 import { formatSize } from "../lib/format";
-import { Link, navigate, useRoute } from "../lib/router";
+import { Link, mayLeave, navigate, useRoute } from "../lib/router";
 import { t } from "../i18n/index";
 import { useSession, useUser } from "../state/session";
 import { uploads } from "../state/uploads";
@@ -75,6 +75,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
   const place = route.name === "files" || route.name === "view" ? "files" : route.name === "settings" ? route.page : "";
 
   const signOut = async () => {
+    if (!mayLeave()) return;
     const res = await api<{ next: string | null }>("POST", "/api/auth/logout").catch(() => ({ next: null }));
     if (res.next) {
       location.assign(res.next);

@@ -506,3 +506,39 @@ test("phone: the toolbar folds New folder and the view into More", async (t) => 
   const items = [...el.querySelectorAll(".toolbar .menu button")].map((b) => b.textContent!.trim());
   assert.deepEqual(items, ["New folder", "List view", "Gallery view"]);
 });
+
+test("final: a slow listing that lands after moving on is dropped", async () => {
+  let releaseA: (r: Response) => void = () => {};
+  startAt("/files/a", admin, {
+    "GET /api/files/a": () => new Promise<Response>((r) => (releaseA = r)),
+    "GET /api/files/b": listing("b", [file("only-in-b.txt")]),
+  });
+  const el = render(<App />);
+  await flush();
+  const { navigate } = await import("../lib/router");
+  navigate("/files/b");
+  await waitFor(() => assert.match(el.textContent!, /only-in-b\.txt/));
+  releaseA(json({ path: "a", entries: [file("report.txt")] }));
+  await flush(10);
+  assert.match(el.textContent!, /only-in-b\.txt/);
+  assert.ok(!el.textContent!.includes("report.txt"));
+});
+
+test("final: more than 1000 items are refused in the browser", async (t) => {
+  t.after(phoneWidth());
+  const many = Array.from({ length: 1001 }, (_, i) => file(`f-${i}.txt`));
+  startAt("/files/", admin, { "GET /api/files": listing("", many) });
+  let submitted = 0;
+  const original = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = () => void submitted++;
+  t.after(() => (HTMLFormElement.prototype.submit = original));
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[0].querySelector(".check-button")!);
+  await waitFor(() => assert.ok(button(el, "Select all")));
+  button(el, "Select all").click();
+  await waitFor(() => assert.match(el.textContent!, /1,001 selected/));
+  [...el.querySelectorAll<HTMLButtonElement>(".bottom-bar button")][0].click();
+  await waitFor(() => assert.match(el.textContent!, /Choose between 1 and 1000 items in one folder\./));
+  assert.equal(submitted, 0);
+});

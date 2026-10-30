@@ -1853,3 +1853,154 @@ fieldset.perms {
   gap: 4px 16px;
   margin-top: 4px;
 }
+
+/* Public share page. */
+.public {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 16px 24px;
+  background: var(--cairn-bg);
+}
+
+.public-card {
+  width: 100%;
+  max-width: 880px;
+  padding: 24px;
+  border: 1px solid var(--cairn-line);
+  border-radius: var(--cairn-radius-m);
+  background: var(--cairn-surface);
+}
+
+.public-lock {
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.public-lock h1,
+.public-title h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.public-lock .button {
+  margin-top: 8px;
+}
+
+.public-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.public-title {
+  min-width: 0;
+}
+
+.public-title p {
+  margin: 4px 0 0;
+}
+
+.public-image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+}
+
+.public-text {
+  margin: 0;
+  padding: 16px;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--cairn-line);
+  border-radius: var(--cairn-radius-s);
+  background: var(--cairn-bg);
+  font-family: var(--cairn-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.public-none {
+  margin: 0;
+}
+
+.public-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.public-crumbs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--cairn-text);
+}
+
+.public-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.public-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid var(--cairn-line);
+}
+
+.public-list a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--cairn-text);
+  overflow-wrap: anywhere;
+}
+
+.public-foot {
+  text-align: center;
+  font-size: var(--cairn-text-micro);
+}
+
+.public-foot p {
+  margin: 4px 0;
+}
+
+.public-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .public {
+    padding-top: 16px;
+  }
+
+  .public-card {
+    padding: 16px;
+  }
+
+  .public-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .public-list li > span:last-child {
+    display: none;
+  }
+}

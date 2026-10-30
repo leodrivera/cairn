@@ -13,6 +13,8 @@ export type Route =
   | { name: "view"; path: string }
   | { name: "login"; next: string | null; error?: LoginError }
   | { name: "settings"; page: SettingsPage }
+  /** A share link's public page; `path` is beneath the shared folder, `file` when it names a file. */
+  | { name: "share"; id: string; path: string; file: boolean }
   | { name: "missing" };
 
 const pages: SettingsPage[] = ["profile", "users", "server", "links"];
@@ -59,6 +61,12 @@ export function parseRoute(pathname: string, search: string): Route {
     return route;
   }
   if (pathname === "/settings" || pathname === "/settings/") return { name: "settings", page: "profile" };
+  const share = /^\/s\/([A-Za-z0-9_-]{22})$/.exec(pathname);
+  if (share) {
+    const q = new URLSearchParams(search);
+    const file = q.get("file");
+    return { name: "share", id: share[1], path: file ?? q.get("path") ?? "", file: file !== null };
+  }
   if (pathname.startsWith("/settings/")) {
     const page = pathname.slice(10).replace(/\/$/, "") as SettingsPage;
     return pages.includes(page) ? { name: "settings", page } : { name: "missing" };
@@ -76,6 +84,8 @@ export function href(r: Route): string {
       return r.next ? `/login?next=${encodeURIComponent(r.next)}` : "/login";
     case "settings":
       return `/settings/${r.page}`;
+    case "share":
+      return r.path === "" ? `/s/${r.id}` : `/s/${r.id}?${r.file ? "file" : "path"}=${encodeURIComponent(r.path)}`;
     case "missing":
       return "/";
   }

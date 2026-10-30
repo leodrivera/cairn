@@ -2,13 +2,14 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiFailure, offline, onSignedOut } from "./lib/api";
-import { href, navigate, useRoute, type Route } from "./lib/router";
+import { currentRoute, href, navigate, useRoute, type Route } from "./lib/router";
 import { errorText, t } from "./i18n/index";
 import { Shell } from "./components/shell";
 import { Login } from "./screens/login";
 import { Explorer } from "./screens/explorer";
 import { Viewer } from "./screens/viewer";
 import { Settings } from "./screens/settings";
+import { PublicShare } from "./screens/public-share";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
 import type { User } from "./lib/types";
@@ -62,6 +63,8 @@ export function App() {
     });
 
   useEffect(() => {
+    // A share link's public page needs no session.
+    if (currentRoute().name === "share") return;
     reload();
     onSignedOut(() => setUser(null));
     const timer = setTimeout(() => setSlow(true), 300);
@@ -79,7 +82,9 @@ export function App() {
   }, [session, user, route]);
 
   let body: ComponentChildren;
-  if (error) {
+  if (route.name === "share") {
+    body = <PublicShare id={route.id} path={route.path} file={route.file} />;
+  } else if (error) {
     const off = error.code === "offline";
     body = (
       <main class="screen center">

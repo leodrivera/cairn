@@ -17,6 +17,17 @@ test("parses each route", () => {
   assert.deepEqual(parseRoute("/nowhere", ""), { name: "missing" });
 });
 
+test("share routes", () => {
+  const id = "k7Qw3nTzAbCdEfGhIjKl-_";
+  assert.deepEqual(parseRoute(`/s/${id}`, ""), { name: "share", id, path: "", file: false });
+  assert.deepEqual(parseRoute(`/s/${id}`, "?path=sub%2Fa"), { name: "share", id, path: "sub/a", file: false });
+  assert.deepEqual(parseRoute(`/s/${id}`, "?file=sub%2Fa.txt"), { name: "share", id, path: "sub/a.txt", file: true });
+  assert.deepEqual(parseRoute("/s/short", ""), { name: "missing" });
+  assert.deepEqual(parseRoute(`/s/${id}/`, ""), { name: "missing" });
+  assert.equal(href({ name: "share", id, path: "a b/c", file: true }), `/s/${id}?file=a%20b%2Fc`);
+  assert.equal(href({ name: "share", id, path: "", file: false }), `/s/${id}`);
+});
+
 test("hrefs", () => {
   assert.equal(href({ name: "files", path: "" }), "/files/");
   assert.equal(href({ name: "files", path: "a b" }), "/files/a%20b");

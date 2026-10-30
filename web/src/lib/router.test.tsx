@@ -67,3 +67,10 @@ test("navigate updates useRoute and Link navigates", async () => {
   await flush(10);
   assert.equal(el.querySelector("#where")!.textContent, "files:b");
 });
+
+test("login error parsed", () => {
+  assert.deepEqual(parseRoute("/login", "?error=sso"), { name: "login", next: null, error: "sso" });
+  assert.deepEqual(parseRoute("/login", "?error=no-account"), { name: "login", next: null, error: "no-account" });
+  assert.deepEqual(parseRoute("/login", "?error=other"), { name: "login", next: null });
+  assert.equal(href({ name: "login", next: null, error: "sso" }), "/login");
+});

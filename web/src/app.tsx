@@ -98,7 +98,7 @@ export function App() {
   } else if (!session) {
     body = <main class="screen center">{slow && <p class="muted">{t("app.loading")}</p>}</main>;
   } else if (!user && route.name === "login") {
-    body = <Login />;
+    body = <Login error={route.error} />;
   } else if (!user || route.name === "login") {
     body = <main class="screen center" />;
   } else if (route.name === "files") {

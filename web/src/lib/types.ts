@@ -40,4 +40,10 @@ export type Config = {
   editMax: number;
 };
 
-export type Me = { user: User | null; method?: string; security?: { captchaDisabled: boolean } };
+export type Me = {
+  user: User | null;
+  /** After a provider sign-in for an e-mail with no account; sent once. */
+  deniedEmail?: string;
+  method?: string;
+  security?: { captchaDisabled: boolean };
+};

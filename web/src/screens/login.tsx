@@ -6,16 +6,23 @@ import { effectiveTheme, mountCaptcha } from "../lib/captcha";
 import { errorText, t } from "../i18n/index";
 import { Mark } from "../components/icons";
 import { useSession } from "../state/session";
+import type { LoginError } from "../lib/router";
 import type { User } from "../lib/types";
 
-export function Login() {
+/** The sentence for a provider sign-in that came back here. */
+function providerError(error: LoginError, deniedEmail: string | undefined): string {
+  if (error === "sso") return t("login.error.sso");
+  return deniedEmail ? t("login.error.noAccount", { email: deniedEmail }) : t("login.error.noAccountUnknown");
+}
+
+export function Login({ error: from }: { error?: LoginError }) {
   const { session, setUser } = useSession();
   const config = session!.config;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [keep, setKeep] = useState(false);
   const [token, setToken] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(from ? providerError(from, session!.me.deniedEmail) : null);
   const [sending, setSending] = useState(false);
   const captchaBox = useRef<HTMLDivElement>(null);
   const captcha = useRef<{ reset(): void } | null>(null);
@@ -23,6 +30,14 @@ export function Login() {
 
   const withPassword = config.authMethods.includes("password");
   const providers = config.providers;
+
+  // Shown once: a reload must not show it again.
+  useEffect(() => {
+    if (!from) return;
+    const url = new URL(location.href);
+    url.searchParams.delete("error");
+    history.replaceState(history.state, "", url.pathname + url.search);
+  }, []);
 
   useEffect(() => {
     if (!withPassword || !config.captcha || !captchaBox.current) return;

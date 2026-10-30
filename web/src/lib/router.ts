@@ -3,12 +3,15 @@ import { h, type ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { encodePath } from "./paths";
 
+/** Why a provider sign-in came back to the sign-in page. */
+export type LoginError = "sso" | "no-account";
+
 export type SettingsPage = "profile" | "users" | "server" | "links";
 
 export type Route =
   | { name: "files"; path: string }
   | { name: "view"; path: string }
-  | { name: "login"; next: string | null }
+  | { name: "login"; next: string | null; error?: LoginError }
   | { name: "settings"; page: SettingsPage }
   | { name: "missing" };
 
@@ -49,7 +52,11 @@ export function parseRoute(pathname: string, search: string): Route {
     return path ? { name: "view", path } : { name: "missing" };
   }
   if (pathname === "/login") {
-    return { name: "login", next: localNext(new URLSearchParams(search).get("next")) };
+    const q = new URLSearchParams(search);
+    const route: Route = { name: "login", next: localNext(q.get("next")) };
+    const error = q.get("error");
+    if (error === "sso" || error === "no-account") route.error = error;
+    return route;
   }
   if (pathname === "/settings" || pathname === "/settings/") return { name: "settings", page: "profile" };
   if (pathname.startsWith("/settings/")) {

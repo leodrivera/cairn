@@ -26,11 +26,16 @@ const admin: User = {
   hasPassword: true,
 };
 
-function open(cfg: Partial<Config>, login?: (req: Request) => Response | Promise<Response>, at = "/login") {
+function open(
+  cfg: Partial<Config>,
+  login?: (req: Request) => Response | Promise<Response>,
+  at = "/login",
+  me: Record<string, unknown> = { user: null },
+) {
   history.replaceState(null, "", at);
   const log = stubFetch({
     "GET /api/config": () => json({ ...config, ...cfg }),
-    "GET /api/me": () => json({ user: null }),
+    "GET /api/me": () => json(me),
     "POST /api/auth/login": login ?? (() => json({ user: admin })),
   });
   return { log, el: render(<App />) };
@@ -141,4 +146,69 @@ test("the CAPTCHA blocks sign-in until it has a token", async () => {
   await waitFor(() => assert.ok(log.some((r) => r.method === "POST")));
   const body = await log.find((r) => r.method === "POST")!.json();
   assert.equal(body.captchaToken, "token-123");
+});
+
+function alertText(el: HTMLElement): string {
+  return el.querySelector('[role="alert"]')?.textContent ?? "";
+}
+
+test("shows the sso error", async () => {
+  const { el } = open({}, undefined, "/login?error=sso");
+  await ready(el);
+  await waitFor(() => assert.equal(alertText(el), "Signing in with the provider did not work. Try again."));
+});
+
+test("shows no account with the e-mail", async () => {
+  const { el } = open({}, undefined, "/login?error=no-account", { user: null, deniedEmail: "nobody@example.com" });
+  await ready(el);
+  await waitFor(() =>
+    assert.equal(alertText(el), "No account for nobody@example.com. Ask the person who runs this server to add you."),
+  );
+});
+
+test("no account without the cookie", async () => {
+  const { el } = open({}, undefined, "/login?error=no-account");
+  await ready(el);
+  await waitFor(() =>
+    assert.equal(alertText(el), "No account for this e-mail. Ask the person who runs this server to add you."),
+  );
+});
+
+test("the error leaves the URL", async () => {
+  const { el } = open({}, undefined, "/login?error=sso&next=%2Ffiles%2Fa");
+  await ready(el);
+  await waitFor(() => assert.ok(alertText(el).length > 0));
+  await waitFor(() => assert.ok(!location.search.includes("error")));
+  assert.ok(location.search.includes("next=%2Ffiles%2Fa"));
+});
+
+test("provider buttons link to their href", async () => {
+  const { el } = open({
+    authMethods: ["password", "oauth", "oidc"],
+    providers: [
+      { name: "Google", href: "/auth/oauth/google" },
+      { name: "Example ID", href: "/auth/oidc/fake" },
+    ],
+  });
+  await ready(el);
+  const links = [...el.querySelectorAll<HTMLAnchorElement>("a.provider")];
+  assert.deepEqual(
+    links.map((a) => [a.getAttribute("href"), a.textContent]),
+    [
+      ["/auth/oauth/google", "Continue with Google"],
+      ["/auth/oidc/fake", "Continue with Example ID"],
+    ],
+  );
+});
+
+test("pt-BR sso error", async () => {
+  const before = Object.getOwnPropertyDescriptor(navigator, "languages");
+  Object.defineProperty(navigator, "languages", { value: ["pt-BR"], configurable: true });
+  try {
+    const { el } = open({}, undefined, "/login?error=sso");
+    await waitFor(() => assert.equal(alertText(el), "Não foi possível entrar pelo provedor. Tente de novo."));
+  } finally {
+    if (before) Object.defineProperty(navigator, "languages", before);
+    else delete (navigator as { languages?: unknown }).languages;
+  }
 });

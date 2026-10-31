@@ -11,7 +11,7 @@ use rustix::io::Errno;
 
 use crate::db::Db;
 use crate::fs::FsError;
-use crate::fs::mount::mount_id;
+use crate::fs::mount::{mount_id, mount_points};
 use crate::fs::scope::TRASH_NAME;
 
 /// The marker file inside each trash folder of ours: one line, `cairn-trash <token>`.
@@ -39,7 +39,8 @@ fn up(fd: &OwnedFd) -> Result<OwnedFd, FsError> {
 pub fn mount_top(root: &OwnedFd, dir: &OwnedFd) -> Result<OwnedFd, FsError> {
     let root_id = id_fd(root);
     let Some(mnt) = mount_id(dir) else {
-        return Ok(rustix::fs::openat(root, ".", DIR, Mode::empty())?);
+        let points = fd_path(root).map(|r| mount_points(&r)).unwrap_or_default();
+        return mount_top_by_path(root, dir, &points);
     };
     let mut cur = rustix::fs::openat(dir, ".", DIR, Mode::empty())?;
     for _ in 0..=crate::fs::MAX_DEPTH * 16 {
@@ -55,41 +56,32 @@ pub fn mount_top(root: &OwnedFd, dir: &OwnedFd) -> Result<OwnedFd, FsError> {
     Err(FsError::TooDeep)
 }
 
+/// `mount_top` for kernels without mount ids: the deepest of `points` (mount points from mountinfo) that holds
+/// `dir` and lies below `root`; `root` when none does. Bind mounts of one disk are told apart this way too.
+pub fn mount_top_by_path(
+    root: &OwnedFd,
+    dir: &OwnedFd,
+    points: &[PathBuf],
+) -> Result<OwnedFd, FsError> {
+    let (Some(base), Some(here)) = (fd_path(root), fd_path(dir)) else {
+        return Ok(rustix::fs::openat(root, ".", DIR, Mode::empty())?);
+    };
+    let best = points
+        .iter()
+        .filter(|p| p.starts_with(&base) && **p != base && here.starts_with(p))
+        .max_by_key(|p| p.components().count());
+    match best {
+        Some(p) => Ok(rustix::fs::open(p, DIR, Mode::empty())?),
+        None => Ok(rustix::fs::openat(root, ".", DIR, Mode::empty())?),
+    }
+}
+
 fn fd_path(fd: &OwnedFd) -> Option<PathBuf> {
     std::fs::read_link(format!(
         "/proc/self/fd/{}",
         rustix::fd::AsRawFd::as_raw_fd(fd)
     ))
     .ok()
-}
-
-/// Mount points at or below `root`, from `/proc/self/mountinfo`.
-fn mount_points(root: &Path) -> Vec<PathBuf> {
-    let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") else {
-        return Vec::new();
-    };
-    let unescape = |s: &str| {
-        let b = s.as_bytes();
-        let mut out = Vec::with_capacity(b.len());
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b'\\'
-                && i + 3 < b.len()
-                && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
-            {
-                out.push((b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0'));
-                i += 4;
-            } else {
-                out.push(b[i]);
-                i += 1;
-            }
-        }
-        PathBuf::from(<std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(out))
-    };
-    text.lines()
-        .filter_map(|l| l.split(' ').nth(4).map(unescape))
-        .filter(|p| p != root && p.starts_with(root))
-        .collect()
 }
 
 #[derive(Default)]
@@ -325,6 +317,23 @@ mod tests {
         let top = mount_top(&r, &dir(&root.join("photos/2026"))).unwrap();
         assert_eq!(id_fd(&top), id(&root.join("photos")));
         let top = mount_top(&r, &dir(&root.join("docs"))).unwrap();
+        assert_eq!(id_fd(&top), id(&root));
+    }
+
+    /// Without mount ids (Linux before 5.8), the mount points from mountinfo decide.
+    #[test]
+    fn mount_top_without_mount_ids_uses_mount_points() {
+        let t = tree();
+        let root = t.path().join("srv");
+        let r = dir(&root);
+        let points = vec![std::fs::canonicalize(root.join("photos")).unwrap()];
+        let top = mount_top_by_path(&r, &dir(&root.join("photos/2026")), &points).unwrap();
+        assert_eq!(id_fd(&top), id(&root.join("photos")));
+        let top = mount_top_by_path(&r, &dir(&root.join("docs")), &points).unwrap();
+        assert_eq!(id_fd(&top), id(&root));
+        // A mount point outside the root never counts.
+        let outside = vec![std::fs::canonicalize(t.path()).unwrap()];
+        let top = mount_top_by_path(&r, &dir(&root.join("photos/2026")), &outside).unwrap();
         assert_eq!(id_fd(&top), id(&root));
     }
 

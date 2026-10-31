@@ -41,3 +41,32 @@ pub fn mount_id(fd: &OwnedFd) -> Option<u64> {
         .contains(StatxFlags::MNT_ID)
         .then_some(x.stx_mnt_id)
 }
+
+/// Mount points at or below `root`, from `/proc/self/mountinfo`.
+pub fn mount_points(root: &Path) -> Vec<PathBuf> {
+    let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return Vec::new();
+    };
+    let unescape = |s: &str| {
+        let b = s.as_bytes();
+        let mut out = Vec::with_capacity(b.len());
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'\\'
+                && i + 3 < b.len()
+                && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+            {
+                out.push((b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0'));
+                i += 4;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        PathBuf::from(<std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(out))
+    };
+    text.lines()
+        .filter_map(|l| l.split(' ').nth(4).map(unescape))
+        .filter(|p| p != root && p.starts_with(root))
+        .collect()
+}

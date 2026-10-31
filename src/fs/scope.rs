@@ -305,7 +305,17 @@ impl Scope {
             Mode::empty(),
         )?;
         let (here, above) = (super::mount::mount_id(dir), super::mount::mount_id(&up));
-        if here.is_some() && above.is_some() && here != above {
+        if here.is_some() && above.is_some() {
+            return if here != above {
+                Err(FsError::Reserved)
+            } else {
+                Ok(())
+            };
+        }
+        // No mount ids (Linux before 5.8): a folder named as a mount point in mountinfo is a mount top.
+        if let Ok(path) = fd_path(dir)
+            && super::mount::mount_points(Path::new("/")).contains(&path)
+        {
             return Err(FsError::Reserved);
         }
         Ok(())

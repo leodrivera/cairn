@@ -463,8 +463,9 @@ docker exec -it cairn /cairn user delete guest@example.com
 - A delete moves the item, by `rename`, into `.cairn-trash/<entry id>/<original name>` at the top of the mount that
   holds it: `<CAIRN_ROOT>/.cairn-trash` for the root's own mount, and one per mount inside the root (two bind mounts
   of one disk are two mounts, and `rename` does not cross them). The mount is found by the kernel's mount id
-  (`statx`, Linux 5.8); on older kernels everything uses the root's trash, and an item on another mount is refused
-  with "{name} is on another disk, so it cannot go to the trash." and offered a permanent delete.
+  (`statx`, Linux 5.8), or on older kernels by the mount points in `/proc/self/mountinfo`. If the rename still
+  fails with `EXDEV`, the item is refused with "{name} is on another disk, so it cannot go to the trash." and
+  offered a permanent delete.
 - A trash folder is created on first use, mode `0700`, with a marker file naming this database. A `.cairn-trash`
   without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
   trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says

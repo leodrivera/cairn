@@ -138,6 +138,8 @@ async fn login(
         .await;
     let Some((user, _)) = found.filter(|_| ok) else {
         let reason = found_reason(email.is_some() && user_exists, hash.is_some());
+        // Field order is a contract: the documented Fail2ban filter reads `ip` right after `event` (tests/serve.rs
+        // failed_sign_in_line_matches_the_fail2ban_filter). A change here goes in the release notes.
         tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason);
         return Err(wrong_credentials());
     };

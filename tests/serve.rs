@@ -367,3 +367,107 @@ fn a_private_ca_is_not_trusted_unless_named() {
         "no oidc.unreachable in:\n{out}"
     );
 }
+
+/// Status code of a password sign-in attempt.
+fn sign_in(port: u16, email: &str, password: &str) -> u16 {
+    let body =
+        serde_json::json!({ "email": email, "password": password, "keep": false }).to_string();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "POST /api/auth/login HTTP/1.0\r\nHost: localhost\r\nX-Cairn: 1\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).unwrap();
+    reply.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+/// The README's Fail2ban filter reads the address from the exact start of the `auth.login_failed` line, so the
+/// field order of that line is part of the contract. This runs the real binary's log through the filter's first
+/// pattern (the one for logs as written), taken from the file the README quotes.
+#[test]
+fn failed_sign_in_line_matches_the_fail2ban_filter() {
+    let filter = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/compose/fail2ban/cairn.conf"
+    ))
+    .unwrap();
+    let pattern = filter
+        .lines()
+        .find_map(|l| l.strip_prefix("failregex = "))
+        .expect("a failregex line");
+    // ^\{"timestamp":"[^"]*",...,"ip":"<HOST>",  becomes  prefix, timestamp, middle, address, suffix.
+    let literal = |s: &str| s.replace("\\{", "{").replace("\\.", ".");
+    let rest = pattern.strip_prefix('^').expect("anchored");
+    let (prefix, rest) = rest.split_once("[^\"]*").expect("timestamp part");
+    let (middle, suffix) = rest.split_once("<HOST>").expect("address part");
+    let (prefix, middle, suffix) = (literal(prefix), literal(middle), literal(suffix));
+
+    let f = folders();
+    let port = free_port();
+    let mut add = cairn(
+        &f,
+        port,
+        &[
+            "user",
+            "add",
+            "Admin",
+            "admin@example.com",
+            "--admin",
+            "--password",
+        ],
+    )
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .spawn()
+    .unwrap();
+    add.stdin
+        .take()
+        .unwrap()
+        .write_all(b"Trail-ridge 2026!\n")
+        .unwrap();
+    assert!(add.wait().unwrap().success());
+    let mut child = cairn(&f, port, &["serve"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_healthy(port);
+    assert_eq!(sign_in(port, "admin@example.com", "Wrong-password 1!"), 401);
+    assert_eq!(
+        sign_in(port, "x\",\"ip\":\"198.51.100.67", "Wrong-password 1!"),
+        401
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    sigterm(&child);
+    child.wait().unwrap();
+    let mut out = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut out)
+        .unwrap();
+
+    let failed: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("\"auth.login_failed\""))
+        .collect();
+    assert_eq!(failed.len(), 2, "{out}");
+    for line in failed {
+        let after = line
+            .strip_prefix(prefix.as_str())
+            .unwrap_or_else(|| panic!("filter cannot read: {line}"));
+        let (_, after) = after.split_once('"').expect("timestamp value");
+        let after = after
+            .strip_prefix(&middle[1..])
+            .unwrap_or_else(|| panic!("filter cannot read: {line}"));
+        let (address, _) = after.split_once(suffix.as_str()).expect("address");
+        assert_eq!(address, "127.0.0.1", "{line}");
+    }
+}

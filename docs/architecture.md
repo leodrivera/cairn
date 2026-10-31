@@ -484,6 +484,10 @@ One JSON object per line on stdout: time, level, event, and fields. Events are s
 `share.update`, `share.delete`, `share.password_failed`, `http.rate_limited` (with a `route`, such as
 `share_password`). A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
 (`unknown_user`, `no_password`, `bad_password`). Passwords, tokens, share ids and share passwords are never logged.
+The `auth.login_failed` line always begins with `timestamp`, `level`, `event` and `ip`, in that order: the
+documented Fail2ban filter reads the address from that position, so typed text later in the line can never supply
+it. Changing that order breaks every installed filter without a warning, so it is a breaking change for the
+release notes; a test runs the real binary's line through the filter.
 
 ## 11. Interface language
 

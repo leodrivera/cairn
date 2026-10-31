@@ -1,6 +1,7 @@
 # Cairn architecture
 
-Status: design. This document describes how Cairn is meant to be built. Nothing here is implemented yet.
+This document describes how Cairn is built and how it behaves. It is the reference for the code: when the two
+disagree, one of them has a bug.
 
 ## 1. Shape
 
@@ -492,124 +493,39 @@ translated text for known codes. The language comes from the user's Profile, the
 
 ## 12. Docker image
 
-Multi-stage build: the front-end with Node, the binary with Rust for `x86_64-unknown-linux-musl` and
-`aarch64-unknown-linux-musl`, then a `scratch` image that holds only the binary, CA certificates (the system's list,
-added to the one built into the binary) and `/etc/passwd` with one unprivileged user. To trust your own CA, mount
-its PEM file and set `SSL_CERT_FILE` to its path.
+The `Dockerfile` has three stages: the front-end with Node, the binary with Rust on Alpine (musl, so the binary is
+static), then a `scratch` image that holds only `/cairn`, the CA certificates (the system's list, added to the one
+built into the binary), `/etc/passwd` with one unprivileged user, and the empty folders `/srv` and `/data` owned by
+that user. It runs as uid 10001, with `CAIRN_ROOT=/srv`, `CAIRN_DATA=/data` and `CAIRN_ADDR=0.0.0.0:8080`, exposes
+8080, declares `/data` a volume, and carries the OCI labels for title, description and license (the release adds
+source, version and revision). `scripts/check-image.sh` checks all of this on a built image.
 
-```dockerfile
-FROM node:24-alpine AS web
-WORKDIR /web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci --no-audit --no-fund --ignore-scripts
-COPY web ./
-RUN npm run build
+The Rust stage builds for the architecture it runs on. Releases build `linux/amd64` on an x86_64 runner and
+`linux/arm64` on an arm64 runner, never under emulation, check each with `scripts/check-image.sh`, and join them in
+one manifest (`scripts/release-image.sh`, `.github/workflows/release.yml`). A tag `v<version>` must match the
+version in `Cargo.toml`. The image is `ghcr.io/OWNER/cairn` with the tags `<version>`, `<major>.<minor>` and
+`latest`; a pre-release gets only its own version.
 
-FROM rust:1-alpine AS bin
-RUN apk add --no-cache musl-dev
-WORKDIR /src
-COPY . .
-COPY --from=web /web/dist ./web/dist
-RUN cargo build --release --locked && strip target/release/cairn
-
-FROM scratch
-COPY --from=bin /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=bin /src/target/release/cairn /cairn
-COPY docker/passwd /etc/passwd
-USER 10001:10001
-ENV CAIRN_ROOT=/srv CAIRN_DATA=/data CAIRN_ADDR=0.0.0.0:8080
-VOLUME ["/data"]
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s CMD ["/cairn", "health"]
-ENTRYPOINT ["/cairn"]
-CMD ["serve"]
-```
-
-`cairn health` calls `GET /api/health` on the local address and exits 0 or 1, because `scratch` has no shell, `wget`
-or `curl`.
+The image has a `HEALTHCHECK` that runs `/cairn health`, which calls `GET /api/health` on the local address and
+exits 0 or 1, because `scratch` has no shell, `wget` or `curl`. To trust your own CA, mount its PEM file and set
+`SSL_CERT_FILE` to its path.
 
 The container runs as uid 10001. The mounted folders must be writable by that uid, or the operator sets `user:` in
-Compose to match the owner of the files.
+Compose to match the owner of the files. When `/data` is not writable, startup stops with a message that names the
+folder, the uid and both fixes.
 
 ### 12.1 Compose examples
 
-Password only, with reCAPTCHA:
+The install guide in the README quotes the files in `examples/compose/`: `quick` (a home network, plain HTTP),
+`traefik` (HTTPS and reCAPTCHA v2), `tinyauth` (the broker) and `oidc` (direct OIDC), plus the add-ons
+`keycloak.yml` and `own-ca.yml` and the Fail2ban filter and jail. `tests/compose/run.sh` starts each one against an
+image in a throwaway environment (a local CA for `*.example.com`, Traefik, Keycloak and Tinyauth) and checks what
+the guide promises; `tests/compose/check-readme.sh` checks that the README quotes the files exactly. Every service
+the README's commands name is called `cairn` (`container_name`), so the first admin is always:
 
-```yaml
-services:
-  cairn:
-    image: ghcr.io/OWNER/cairn:latest
-    restart: unless-stopped
-    volumes:
-      - /path/to/files:/srv
-      - cairn-data:/data
-    environment:
-      CAIRN_PUBLIC_URL: https://files.example.com
-      CAIRN_TRUSTED_PROXIES: 172.16.0.0/12
-      CAIRN_CAPTCHA: recaptcha
-      CAIRN_CAPTCHA_SITE_KEY: 6Lc...
-      CAIRN_CAPTCHA_SECRET_FILE: /run/secrets/captcha_secret
-    secrets: [captcha_secret]
-
-volumes:
-  cairn-data:
-
-secrets:
-  captcha_secret:
-    file: ./secrets/captcha_secret
+```bash
+docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password
 ```
-
-Then create the first admin: `docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password`.
-
-Password and OAuth, behind Traefik with Tinyauth. Only `/auth/sso` goes through the broker's forward-auth; every
-other path reaches Cairn directly.
-
-```yaml
-services:
-  cairn:
-    image: ghcr.io/OWNER/cairn:latest
-    volumes:
-      - /path/to/files:/srv
-      - cairn-data:/data
-    environment:
-      CAIRN_PUBLIC_URL: https://files.example.com
-      CAIRN_TRUSTED_PROXIES: 172.16.0.0/12
-      CAIRN_AUTH_METHODS: password,oauth
-      CAIRN_OAUTH_BROKER_URL: http://tinyauth:3000
-      CAIRN_OAUTH_SECRET_FILE: /run/secrets/oauth_secret
-      CAIRN_OAUTH_LOGOUT_URL: https://auth.example.com/logout
-      CAIRN_CAPTCHA: recaptcha
-      CAIRN_CAPTCHA_SITE_KEY: 6Lc...
-      CAIRN_CAPTCHA_SECRET_FILE: /run/secrets/captcha_secret
-    secrets: [oauth_secret, captcha_secret]
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.cairn.rule: Host(`files.example.com`)
-      traefik.http.routers.cairn-sso.rule: Host(`files.example.com`) && Path(`/auth/sso`)
-      traefik.http.routers.cairn-sso.middlewares: tinyauth
-      traefik.http.services.cairn.loadbalancer.server.port: "8080"
-```
-
-The broker must send `X-Auth-Secret` with the same value as `CAIRN_OAUTH_SECRET` on its forward-auth responses.
-Run a Tinyauth v5 image and pin its tag to v5 (section 4.3).
-
-Password and direct OIDC, no broker. Register `https://files.example.com/auth/oidc/google/callback` as the
-redirect URI at the provider.
-
-```yaml
-    environment:
-      CAIRN_PUBLIC_URL: https://files.example.com
-      CAIRN_AUTH_METHODS: password,oidc
-      CAIRN_OIDC_PROVIDERS: google
-      CAIRN_OIDC_GOOGLE_ISSUER: https://accounts.google.com
-      CAIRN_OIDC_GOOGLE_CLIENT_ID: 1234567890-abc.apps.googleusercontent.com
-      CAIRN_OIDC_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_secret
-      CAIRN_OIDC_GOOGLE_NAME: Google
-      CAIRN_CAPTCHA: recaptcha
-      CAIRN_CAPTCHA_SITE_KEY: 6Lc...
-      CAIRN_CAPTCHA_SECRET_FILE: /run/secrets/captcha_secret
-```
-The README will carry a full, tested example once there is a release.
 
 ## 13. Repository layout
 
@@ -629,6 +545,10 @@ cairn/
 ├── web/                 # TypeScript + Preact front-end, built to web/dist
 ├── docker/              # passwd for the scratch image
 ├── Dockerfile
+├── examples/compose/    # the Compose files of the install guide
+├── scripts/             # budget, image, license and release checks
+├── tests/compose/       # starts each example against an image
+├── .github/workflows/   # CI on every push, the release on a tag
 ├── brand/               # logo and icons (favicon files are copied into web/dist)
 ├── docs/
 └── tokens.css

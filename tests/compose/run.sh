@@ -10,6 +10,8 @@ examples=("$@")
 (( ${#examples[@]} )) || examples=(quick traefik tinyauth oidc)
 
 source "$(dirname "$0")/lib.sh"
+# The guide must quote the files this run checks.
+"$TESTS/check-readme.sh" || exit 1
 export CAIRN_TEST_IMAGE=$IMAGE
 WORK=$(mktemp -d)
 trap teardown EXIT

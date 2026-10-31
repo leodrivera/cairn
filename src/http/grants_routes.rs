@@ -147,7 +147,7 @@ async fn create(
     StrictJson(b): StrictJson<Create>,
 ) -> Result<Response, ApiError> {
     let owner = fu.user.clone();
-    if !owner.perms.share || !owner.perms.read {
+    if fu.in_grant() || !owner.perms.share || !owner.perms.read {
         return Err(forbidden());
     }
     if b.permission == Permission::Write && !owner.perms.write {

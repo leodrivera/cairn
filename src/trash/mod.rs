@@ -151,15 +151,46 @@ pub enum Via {
     Grant(String),
 }
 
-/// The entries `user` sees: those whose original place they may write to now.
-pub fn visible(db: &Db, user: &crate::users::User) -> Vec<(Entry, Via)> {
+/// The entries `user` sees: those whose original place they may write to now, through their own scope or a live
+/// grant that lets them write to a folder holding it. Blocking.
+pub fn visible(state: &AppState, user: &crate::users::User) -> Vec<(Entry, Via)> {
+    let db = &state.db;
     let Ok(rows) = all(db).inspect_err(|e| tracing::error!(event = "db.error", error = %e)) else {
         return Vec::new();
     };
+    let now = crate::now();
+    // Folders this person may write to through a grant: (grant id, stored path).
+    let granted: Vec<(String, String)> = crate::grants::list_received(db, user.id, now)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| {
+            crate::grants::live(
+                db,
+                &state.config.root,
+                state.reserved(),
+                state.force_fallback,
+                row,
+                user.id,
+                now,
+            )
+        })
+        .filter(|g| g.write && g.is_folder())
+        .map(|g| (g.row.id, g.row.path))
+        .collect();
+    let under = |path: &str, folder: &str| {
+        crate::shares::split_scope(path, folder).is_some_and(|r| !r.is_root())
+    };
     rows.into_iter()
         .filter_map(|e| {
-            (user.perms.write && crate::shares::split_scope(&e.path, &user.scope).is_some())
-                .then_some((e, Via::Own))
+            if user.perms.write && crate::shares::split_scope(&e.path, &user.scope).is_some() {
+                return Some((e, Via::Own));
+            }
+            let id = granted
+                .iter()
+                .find(|(_, folder)| under(&e.path, folder))?
+                .0
+                .clone();
+            Some((e, Via::Grant(id)))
         })
         .collect()
 }

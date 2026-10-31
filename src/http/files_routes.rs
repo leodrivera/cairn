@@ -19,14 +19,23 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/files", get(list_root).delete(delete_paths))
         .route("/files/{*path}", get(list_path))
+        .route("/raw", get(raw_root))
         .route("/raw/{*path}", get(raw))
         .route("/folders/{*path}", axum::routing::post(new_folder))
         .route("/ops", axum::routing::post(run_ops))
         .route("/zip", get(zip_root).post(zip_root_items))
         .route("/zip/{*path}", get(zip_path).post(zip_path_items))
         .route(
+            "/text",
+            axum::routing::put(save_text_root).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
             "/text/{*path}",
             axum::routing::put(save_text).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/upload",
+            axum::routing::put(upload_root).layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .route(
             "/upload/{*path}",
@@ -37,23 +46,76 @@ pub fn routes() -> Router<AppState> {
 /// Files and archives served to the browser may be HTML or SVG from anyone: they must never run script here.
 pub const RAW_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox";
 
-/// The signed-in user and their scope, opened for this request.
+/// The signed-in user and the scope this request works in: their own, or a grant's.
 pub struct FileUser {
     pub user: User,
     pub scope: Scope,
+    pub access: Access,
+}
+
+/// What a request may do in its scope.
+#[derive(Debug, Clone)]
+pub struct Access {
+    pub read: bool,
+    pub write: bool,
+    /// Delete without the trash: only with one's own write access, never through a grant.
+    pub permanent: bool,
+    /// The scope's own folder, stored form (`/photos`).
+    pub base: String,
+    /// A grant of one file: the only name this request may touch, reached as the path "".
+    pub file: Option<RelPath>,
+    /// The grant this request works through.
+    pub grant: Option<String>,
+}
+
+/// Set by `/api/g/{id}/…` before it hands the request to the file routes.
+#[derive(Clone)]
+pub struct GrantCall(pub String);
+
+fn forbidden() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "forbidden",
+        "You do not have permission to do this here.",
+    )
+}
+
+pub fn grant_gone() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "grant_gone",
+        "This shared item is no longer available.",
+    )
 }
 
 impl FileUser {
     pub fn need(&self, read: bool, write: bool) -> Result<(), ApiError> {
-        let p = self.user.perms;
-        if (read && !p.read) || (write && !p.write) {
-            return Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                "You do not have permission to do this here.",
-            ));
+        let a = &self.access;
+        if (read && !a.read) || (write && !a.write) {
+            return Err(forbidden());
         }
         Ok(())
+    }
+
+    /// Refuses folder actions (listing, ZIP, new folders, batches) on a grant of a single file.
+    pub fn need_folder(&self) -> Result<(), ApiError> {
+        if self.access.file.is_some() {
+            return Err(forbidden());
+        }
+        Ok(())
+    }
+
+    /// The client's path in this scope. A grant of one file accepts only "", which names that file.
+    pub fn rel(&self, raw: &str) -> Result<RelPath, ApiError> {
+        match &self.access.file {
+            Some(name) if raw.is_empty() => Ok(name.clone()),
+            Some(_) => Err(grant_gone()),
+            None => Ok(RelPath::parse(raw)?),
+        }
+    }
+
+    pub fn in_grant(&self) -> bool {
+        self.access.grant.is_some()
     }
 }
 
@@ -63,6 +125,9 @@ impl FromRequestParts<AppState> for FileUser {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let current = CurrentUser::from_request_parts(parts, state).await?;
         let user = current.session.user;
+        if let Some(GrantCall(id)) = parts.extensions.get::<GrantCall>().cloned() {
+            return through_grant(state, user, id).await;
+        }
         let scope =
             Scope::new(&state.config.root, &user.scope, state.reserved()).map_err(|e| match e {
                 FsError::NotFound | FsError::NotAFolder => ApiError::new(
@@ -77,8 +142,58 @@ impl FromRequestParts<AppState> for FileUser {
         } else {
             scope
         };
-        Ok(FileUser { user, scope })
+        let access = Access {
+            read: user.perms.read,
+            write: user.perms.write,
+            permanent: user.perms.write,
+            base: user.scope.clone(),
+            file: None,
+            grant: None,
+        };
+        Ok(FileUser {
+            user,
+            scope,
+            access,
+        })
     }
+}
+
+/// The grant's scope and permissions for this request, or `grant_gone` for every way of being gone.
+async fn through_grant(state: &AppState, user: User, id: String) -> Result<FileUser, ApiError> {
+    let s = state.clone();
+    let recipient = user.id;
+    let live = tokio::task::spawn_blocking(move || {
+        crate::grants::resolve(
+            &s.db,
+            &s.config.root,
+            s.reserved(),
+            s.force_fallback,
+            &id,
+            recipient,
+            crate::now(),
+        )
+    })
+    .await
+    .map_err(|_| ApiError::internal())?
+    .ok_or_else(grant_gone)?;
+    let grant = Some(live.row.id.clone());
+    let (scope, base, file) = match live.target {
+        crate::grants::GrantTarget::Folder { scope, base } => (scope, base, None),
+        crate::grants::GrantTarget::File { scope, name, base } => (scope, base, Some(name)),
+    };
+    let access = Access {
+        read: true,
+        write: live.write,
+        permanent: false,
+        base,
+        file,
+        grant,
+    };
+    Ok(FileUser {
+        user,
+        scope,
+        access,
+    })
 }
 
 /// Runs filesystem work off the async threads.
@@ -101,9 +216,10 @@ async fn list_path(fu: FileUser, Path(path): Path<String>) -> Result<Json<Value>
 
 async fn list_at(fu: FileUser, raw: String) -> Result<Json<Value>, ApiError> {
     fu.need(true, false)?;
+    fu.need_folder()?;
     let path = RelPath::parse(&raw)?;
     let shown = path.to_string();
-    let admin = fu.user.perms.admin;
+    let admin = fu.user.perms.admin && !fu.in_grant();
     let scope = fu.scope;
     let (entries, space) = blocking(move || {
         let entries = list::list(&scope, &path)?;
@@ -131,11 +247,28 @@ struct RawQuery {
 async fn raw(
     fu: FileUser,
     Path(raw_path): Path<String>,
+    q: axum::extract::Query<RawQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ApiError> {
+    raw_at(fu, raw_path, q, headers).await
+}
+
+async fn raw_root(
+    fu: FileUser,
+    q: axum::extract::Query<RawQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ApiError> {
+    raw_at(fu, String::new(), q, headers).await
+}
+
+async fn raw_at(
+    fu: FileUser,
+    raw_path: String,
     axum::extract::Query(q): axum::extract::Query<RawQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ApiError> {
     fu.need(true, false)?;
-    let path = RelPath::parse(&raw_path)?;
+    let path = fu.rel(&raw_path)?;
     serve_file(fu.scope, path, &headers, q.download.is_some()).await
 }
 
@@ -233,17 +366,40 @@ struct UploadQuery {
 }
 
 async fn upload(
-    axum::extract::State(s): axum::extract::State<AppState>,
+    s: axum::extract::State<AppState>,
     fu: FileUser,
     Path(raw_path): Path<String>,
+    q: axum::extract::Query<UploadQuery>,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    upload_at(s, fu, raw_path, q, body).await
+}
+
+async fn upload_root(
+    s: axum::extract::State<AppState>,
+    fu: FileUser,
+    q: axum::extract::Query<UploadQuery>,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    upload_at(s, fu, String::new(), q, body).await
+}
+
+async fn upload_at(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    fu: FileUser,
+    raw_path: String,
     axum::extract::Query(q): axum::extract::Query<UploadQuery>,
     body: axum::body::Body,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
 
     fu.need(false, true)?;
-    let path = RelPath::parse(&raw_path)?;
+    let path = fu.rel(&raw_path)?;
     let replace = q.replace.is_some_and(|v| v == "1" || v == "true");
+    // A grant of one file changes its contents, nothing more.
+    if fu.access.file.is_some() && !replace {
+        return Err(FsError::Exists.into());
+    }
     let (_, replaced) = crate::fs::upload::upload(
         &fu.scope,
         s.db.clone(),
@@ -272,6 +428,7 @@ async fn new_folder(
     use axum::response::IntoResponse;
 
     fu.need(false, true)?;
+    fu.need_folder()?;
     let path = RelPath::parse(&raw_path)?;
     let user = fu.user.id;
     let scope = fu.scope;
@@ -306,11 +463,15 @@ async fn delete_paths(
     crate::http::json::StrictJson(b): crate::http::json::StrictJson<DeleteBody>,
 ) -> Result<Json<Value>, ApiError> {
     fu.need(false, true)?;
+    fu.need_folder()?;
+    if b.permanent && !fu.access.permanent {
+        return Err(forbidden());
+    }
     if b.paths.is_empty() || b.paths.len() > 10_000 {
         return Err(ApiError::bad_request("Send between 1 and 10000 paths."));
     }
     let user = fu.user.id;
-    let base = fu.user.scope.clone();
+    let base = fu.access.base.clone();
     let scope = fu.scope;
     let (days, _) = crate::trash::days(&s.config, &s.db);
     let now = crate::now();
@@ -368,6 +529,7 @@ async fn run_ops(
     crate::http::json::StrictJson(b): crate::http::json::StrictJson<OpsBody>,
 ) -> Result<Json<Value>, ApiError> {
     fu.need(false, true)?;
+    fu.need_folder()?;
     if b.ops.is_empty() || b.ops.len() > 10_000 {
         return Err(ApiError::bad_request(
             "Send between 1 and 10000 operations.",
@@ -396,9 +558,28 @@ async fn run_ops(
 }
 
 async fn save_text(
-    axum::extract::State(s): axum::extract::State<AppState>,
+    s: axum::extract::State<AppState>,
     fu: FileUser,
     Path(raw_path): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    save_text_at(s, fu, raw_path, headers, body).await
+}
+
+async fn save_text_root(
+    s: axum::extract::State<AppState>,
+    fu: FileUser,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<axum::response::Response, ApiError> {
+    save_text_at(s, fu, String::new(), headers, body).await
+}
+
+async fn save_text_at(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    fu: FileUser,
+    raw_path: String,
     headers: axum::http::HeaderMap,
     body: axum::body::Body,
 ) -> Result<axum::response::Response, ApiError> {
@@ -409,7 +590,7 @@ async fn save_text(
     use crate::fs::edit::Expect;
 
     fu.need(false, true)?;
-    let path = RelPath::parse(&raw_path)?;
+    let path = fu.rel(&raw_path)?;
     let text_header = |h| {
         headers
             .get(h)
@@ -511,8 +692,17 @@ async fn zip_response(
     items: Option<Vec<Vec<u8>>>,
 ) -> Result<axum::response::Response, ApiError> {
     fu.need(true, false)?;
+    fu.need_folder()?;
     let path = RelPath::parse(&raw_path)?;
-    serve_zip(fu.scope, path, items, "files").await
+    // A granted folder's archive is named after the folder.
+    let root_name = match fu.access.grant {
+        Some(_) => RelPath::parse(&fu.access.base)
+            .ok()
+            .and_then(|p| p.name_lossy().map(|n| n.into_owned()))
+            .unwrap_or_else(|| "files".into()),
+        None => "files".into(),
+    };
+    serve_zip(fu.scope, path, items, &root_name).await
 }
 
 /// A folder, or chosen items in it, as a streamed ZIP. `root_name` names the archive of the scope's own folder.

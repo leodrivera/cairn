@@ -114,6 +114,13 @@ fn dev_user(state: &AppState) -> Option<CurrentUser> {
     })
 }
 
+/// Copies who is signed in onto another request, for a route that hands the request on (`/api/g/{id}/…`).
+pub(crate) fn carry(from: &axum::http::Extensions, to: &mut axum::http::Extensions) {
+    if let Some(l) = from.get::<Loaded>() {
+        to.insert(l.clone());
+    }
+}
+
 fn loaded(parts: &Parts) -> Option<CurrentUser> {
     parts.extensions.get::<Loaded>().and_then(|l| l.0.clone())
 }

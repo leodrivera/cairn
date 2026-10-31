@@ -90,7 +90,7 @@ async fn create(
     fu: FileUser,
     StrictJson(b): StrictJson<Create>,
 ) -> Result<Response, ApiError> {
-    if !fu.user.perms.share || !fu.user.perms.read {
+    if fu.in_grant() || !fu.user.perms.share || !fu.user.perms.read {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "forbidden",

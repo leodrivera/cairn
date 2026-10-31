@@ -8,6 +8,7 @@ pub mod csrf;
 pub mod current_user;
 pub mod error;
 pub mod files_routes;
+pub mod grant_files;
 pub mod grants_routes;
 pub mod headers;
 pub mod json;
@@ -110,6 +111,7 @@ pub fn router(state: AppState) -> Router {
         .merge(shares_routes::routes())
         .merge(trash_routes::routes())
         .merge(grants_routes::routes())
+        .merge(grant_files::routes(state.clone()))
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

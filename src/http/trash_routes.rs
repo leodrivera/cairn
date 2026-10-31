@@ -71,7 +71,7 @@ pub fn entry_json(s: &AppState, e: &Entry, via: &Via, viewer: &User) -> Value {
 async fn list(State(s): State<AppState>, fu: FileUser) -> Result<Json<Value>, ApiError> {
     let user = fu.user.clone();
     let st = s.clone();
-    let rows = blocking(move || Ok(trash::visible(&st.db, &user))).await?;
+    let rows = blocking(move || Ok(trash::visible(&st, &user))).await?;
     let entries: Vec<Value> = rows
         .iter()
         .map(|(e, via)| entry_json(&s, e, via, &fu.user))
@@ -81,7 +81,7 @@ async fn list(State(s): State<AppState>, fu: FileUser) -> Result<Json<Value>, Ap
 
 /// The visible entry with this id, and how the person reaches it.
 fn find(s: &AppState, user: &User, id: &str) -> Option<(Entry, Via)> {
-    trash::visible(&s.db, user)
+    trash::visible(s, user)
         .into_iter()
         .find(|(e, _)| e.id == id)
 }
@@ -99,7 +99,7 @@ async fn restore(
                 .ok_or(FsError::NotFound)
                 .and_then(|(e, via)| match via {
                     Via::Own => trash::ops::restore(&s.trash, &s.db, &fu.scope, &fu.user.scope, &e),
-                    Via::Grant(_) => Err(FsError::NotFound),
+                    Via::Grant(grant) => restore_through(&s, &fu.user, &grant, &e),
                 });
             match result {
                 Ok(at) => restored.push(json!({
@@ -114,6 +114,27 @@ async fn restore(
     })
     .await?;
     Ok(Json(json!({ "restored": restored, "failed": failed })))
+}
+
+/// Restores through the grant that shows the entry, into the granted folder. The path answered is beneath it.
+fn restore_through(s: &AppState, user: &User, grant: &str, e: &Entry) -> Result<RelPath, FsError> {
+    let live = crate::grants::resolve(
+        &s.db,
+        &s.config.root,
+        s.reserved(),
+        s.force_fallback,
+        grant,
+        user.id,
+        crate::now(),
+    )
+    .filter(|g| g.write)
+    .ok_or(FsError::NotFound)?;
+    match live.target {
+        crate::grants::GrantTarget::Folder { scope, base } => {
+            trash::ops::restore(&s.trash, &s.db, &scope, &base, e)
+        }
+        crate::grants::GrantTarget::File { .. } => Err(FsError::NotFound),
+    }
 }
 
 async fn delete_forever(
@@ -143,7 +164,7 @@ async fn delete_forever(
 async fn empty(State(s): State<AppState>, fu: FileUser) -> Result<Json<Value>, ApiError> {
     let deleted = blocking(move || {
         let mut deleted = 0;
-        for (e, via) in trash::visible(&s.db, &fu.user) {
+        for (e, via) in trash::visible(&s, &fu.user) {
             if via == Via::Own && trash::ops::remove(&s.trash, &s.db, &e).is_ok() {
                 deleted += 1;
             }

@@ -1,7 +1,7 @@
 //! CSRF: every state-changing request carries `X-Cairn`. Browsers send no custom header cross-site without a CORS
 //! preflight, which Cairn never allows; with `SameSite=Lax` cookies that is enough.
 //!
-//! One exception: `POST /api/zip/...` with a list of chosen items comes from a plain HTML form, so the browser downloads
+//! One exception: `POST /api/zip/...` (or `/api/g/{id}/zip/...` inside a grant) with a list of chosen items comes from a plain HTML form, so the browser downloads
 //! the archive itself, and a form cannot send a custom header. That route changes nothing; it needs an `Origin` naming
 //! this site instead: `Sec-Fetch-Site: same-origin` when the browser sends it, else an `Origin` whose host is the one in
 //! `CAIRN_PUBLIC_URL` or in `Host`. A page on another site can fake neither. The public address matters behind proxies
@@ -38,6 +38,14 @@ fn same_site(headers: &HeaderMap, public: Option<&str>) -> bool {
 pub async fn require_header(State(s): State<AppState>, req: Request, next: Next) -> Response {
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
     let path = req.uri().path();
+    // The same form posts inside a grant, at `/g/{id}/zip...`.
+    let path = match path
+        .strip_prefix("/g/")
+        .and_then(|rest| rest.split_once('/'))
+    {
+        Some((_, after)) => &path[path.len() - after.len() - 1..],
+        None => path,
+    };
     let zip_form = *req.method() == Method::POST && (path == "/zip" || path.starts_with("/zip/"));
     let ok = safe
         || if zip_form {

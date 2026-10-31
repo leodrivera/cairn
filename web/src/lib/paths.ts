@@ -43,8 +43,9 @@ export function encodePath(path: string): string {
 
 type Kind = "files" | "raw" | "zip" | "upload" | "folders" | "text";
 
-export function apiUrl(kind: Kind, path: string, query?: Record<string, string | string[]>): string {
-  let url = path === "" ? `/api/${kind}` : `/api/${kind}/${encodePath(path)}`;
+/** A file route's URL; `base` is `/api`, or `/api/g/{id}` inside a grant. */
+export function apiUrl(kind: Kind, path: string, query?: Record<string, string | string[]>, base = "/api"): string {
+  let url = path === "" ? `${base}/${kind}` : `${base}/${kind}/${encodePath(path)}`;
   if (query) {
     const parts = Object.entries(query).flatMap(([k, v]) =>
       (Array.isArray(v) ? v : [v]).map((one) => `${encodeURIComponent(k)}=${encodeURIComponent(one)}`),

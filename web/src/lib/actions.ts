@@ -12,8 +12,8 @@ export function failureOfItem(f: Failed): ApiFailure {
   return new ApiFailure(0, f.error, f.message);
 }
 
-export async function rename(dir: string, from: Entry, newName: string): Promise<void> {
-  const r = await api<{ done: number; failed: Failed[] }>("POST", "/api/ops", {
+export async function rename(dir: string, from: Entry, newName: string, base = "/api"): Promise<void> {
+  const r = await api<{ done: number; failed: Failed[] }>("POST", `${base}/ops`, {
     ops: [{ op: "rename", from: join(dir, segmentOf(from)), to: join(dir, newName) }],
   });
   if (r.failed.length) throw failureOfItem(r.failed[0]);
@@ -24,8 +24,9 @@ export function transfer(
   dir: string,
   items: Entry[],
   dest: string,
+  base = "/api",
 ): Promise<{ done: number; failed: Failed[] }> {
-  return api("POST", "/api/ops", {
+  return api("POST", `${base}/ops`, {
     ops: items.map((e) => ({ op, from: join(dir, segmentOf(e)), to: join(dest, segmentOf(e)) })),
   });
 }
@@ -46,24 +47,24 @@ export async function remove(
 
 /** An empty text file, refused with `exists` when the name is taken (`If-None-Match: *`). */
 export async function newTextFile(dir: string, name: string, base = "/api"): Promise<void> {
-  await request(apiUrl("text", join(dir, name)).replace(/^\/api/, base), {
+  await request(apiUrl("text", join(dir, name), undefined, base), {
     method: "PUT",
     headers: { "If-None-Match": "*" },
     body: "",
   });
 }
 
-export async function newFolder(dir: string, name: string): Promise<Entry> {
-  const r = await api<{ entry: Entry }>("POST", apiUrl("folders", join(dir, name)));
+export async function newFolder(dir: string, name: string, base = "/api"): Promise<Entry> {
+  const r = await api<{ entry: Entry }>("POST", apiUrl("folders", join(dir, name), undefined, base));
   return r.entry;
 }
 
 /** A link that downloads one item: the file itself, or a folder as ZIP. Several items go through `zipForm`. */
-export function downloadUrl(dir: string, items: Entry[]): string | null {
+export function downloadUrl(dir: string, items: Entry[], base = "/api"): string | null {
   if (items.length !== 1) return null;
   const e = items[0];
   const path = join(dir, segmentOf(e));
-  return e.kind === "folder" ? apiUrl("zip", path) : apiUrl("raw", path, { download: "1" });
+  return e.kind === "folder" ? apiUrl("zip", path, undefined, base) : apiUrl("raw", path, { download: "1" }, base);
 }
 
 /** The server takes at most this many names in one ZIP form. */
@@ -99,10 +100,10 @@ export function startDownload(url: string): void {
 }
 
 /** Downloads several items of `dir` as one ZIP. A plain form, so the browser saves the archive as it streams. */
-export function zipForm(dir: string, items: Entry[]): void {
+export function zipForm(dir: string, items: Entry[], base = "/api"): void {
   const form = document.createElement("form");
   form.method = "post";
-  form.action = apiUrl("zip", dir);
+  form.action = apiUrl("zip", dir, undefined, base);
   form.target = frame().name;
   form.hidden = true;
   for (const e of items) {

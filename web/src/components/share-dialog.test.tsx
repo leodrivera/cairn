@@ -21,10 +21,10 @@ const share: Share = {
   owner: { id: 1, name: "Admin" },
 };
 
-function open(kind: "file" | "folder" = "file", onClose = () => {}) {
+function open(kind: "file" | "folder" = "file", onClose = () => {}, canWrite = true) {
   return render(
     <>
-      <ShareDialog entryPath="photos/2026/trail-ridge.jpg" kind={kind} onClose={onClose} />
+      <ShareDialog entryPath="photos/2026/trail-ridge.jpg" kind={kind} canWrite={canWrite} onClose={onClose} />
       <Toast />
     </>,
   );
@@ -245,4 +245,52 @@ test("password_field_has_toggle", async () => {
   byLabel(el, "Require a password").click();
   await flush();
   assert.equal(passwordToggles(el), 1);
+});
+
+test("people_adds_several", async () => {
+  const log = stubFetch({
+    "POST /api/grants": () =>
+      json({
+        results: [
+          { email: "bob@example.com", status: "added", grant: { recipient: { id: 2, name: "Bob", email: "bob@example.com" } } },
+          { email: "dan@example.com", status: "no_account", message: "No account for dan@example.com." },
+          { email: "admin@example.com", status: "self", message: "That is you." },
+        ],
+      }),
+  });
+  const el = open();
+  setValue(byLabel<HTMLTextAreaElement>(el, "E-mail addresses"), "bob@example.com, dan@example.com\nadmin@example.com");
+  setValue(byLabel<HTMLSelectElement>(el, "Access"), "write");
+  setValue(byLabel<HTMLSelectElement>(el, "Access ends"), "30");
+  await flush();
+  buttonNamed(el, "Add").click();
+  await waitFor(() => assert.match(el.textContent!, /Bob can now open trail-ridge\.jpg\./));
+  assert.match(el.textContent!, /No account for dan@example\.com\./);
+  assert.match(el.textContent!, /That is you\./);
+  assert.deepEqual(await log[0].json(), {
+    path: "photos/2026/trail-ridge.jpg",
+    emails: ["bob@example.com", "dan@example.com", "admin@example.com"],
+    permission: "write",
+    expiresDays: 30,
+  });
+});
+
+test("people_rate_limited", async () => {
+  stubFetch({
+    "POST /api/grants": () => json({ error: "too_many", message: "x" }, 429, { "retry-after": "600" }),
+  });
+  const el = open();
+  setValue(byLabel<HTMLTextAreaElement>(el, "E-mail addresses"), "x@example.com");
+  await flush();
+  buttonNamed(el, "Add").click();
+  await waitFor(() => assert.match(el.textContent!, /10 minutes/));
+});
+
+test("people_can_edit_only_with_write", async () => {
+  stubFetch({});
+  const el = open("file", () => {}, false);
+  const access = byLabel<HTMLSelectElement>(el, "Access");
+  const edit = [...access.options].find((o) => o.value === "write")!;
+  assert.equal(edit.disabled, true);
+  assert.equal(access.value, "read");
 });

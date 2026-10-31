@@ -2086,3 +2086,52 @@ fieldset.perms {
 .input-narrow {
   max-width: 12ch;
 }
+
+/* Share dialog: people */
+.share-people {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--cairn-line);
+  min-width: 0;
+}
+
+.share-heading {
+  margin: 0;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.people-emails {
+  min-height: 72px;
+  padding: 10px 14px;
+  resize: vertical;
+}
+
+.people-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.people-row .field {
+  flex: 1 1 140px;
+}
+
+.people-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.grants-head {
+  margin-top: 32px;
+}

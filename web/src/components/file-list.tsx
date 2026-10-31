@@ -12,6 +12,7 @@ import { FileIcon } from "./file-icon";
 import { Icon } from "./icons";
 import type { Entry } from "../lib/types";
 import type { Selection } from "../state/selection";
+import { useWhere } from "../lib/where";
 
 export const ROW_HEIGHT = 52;
 
@@ -104,6 +105,7 @@ type Props = {
 };
 
 export function EntryName({ dir, entry }: { dir: string; entry: Entry }) {
+  const where = useWhere();
   const path = join(dir, segmentOf(entry));
   if (entry.outside) {
     return (
@@ -115,14 +117,14 @@ export function EntryName({ dir, entry }: { dir: string; entry: Entry }) {
   }
   if (entry.kind === "folder") {
     return (
-      <Link class="name" href={href({ name: "files", path })}>
+      <Link class="name" href={where.files(path)}>
         {entry.name}
       </Link>
     );
   }
   if (opensInViewer(entry)) {
     return (
-      <Link class="name" href={href({ name: "view", path })}>
+      <Link class="name" href={where.view(path)}>
         {entry.name}
       </Link>
     );

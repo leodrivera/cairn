@@ -11,6 +11,7 @@ import { Viewer } from "./screens/viewer";
 import { Settings } from "./screens/settings";
 import { Links } from "./screens/settings-links";
 import { Trash } from "./screens/trash";
+import { GrantPlace, SharedWithMe } from "./screens/shared";
 import { PublicShare } from "./screens/public-share";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
@@ -30,6 +31,7 @@ function screenFor(route: Route, user: User): ComponentChildren {
   if (route.name === "view") return <Viewer path={route.path} />;
   if (route.name === "links") return <Links />;
   if (route.name === "trash") return <Trash />;
+  if (route.name === "shared") return <SharedWithMe />;
   return null;
 }
 
@@ -112,6 +114,8 @@ export function App() {
     body = <main class="screen center" />;
   } else if (route.name === "files") {
     body = <Explorer path={route.path} />;
+  } else if (route.name === "grant") {
+    body = <GrantPlace id={route.id} path={route.path} view={route.view} />;
   } else if (route.name === "settings") {
     body = <Settings page={route.page} />;
   } else {

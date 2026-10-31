@@ -84,3 +84,20 @@ export type Share = {
 
 /** What the public page of a link gets. */
 export type ShareInfo = { entry: Entry; download: boolean; expiresAt: number | null; sharedBy: string };
+
+/** A grant as its recipient sees it: never the owner's path. */
+export type ReceivedGrant = {
+  id: string;
+  name: string;
+  kind: "file" | "folder";
+  permission: "read" | "write";
+  /** What it allows now: a write grant works as read while its owner cannot write there. */
+  effective: "read" | "write";
+  expiresAt: number | null;
+  createdAt: number;
+  owner: { id: number; name: string };
+  recipient: { id: number; name: string; email: string };
+};
+
+/** A grant as its owner, or an admin, sees it. `kind` is null while the item is not where the grant points. */
+export type GivenGrant = Omit<ReceivedGrant, "kind"> & { kind: "file" | "folder" | null; path: string };

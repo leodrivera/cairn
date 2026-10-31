@@ -42,6 +42,7 @@ function clipboard(write: (text: string) => Promise<void>): () => void {
 async function screen(shares: Share[] | (() => Response), user = admin, extra = {}) {
   const log = startAt("/settings/links", user, {
     "GET /api/shares": typeof shares === "function" ? shares : () => json({ shares }),
+    "GET /api/grants": () => json({ grants: [] }),
     ...extra,
   });
   const el = render(<App />);
@@ -163,4 +164,65 @@ test("without a public address the list says so once", async () => {
   const { el: el2 } = await screen([link()]);
   await waitFor(() => assert.ok(el2.querySelector(".links-list")));
   assert.doesNotMatch(el2.textContent!, /no public address/);
+});
+
+const given = {
+  id: "AbCdEfGhIjKlMnOpQrSt-_",
+  name: "team",
+  kind: "folder",
+  path: "/team",
+  permission: "read",
+  effective: "read",
+  expiresAt: null,
+  createdAt: now() - 60,
+  owner: { id: 1, name: "Admin" },
+  recipient: { id: 2, name: "Bob", email: "bob@example.com" },
+};
+
+test("grants_section_lists_and_revokes", async () => {
+  let grants = [given];
+  const { el, log } = await screen([], admin, {
+    "GET /api/grants": () => json({ grants }),
+    "DELETE /api/grants/AbCdEfGhIjKlMnOpQrSt-_": () => {
+      grants = [];
+      return new Response(null, { status: 204 });
+    },
+  });
+  await waitFor(() => assert.ok(el.querySelector(".grants-list")));
+  const text = el.querySelector(".grants-list")!.textContent!;
+  for (const part of ["team", "/team", "Bob", "bob@example.com", "Never"]) assert.ok(text.includes(part), part);
+  el.querySelector<HTMLButtonElement>('button[aria-label="Stop sharing team with Bob"]')!.click();
+  await waitFor(() => assert.match(el.textContent!, /Stop sharing team with Bob\?/));
+  el.querySelector<HTMLButtonElement>('[role="dialog"] .button.danger')!.click();
+  await waitFor(() => assert.ok(log.some((r) => r.method === "DELETE")));
+  await waitFor(() => assert.ok(!el.querySelector(".grants-list")));
+});
+
+test("grants_change_permission_and_expiry", async () => {
+  const bodies: unknown[] = [];
+  const { el } = await screen([], admin, {
+    "GET /api/grants": () => json({ grants: [given] }),
+    "PATCH /api/grants/AbCdEfGhIjKlMnOpQrSt-_": async (req: Request) => {
+      const body = await req.json();
+      bodies.push(body);
+      return json({ grant: { ...given, ...body } });
+    },
+  });
+  await waitFor(() => assert.ok(el.querySelector(".grants-list")));
+  const perm = el.querySelector<HTMLSelectElement>('select[aria-label="Access for Bob to team"]')!;
+  perm.value = "write";
+  perm.dispatchEvent(new Event("change", { bubbles: true }));
+  await waitFor(() => assert.deepEqual(bodies, [{ permission: "write" }]));
+  const exp = el.querySelector<HTMLSelectElement>('select[aria-label="Access for Bob to team ends"]')!;
+  exp.value = "7";
+  exp.dispatchEvent(new Event("change", { bubbles: true }));
+  await waitFor(() => assert.deepEqual(bodies[1], { expiresDays: 7 }));
+});
+
+test("admin_sees_all_grants", async () => {
+  const { el } = await screen([], admin, {
+    "GET /api/grants": () => json({ grants: [{ ...given, owner: { id: 9, name: "Ana" } }] }),
+  });
+  await waitFor(() => assert.ok(el.querySelector(".grants-list")));
+  assert.match(el.querySelector(".grants-list")!.textContent!, /Shared by Ana/);
 });

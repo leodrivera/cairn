@@ -9,6 +9,7 @@ import { FileIcon } from "./file-icon";
 import { Icon } from "./icons";
 import type { Entry } from "../lib/types";
 import type { Selection } from "../state/selection";
+import { useWhere } from "../lib/where";
 
 export const TILE_WIDTH = 168;
 export const TILE_HEIGHT = 200;
@@ -25,6 +26,7 @@ type Props = {
 };
 
 export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore, onLongPress }: Props) {
+  const where = useWhere();
   const pressOf = useLongPress(onLongPress);
   const scroller = useRef<HTMLDivElement>(null);
   const { top, height, width } = useScroller(scroller);
@@ -63,7 +65,7 @@ export function FileGrid({ dir, entries, selection, thumbnails, onSelect, onMore
             >
               <div class="thumb">
                 {image ? (
-                  <img src={apiUrl("raw", join(dir, seg))} loading="lazy" decoding="async" alt="" />
+                  <img src={apiUrl("raw", join(dir, seg), undefined, where.api)} loading="lazy" decoding="async" alt="" />
                 ) : (
                   <FileIcon entry={e} size={40} />
                 )}

@@ -34,6 +34,8 @@ export type UploadItem = {
   name: string;
   /** What the panel shows: the path relative to the drop. */
   label: string;
+  /** The API base of the place: `/api`, or `/api/g/{id}` inside a grant. */
+  base: string;
   size: number;
   sent: number;
   state: UploadState;
@@ -43,6 +45,9 @@ export type UploadItem = {
 type Job = { item: UploadItem; file: Blob; replace: boolean; abort: AbortController | null };
 
 let nextId = 1;
+
+/** The same folder path in two places (own files, a grant) is two batches. */
+const rootKey = (i: UploadItem) => `${i.base}\u0000${i.root}`;
 
 const isActive = (s: UploadState) => s === "queued" || s === "sending" || s === "exists";
 
@@ -55,7 +60,7 @@ export type UploadCounts = { total: number; cancelled: number; done: number; fai
  */
 export class UploadQueue {
   items: UploadItem[] = [];
-  onDone: (dir: string) => void = () => {};
+  onDone: (dir: string, base: string) => void = () => {};
   counts: UploadCounts = { total: 0, cancelled: 0, done: 0, failed: 0, active: 0 };
   private jobs = new Map<number, Job>();
   private listeners = new Set<() => void>();
@@ -81,9 +86,9 @@ export class UploadQueue {
   }
 
   /** Queues files into `dir`. `labels` (same order) name them in the panel; the file name by default. */
-  add(dir: string, files: File[], into: string[] = [], labels: string[] = [], root = dir): void {
+  add(dir: string, files: File[], into: string[] = [], labels: string[] = [], root = dir, base = "/api"): void {
     files.forEach((file, i) => {
-      const item = this.push(root, into[i] ?? dir, file, labels[i] ?? file.name, "queued", null);
+      const item = this.push(root, into[i] ?? dir, file, labels[i] ?? file.name, "queued", null, base);
       this.jobs.set(item.id, { item, file, replace: false, abort: null });
       this.waiting.push(item.id);
     });
@@ -92,8 +97,8 @@ export class UploadQueue {
   }
 
   /** An item that never started because its folder could not be made. */
-  addFailed(root: string, dir: string, file: File, label: string, error: ApiFailure): void {
-    this.push(root, dir, file, label, "failed", error);
+  addFailed(root: string, dir: string, file: File, label: string, error: ApiFailure, base = "/api"): void {
+    this.push(root, dir, file, label, "failed", error, base);
     this.changed();
   }
 
@@ -139,13 +144,22 @@ export class UploadQueue {
     this.changed();
   }
 
-  private push(root: string, dir: string, file: File, label: string, state: UploadState, error: ApiFailure | null) {
+  private push(
+    root: string,
+    dir: string,
+    file: File,
+    label: string,
+    state: UploadState,
+    error: ApiFailure | null,
+    base = "/api",
+  ) {
     const item: UploadItem = {
       id: nextId++,
       root,
       dir,
       name: file.name,
       label,
+      base,
       size: file.size,
       sent: 0,
       state: "cancelled",
@@ -166,14 +180,14 @@ export class UploadQueue {
     if (from === "cancelled") c.cancelled--;
     if (from === "done") {
       c.done--;
-      this.doneByRoot.set(item.root, (this.doneByRoot.get(item.root) ?? 1) - 1);
+      this.doneByRoot.set(rootKey(item), (this.doneByRoot.get(rootKey(item)) ?? 1) - 1);
     }
     if (from === "failed") c.failed--;
     if (from === "sending") this.running--;
     if (to === "cancelled") c.cancelled++;
     if (to === "done") {
       c.done++;
-      this.doneByRoot.set(item.root, (this.doneByRoot.get(item.root) ?? 0) + 1);
+      this.doneByRoot.set(rootKey(item), (this.doneByRoot.get(rootKey(item)) ?? 0) + 1);
     }
     if (to === "failed") c.failed++;
     if (to === "sending") this.running++;
@@ -182,7 +196,7 @@ export class UploadQueue {
     if (was !== is) {
       const d = is ? 1 : -1;
       c.active += d;
-      this.activeByRoot.set(item.root, (this.activeByRoot.get(item.root) ?? 0) + d);
+      this.activeByRoot.set(rootKey(item), (this.activeByRoot.get(rootKey(item)) ?? 0) + d);
     }
     item.state = to;
   }
@@ -238,7 +252,7 @@ export class UploadQueue {
     const abort = new AbortController();
     job.abort = abort;
     this.changed();
-    const url = apiUrl("upload", join(item.dir, item.name), job.replace ? { replace: "1" } : undefined);
+    const url = apiUrl("upload", join(item.dir, item.name), job.replace ? { replace: "1" } : undefined, item.base);
     try {
       const res = await this.send(
         url,
@@ -271,13 +285,14 @@ export class UploadQueue {
     job.abort = null;
     this.changed();
     if (wasSending) this.pump();
-    this.settle(job.item.root);
+    this.settle(job.item);
   }
 
   /** Tells the explorer to reload a folder once nothing for it is still on its way. */
-  private settle(root: string): void {
-    if ((this.activeByRoot.get(root) ?? 0) > 0) return;
-    if ((this.doneByRoot.get(root) ?? 0) > 0) this.onDone(root);
+  private settle(item: UploadItem): void {
+    const key = rootKey(item);
+    if ((this.activeByRoot.get(key) ?? 0) > 0) return;
+    if ((this.doneByRoot.get(key) ?? 0) > 0) this.onDone(item.root, item.base);
   }
 }
 
@@ -285,15 +300,15 @@ export class UploadQueue {
  * Creates a folder, or accepts one that is already there; a file in the way fails with not_a_folder. What is there
  * is asked with a one-byte read, never a listing: the folder may hold 50 000 entries.
  */
-export async function ensureFolder(path: string): Promise<void> {
+export async function ensureFolder(path: string, base = "/api"): Promise<void> {
   try {
-    await api("POST", apiUrl("folders", path));
+    await api("POST", apiUrl("folders", path, undefined, base));
     return;
   } catch (e) {
     if (!(e instanceof ApiFailure) || e.code !== "exists") throw e;
   }
   try {
-    await probe(apiUrl("raw", path));
+    await probe(apiUrl("raw", path, undefined, base));
   } catch (e) {
     if (e instanceof ApiFailure && e.code === "is_a_folder") return;
     throw e;
@@ -308,8 +323,10 @@ export async function addTree(
   queue: UploadQueue,
   dir: string,
   files: TreeFile[],
-  mkdir: (path: string) => Promise<void> = ensureFolder,
+  mkdir?: (path: string) => Promise<void>,
+  base = "/api",
 ): Promise<void> {
+  const make = mkdir ?? ((path: string) => ensureFolder(path, base));
   const folders: string[] = [];
   const seen = new Set<string>();
   for (const { relPath, file } of files) {
@@ -328,7 +345,7 @@ export async function addTree(
     const above = [...failed.keys()].find((f) => rel.startsWith(`${f}/`));
     if (above) continue;
     try {
-      await mkdir(join(dir, rel));
+      await make(join(dir, rel));
     } catch (e) {
       failed.set(rel, e instanceof ApiFailure ? e : offline());
     }
@@ -339,7 +356,7 @@ export async function addTree(
     const folder = parent(relPath);
     const into = folder === "" ? dir : join(dir, folder);
     const blocked = [...failed.entries()].find(([f]) => folder === f || folder.startsWith(`${f}/`));
-    if (blocked) queue.addFailed(dir, into, file, relPath, blocked[1]);
+    if (blocked) queue.addFailed(dir, into, file, relPath, blocked[1], base);
     else ok.push({ file, into, label: relPath });
   }
   if (ok.length) {
@@ -348,6 +365,8 @@ export async function addTree(
       ok.map((o) => o.file),
       ok.map((o) => o.into),
       ok.map((o) => o.label),
+      dir,
+      base,
     );
   }
 }

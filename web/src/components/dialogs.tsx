@@ -6,12 +6,14 @@ import { apiUrl, join, parent, segmentOf } from "../lib/paths";
 import { errorText, lang, t, tn } from "../i18n/index";
 import { Icon } from "./icons";
 import type { Entry, Listing } from "../lib/types";
+import { useWhere } from "../lib/where";
 
 let nextId = 1;
 
 /** "My files" for the scope root, else the path. */
-export function folderLabel(dir: string): string {
-  return dir === "" ? t("nav.myFiles") : dir;
+/** A folder as people read it; the top is "My files", or `root` (a granted folder's name). */
+export function folderLabel(dir: string, root?: string): string {
+  return dir === "" ? (root ?? t("nav.myFiles")) : dir;
 }
 
 type DialogProps = { title: string; onClose(): void; children: ComponentChildren; wide?: boolean };
@@ -216,6 +218,7 @@ type PickerProps = {
 
 /** Browses folders from the scope root. The current folder and anything inside a chosen folder cannot be picked. */
 export function FolderPicker({ op, dir, items, onPick, onClose }: PickerProps) {
+  const where = useWhere();
   const [at, setAt] = useState("");
   const [folders, setFolders] = useState<Entry[] | null>(null);
   const [error, setError] = useState("");
@@ -226,7 +229,7 @@ export function FolderPicker({ op, dir, items, onPick, onClose }: PickerProps) {
     let live = true;
     setFolders(null);
     setError("");
-    api<Listing>("GET", apiUrl("files", at)).then(
+    api<Listing>("GET", apiUrl("files", at, undefined, where.api)).then(
       (l) => live && setFolders(l.entries.filter((e) => e.kind === "folder" && !e.outside)),
       (e) => live && setError(failureText(e)),
     );
@@ -263,7 +266,7 @@ export function FolderPicker({ op, dir, items, onPick, onClose }: PickerProps) {
         >
           <Icon name="back" />
         </button>
-        <span class="mono picker-path">{folderLabel(at)}</span>
+        <span class="mono picker-path">{folderLabel(at, where.grant?.name)}</span>
       </div>
       <ul class="picker-list" aria-busy={folders === null}>
         {folders?.map((f) => (

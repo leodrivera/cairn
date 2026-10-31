@@ -12,6 +12,7 @@ import { folderLabel } from "../components/dialogs";
 import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
 import { useSession, useUser } from "../state/session";
+import { own, WhereContext, type Where } from "../lib/where";
 import type { Entry } from "../lib/types";
 
 type Text = { text: string; saved: string; readOnly: boolean };
@@ -32,12 +33,26 @@ function entryOf(segment: string, res: Response): Entry {
   };
 }
 
-export function Viewer({ path }: { path: string }) {
+export function Viewer({ path, where = own }: { path: string; where?: Where }) {
+  return (
+    <WhereContext.Provider value={where}>
+      <File path={path} where={where} />
+    </WhereContext.Provider>
+  );
+}
+
+function File({ path, where }: { path: string; where: Where }) {
   const user = useUser();
   const { session } = useSession();
   const editMax = session!.config.editMax;
-  const dir = parent(path);
-  const segment = segments(path).at(-1)!;
+  const base = where.api;
+  const grant = where.grant;
+  // A grant of one file opens it as the path "": its name comes from the grant.
+  const single = grant?.kind === "file";
+  const dir = single ? "" : parent(path);
+  const segment = single ? grant!.name : segments(path).at(-1)!;
+  const canWrite = grant ? grant.effective === "write" : user.permissions.write;
+  const root = grant?.name;
   const [entry, setEntry] = useState<Entry | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [doc, setDoc] = useState<Text | null>(null);
@@ -57,18 +72,18 @@ export function Viewer({ path }: { path: string }) {
           ? "large"
           : "text"
         : "other";
-  const canSave = kind === "text" && user.permissions.write && !!doc && !doc.readOnly;
+  const canSave = kind === "text" && canWrite && !!doc && !doc.readOnly;
   const dirty = !!doc && doc.text !== doc.saved;
 
   const loadText = async () => {
     const n = ++latest.current;
     try {
-      const res = await request(apiUrl("raw", path), { cache: "no-store" });
+      const res = await request(apiUrl("raw", path, undefined, base), { cache: "no-store" });
       const bytes = await res.arrayBuffer();
       if (n !== latest.current) return;
       etag.current = res.headers.get("ETag") ?? "";
       let text: string;
-      let readOnly = !user.permissions.write;
+      let readOnly = !canWrite;
       try {
         text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       } catch {
@@ -92,14 +107,14 @@ export function Viewer({ path }: { path: string }) {
     setDoc(null);
     setConflict(false);
     setSaveError(null);
-    probe(apiUrl("raw", path)).then(
+    probe(apiUrl("raw", path, undefined, base)).then(
       (res) => live && setEntry(entryOf(segment, res)),
       (e) => live && setError(e instanceof ApiFailure ? e : offline()),
     );
     return () => {
       live = false;
     };
-  }, [path]);
+  }, [path, base]);
 
   useEffect(() => {
     if (kind === "text") loadText();
@@ -111,7 +126,7 @@ export function Viewer({ path }: { path: string }) {
     setSaving(true);
     setSaveError(null);
     try {
-      const res = await fetch(apiUrl("text", path), {
+      const res = await fetch(apiUrl("text", path, undefined, base), {
         method: "PUT",
         headers: { "Content-Type": "text/plain; charset=utf-8", "If-Match": etag.current, "X-Cairn": "1" },
         body: sent,
@@ -180,22 +195,24 @@ export function Viewer({ path }: { path: string }) {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
-  const back = href({ name: "files", path: dir });
-  const download = entry ? downloadUrl(dir, [entry])! : apiUrl("raw", path, { download: "1" });
+  const back = single ? href({ name: "shared" }) : where.files(dir);
+  const download =
+    entry && !single ? downloadUrl(dir, [entry], base)! : apiUrl("raw", path, { download: "1" }, base);
+  const backLabel = single ? t("shared.back") : t("viewer.back", { folder: folderLabel(dir, root) });
 
   let body;
   if (error) {
     body = (
       <StatePanel icon="alert" tone="danger" title={segment} body={errorText(error)}>
         <Link class="button" href={back}>
-          {t("viewer.back", { folder: folderLabel(dir) })}
+          {backLabel}
         </Link>
       </StatePanel>
     );
   } else if (kind === "image") {
     body = (
       <div class="viewer-media">
-        <img class="viewer-image" src={apiUrl("raw", path)} alt={entry!.name} decoding="async" />
+        <img class="viewer-image" src={apiUrl("raw", path, undefined, base)} alt={entry!.name} decoding="async" />
       </div>
     );
   } else if (kind === "large" || kind === "other") {
@@ -254,7 +271,7 @@ export function Viewer({ path }: { path: string }) {
   return (
     <div class="viewer">
       <header class="viewer-head">
-        <Link class="icon-button" href={back} aria-label={t("viewer.back", { folder: folderLabel(dir) })}>
+        <Link class="icon-button" href={back} aria-label={backLabel}>
           <Icon name="back" />
         </Link>
         <div class="viewer-title">
@@ -262,7 +279,7 @@ export function Viewer({ path }: { path: string }) {
           {entry && (
             <p class="mono muted">
               {t("viewer.meta", {
-                folder: folderLabel(dir),
+                folder: single ? t("shared.by", { name: grant!.owner.name }) : folderLabel(dir, root),
                 size: formatSize(entry.size),
                 when: formatWhen(entry.modified),
               })}

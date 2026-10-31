@@ -1,5 +1,5 @@
 // Sample session data for screen tests.
-import type { Config, Entry, User } from "../lib/types";
+import type { Config, Entry, ReceivedGrant, User } from "../lib/types";
 import { json, stubFetch, type Handler } from "./dom";
 
 export const config: Config = {
@@ -61,4 +61,20 @@ export function startAt(
 
 export function listing(path: string, entries: Entry[], extra: object = {}): Handler {
   return () => json({ path, entries, ...extra });
+}
+
+/** A grant Bob received from Ana, as the recipient sees it. */
+export function received(extra: Partial<ReceivedGrant> = {}): ReceivedGrant {
+  return {
+    id: "AbCdEfGhIjKlMnOpQrSt-_",
+    name: "team",
+    kind: "folder",
+    permission: "write",
+    effective: "write",
+    expiresAt: null,
+    createdAt: when,
+    owner: { id: 7, name: "Ana" },
+    recipient: { id: 2, name: "Guest", email: "guest@example.com" },
+    ...extra,
+  };
 }

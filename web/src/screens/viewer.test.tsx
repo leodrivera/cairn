@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
 import { flush, json, render, waitFor } from "../test/dom";
-import { admin, file, listing, reader, startAt } from "../test/fixtures";
+import { admin, file, listing, reader, received, startAt } from "../test/fixtures";
 
 const script = file("backup.sh", { mime: "text/x-sh", size: 5 });
 
@@ -297,4 +297,24 @@ test("minor: Ctrl+S is left to the browser where nothing can be saved", async ()
   const ev = new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true });
   document.body.dispatchEvent(ev);
   assert.ok(!ev.defaultPrevented);
+});
+
+test("grant_file_saves_through_grant", async () => {
+  const id = "AbCdEfGhIjKlMnOpQrSt-_";
+  const g = received({ name: "notes.txt", kind: "file" });
+  const log = startAt(`/shared/${id}`, reader, {
+    [`GET /api/g/${id}`]: () => json({ grant: g }),
+    [`GET /api/g/${id}/raw`]: raw("hello"),
+    [`PUT /api/g/${id}/text`]: () => json({ etag: '"6-2-0"' }, 200, { etag: '"6-2-0"' }),
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.ok(el.querySelector("textarea")));
+  assert.match(el.querySelector("h1")!.textContent!, /notes\.txt/);
+  await edit(el, "hello 2");
+  save(el);
+  await waitFor(() => assert.ok(log.some((r) => r.method === "PUT")));
+  const put = log.find((r) => r.method === "PUT")!;
+  assert.equal(new URL(put.url).pathname, `/api/g/${id}/text`);
+  assert.equal(await put.text(), "hello 2");
+  assert.equal(el.querySelector(".viewer-head a.icon-button")!.getAttribute("href"), "/shared");
 });

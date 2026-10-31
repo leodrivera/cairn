@@ -104,3 +104,11 @@ test("trash_strings_in_pt_br", () => {
   assert.equal(t("trash.emptyTrash"), "Esvaziar lixeira");
   assert.equal(tn("files.trashed", 2), "2 itens foram para a lixeira.");
 });
+
+test("sharing_strings_in_pt_br", () => {
+  setLang("pt-BR");
+  assert.equal(t("people.canView"), "Pode ver");
+  assert.equal(t("people.canEdit"), "Pode editar");
+  assert.equal(t("shared.leave"), "Sair");
+  assert.equal(t("error.grant_gone"), "Este item compartilhado não está mais disponível.");
+});

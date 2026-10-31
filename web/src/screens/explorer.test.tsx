@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
 import { flush, json, phoneWidth, render, waitFor } from "../test/dom";
-import { admin, file, folder, listing, reader, startAt } from "../test/fixtures";
+import { admin, file, folder, listing, reader, received, startAt } from "../test/fixtures";
 import { resetUploads } from "../state/uploads";
 import type { Transport } from "../lib/uploads";
 
@@ -789,4 +789,72 @@ test("other_disk_offers_permanent", async () => {
   await waitFor(() => assert.equal(bodies.length, 2));
   assert.deepEqual(bodies[1], { paths: ["notes.txt"], permanent: true });
   await waitFor(() => assert.match(el.textContent!, /Deleted 1 item\./));
+});
+
+const GID = "AbCdEfGhIjKlMnOpQrSt-_";
+
+function inGrantAt(at: string, g = received(), routes = {}) {
+  return startAt(at, reader, {
+    "GET /api/me": () => json({ user: reader, trash: { on: true } }),
+    [`GET /api/g/${GID}`]: () => json({ grant: g }),
+    ...routes,
+  });
+}
+
+test("grant_folder_uses_grant_api", async () => {
+  inGrantAt(`/shared/${GID}/files/2026`, received(), {
+    [`GET /api/g/${GID}/files/2026`]: listing("2026", [folder("raw"), file("notes.txt", { mime: "text/plain" })]),
+  });
+  const el = render(<App />);
+  await shown(el);
+  const crumbs = el.querySelector(".breadcrumbs")!;
+  assert.match(crumbs.textContent!, /^team\/2026$/);
+  assert.equal(crumbs.querySelector("a")!.getAttribute("href"), `/shared/${GID}`);
+  assert.equal(rows(el)[0].querySelector("a.name")!.getAttribute("href"), `/shared/${GID}/files/2026/raw`);
+  assert.equal(rows(el)[1].querySelector("a.name")!.getAttribute("href"), `/shared/${GID}/view/2026/notes.txt`);
+  assert.ok(el.querySelector('.sidebar a[href="/shared"][aria-current="page"]'));
+});
+
+test("grant_read_hides_write_actions", async () => {
+  inGrantAt(`/shared/${GID}`, received({ permission: "read", effective: "read" }), {
+    [`GET /api/g/${GID}/files`]: listing("", sample),
+  });
+  const el = render(<App />);
+  await shown(el);
+  assert.ok(!el.querySelector('.toolbar button[aria-haspopup="menu"]'));
+  assert.ok(![...el.querySelectorAll(".toolbar button")].some((b) => b.textContent?.trim() === "Upload"));
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  const items = [...el.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent!.trim());
+  assert.deepEqual(items, ["OpenEnter", "Download"]);
+});
+
+test("grant_write_shows_write_actions_but_no_share", async () => {
+  const log = inGrantAt(`/shared/${GID}`, received(), {
+    [`GET /api/g/${GID}/files`]: listing("", sample),
+    [`DELETE /api/g/${GID}/files`]: () => json({ deleted: 1, failed: [], entries: ["e1"] }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  assert.ok(el.querySelector('.toolbar button[aria-haspopup="menu"]'));
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  const items = [...el.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent!.trim());
+  assert.ok(!items.some((i) => i.startsWith("Share")), items.join());
+  assert.ok(items.includes("RenameF2"));
+  click(menuItem(el, "Delete"));
+  await waitFor(() => assert.match(el.textContent!, /Move 1 item to the trash\?/));
+  assert.ok(![...el.querySelectorAll('[role="dialog"] button')].some((b) => b.textContent?.trim() === "Delete permanently"));
+  click(button(el, "Move to trash"));
+  await waitFor(() => assert.ok(log.some((r) => r.method === "DELETE")));
+  assert.deepEqual(await log.find((r) => r.method === "DELETE")!.json(), { paths: ["notes.txt"] });
+});
+
+test("grant_gone_state", async () => {
+  startAt(`/shared/${GID}`, reader, {
+    [`GET /api/g/${GID}`]: () => json({ error: "grant_gone", message: "This shared item is no longer available." }, 404),
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /This shared item is no longer available\./));
+  assert.ok(el.querySelector('.state a[href="/shared"]'));
 });

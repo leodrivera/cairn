@@ -17,6 +17,10 @@ export type Route =
   | { name: "links" }
   /** What was deleted from places the signed-in person may write to. */
   | { name: "trash" }
+  /** Grants the signed-in person received. */
+  | { name: "shared" }
+  /** Inside a received grant: a folder beneath it, or (`view`) a file. `path` "" is the granted item itself. */
+  | { name: "grant"; id: string; path: string; view: boolean }
   /** A share link's public page; `path` is beneath the shared folder, `file` when it names a file. */
   | { name: "share"; id: string; path: string; file: boolean }
   | { name: "missing" };
@@ -69,6 +73,15 @@ export function parseRoute(pathname: string, search: string): Route {
   if (pathname === "/links" || pathname === "/links/" || pathname === "/settings/links" || pathname === "/settings/links/")
     return { name: "links" };
   if (pathname === "/trash" || pathname === "/trash/") return { name: "trash" };
+  if (pathname === "/shared" || pathname === "/shared/") return { name: "shared" };
+  const grant = /^\/shared\/([A-Za-z0-9_-]{22})(?:\/(files|view)(\/.*)?)?\/?$/.exec(pathname);
+  if (grant) {
+    const path = decodePath((grant[3] ?? "").slice(1));
+    if (path === null) return { name: "missing" };
+    if (grant[2] === "view" && path === "") return { name: "missing" };
+    return { name: "grant", id: grant[1], path, view: grant[2] === "view" };
+  }
+  if (pathname.startsWith("/shared/")) return { name: "missing" };
   const share = /^\/s\/([A-Za-z0-9_-]{22})$/.exec(pathname);
   if (share) {
     const q = new URLSearchParams(search);
@@ -96,6 +109,11 @@ export function href(r: Route): string {
       return "/links";
     case "trash":
       return "/trash";
+    case "shared":
+      return "/shared";
+    case "grant":
+      if (r.view) return `/shared/${r.id}/view/${encodePath(r.path)}`;
+      return r.path === "" ? `/shared/${r.id}` : `/shared/${r.id}/files/${encodePath(r.path)}`;
     case "share":
       return r.path === "" ? `/s/${r.id}` : `/s/${r.id}?${r.file ? "file" : "path"}=${encodeURIComponent(r.path)}`;
     case "missing":

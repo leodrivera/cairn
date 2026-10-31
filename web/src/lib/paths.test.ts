@@ -54,3 +54,9 @@ test("parent, join and segments", () => {
   assert.deepEqual(segments(""), []);
   assert.deepEqual(segments("a/b"), ["a", "b"]);
 });
+
+test("api_url_with_base", () => {
+  assert.equal(apiUrl("files", "a b", undefined, "/api/g/AbCd"), "/api/g/AbCd/files/a%20b");
+  assert.equal(apiUrl("raw", "", { download: "1" }, "/api/g/AbCd"), "/api/g/AbCd/raw?download=1");
+  assert.equal(apiUrl("files", ""), "/api/files");
+});

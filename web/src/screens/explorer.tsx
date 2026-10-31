@@ -37,7 +37,8 @@ import {
 import { showToast, type ToastAction } from "../components/toast";
 import { restore } from "../lib/trash";
 import { ShareDialog } from "../components/share-dialog";
-import { href, navigate } from "../lib/router";
+import { Link, navigate } from "../lib/router";
+import { own, WhereContext, type Where } from "../lib/where";
 import { Selection } from "../state/selection";
 import { useSession, useUser } from "../state/session";
 import { uploads, useUploaded } from "../state/uploads";
@@ -57,11 +58,23 @@ function failedName(f: Failed): string {
   return displaySegment(path.slice(path.lastIndexOf("/") + 1));
 }
 
-export function Explorer({ path }: { path: string }) {
+export function Explorer({ path, where = own }: { path: string; where?: Where }) {
+  return (
+    <WhereContext.Provider value={where}>
+      <Folder path={path} where={where} />
+    </WhereContext.Provider>
+  );
+}
+
+function Folder({ path, where }: { path: string; where: Where }) {
   const user = useUser();
   const { session, setUser } = useSession();
   const view = user.view ?? "list";
-  const canWrite = user.permissions.write;
+  const base = where.api;
+  const grant = where.grant;
+  const canWrite = grant ? grant.effective === "write" : user.permissions.write;
+  // Nothing received is passed on: no links and no grants inside a grant.
+  const canShare = !grant && user.permissions.share;
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [query, setQuery] = useState("");
@@ -83,7 +96,7 @@ export function Explorer({ path }: { path: string }) {
   const load = async () => {
     const n = ++latest.current;
     try {
-      const l = await api<Listing>("GET", apiUrl("files", path));
+      const l = await api<Listing>("GET", apiUrl("files", path, undefined, base));
       if (n !== latest.current) return;
       setListing(l);
       setError(null);
@@ -103,15 +116,15 @@ export function Explorer({ path }: { path: string }) {
 
   useUploaded(
     useCallback(
-      (dir: string) => {
-        if (dir === path) load();
+      (dir: string, from: string) => {
+        if (dir === path && from === base) load();
       },
-      [path],
+      [path, base],
     ),
   );
 
   const upload = (files: TreeFile[]) => {
-    if (files.length) addTree(uploads(), path, files);
+    if (files.length) addTree(uploads(), path, files, undefined, base);
   };
 
   const picked = (e: Event) => {
@@ -217,10 +230,10 @@ export function Explorer({ path }: { path: string }) {
   };
 
   const downloadItems = (items: Entry[]) => {
-    const url = downloadUrl(path, items);
+    const url = downloadUrl(path, items, base);
     if (url) startDownload(url);
     else if (items.length > ZIP_MAX) showToast(t("invalid.zipItems"));
-    else zipForm(path, items);
+    else zipForm(path, items, base);
   };
   const download = () => downloadItems(chosen);
 
@@ -235,8 +248,8 @@ export function Explorer({ path }: { path: string }) {
   const open = (e: Entry) => {
     if (e.outside) return;
     const to = join(path, segmentOf(e));
-    if (e.kind === "folder") navigate(href({ name: "files", path: to }));
-    else if (opensInViewer(e)) navigate(href({ name: "view", path: to }));
+    if (e.kind === "folder") navigate(where.files(to));
+    else if (opensInViewer(e)) navigate(where.view(to));
     else downloadItems([e]);
   };
 
@@ -244,14 +257,14 @@ export function Explorer({ path }: { path: string }) {
   const targets = (e: Entry) => (selection.has(segmentOf(e)) && chosen.length > 1 ? chosen : [e]);
 
   const doRename = async (e: Entry, name: string) => {
-    await rename(path, e, name);
+    await rename(path, e, name, base);
     changed(t("files.renamed", { name }));
   };
 
   const doTransfer = async (op: "move" | "copy", items: Entry[], dest: string) => {
-    const r = await transfer(op, path, items, dest);
+    const r = await transfer(op, path, items, dest, base);
     if (r.failed.length === 0) {
-      changed(tn(op === "move" ? "files.moved" : "files.copied", r.done, { dest: folderLabel(dest) }));
+      changed(tn(op === "move" ? "files.moved" : "files.copied", r.done, { dest: folderLabel(dest, grant?.name) }));
     } else {
       const f = r.failed[0];
       changed(
@@ -265,7 +278,9 @@ export function Explorer({ path }: { path: string }) {
   };
 
   const trashOn = session!.me.trash?.on === true;
-  const askDelete = (items: Entry[]) => setDialog({ kind: "delete", items, mode: trashOn ? "trash" : "permanent" });
+  // Inside a grant a delete always goes to the trash; the server says so if it cannot.
+  const askDelete = (items: Entry[]) =>
+    setDialog({ kind: "delete", items, mode: grant ? "grant" : trashOn ? "trash" : "permanent" });
   /** A dialog to show once the current one closes (the trash refused some items). */
   const next = useRef<DialogState | null>(null);
 
@@ -282,10 +297,10 @@ export function Explorer({ path }: { path: string }) {
   });
 
   const doDelete = async (items: Entry[], permanent: boolean) => {
-    const r = await remove(path, items, { permanent });
+    const r = await remove(path, items, { permanent, base });
     // The trash could not take these (another disk, or a folder it may not use): offer a permanent delete.
     const refused = r.failed.filter((f) => f.error === "other_disk" || f.error === "trash_taken");
-    if (!permanent && refused.length > 0) {
+    if (!permanent && !grant && refused.length > 0) {
       const names = new Set(refused.map((f) => f.path));
       const first = refused[0];
       next.current = {
@@ -323,13 +338,13 @@ export function Explorer({ path }: { path: string }) {
   };
 
   const doNewFolder = async (name: string) => {
-    const entry = await newFolder(path, name);
+    const entry = await newFolder(path, name, base);
     changed(t("files.created", { name: entry.name }));
   };
 
   const doNewTextFile = async (name: string) => {
-    await newTextFile(path, name);
-    navigate(href({ name: "view", path: join(path, name) }));
+    await newTextFile(path, name, base);
+    navigate(where.view(join(path, name)));
   };
 
   const closeMenu = useCallback(() => setItemMenu(null), []);
@@ -340,7 +355,7 @@ export function Explorer({ path }: { path: string }) {
 
   let content;
   if (error) {
-    content = <ListingError error={error} retry={load} />;
+    content = <ListingError error={error} retry={load} grant={!!grant} />;
   } else if (!listing) {
     content = null;
   } else if (listing.entries.length === 0) {
@@ -626,7 +641,7 @@ export function Explorer({ path }: { path: string }) {
         <ContextMenu
           at={itemMenu.at}
           label={t("menu.label", { name: itemMenu.entry.name })}
-          items={entryMenu(canWrite, user.permissions.share, {
+          items={entryMenu(canWrite, canShare, {
             open: () => open(itemMenu.entry),
             download: () => downloadItems([itemMenu.entry]),
             share: () => setDialog({ kind: "share", entry: itemMenu.entry }),
@@ -645,6 +660,7 @@ export function Explorer({ path }: { path: string }) {
         <ShareDialog
           entryPath={join(path, segmentOf(dialog.entry))}
           kind={dialog.entry.kind === "folder" ? "folder" : "file"}
+          canWrite={user.permissions.write}
           onClose={closeDialog}
         />
       )}
@@ -688,12 +704,23 @@ export function Explorer({ path }: { path: string }) {
   );
 }
 
-function ListingError({ error, retry }: { error: ApiFailure; retry(): void }) {
-  const back = (
+function ListingError({ error, retry, grant }: { error: ApiFailure; retry(): void; grant: boolean }) {
+  const back = grant ? (
+    <Link class="button" href="/shared">
+      {t("shared.back")}
+    </Link>
+  ) : (
     <a class="button" href="/files/">
       {t("state.backToFiles")}
     </a>
   );
+  if (error.code === "grant_gone") {
+    return (
+      <StatePanel icon="users" title={t("error.grant_gone")} body={t("shared.emptyBody")}>
+        {back}
+      </StatePanel>
+    );
+  }
   if (error.code === "forbidden" || error.code === "outside") {
     return (
       <StatePanel icon="lock" tone="danger" title={t("state.forbidden.title")} body={t("state.forbidden.body")}>

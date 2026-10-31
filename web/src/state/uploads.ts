@@ -3,12 +3,12 @@ import { useEffect, useState } from "preact/hooks";
 import { UploadQueue, xhrTransport, type Transport } from "../lib/uploads";
 
 let queue: UploadQueue | null = null;
-const uploaded = new Set<(dir: string) => void>();
+const uploaded = new Set<(dir: string, base: string) => void>();
 
 function make(send: Transport): UploadQueue {
   const q = new UploadQueue(send, () => {});
-  q.onDone = (dir) => {
-    for (const fn of uploaded) fn(dir);
+  q.onDone = (dir, base) => {
+    for (const fn of uploaded) fn(dir, base);
   };
   return q;
 }
@@ -34,8 +34,8 @@ export function resetUploads(send: Transport): void {
   queue = make(send);
 }
 
-/** Calls `fn(dir)` when a batch of uploads into `dir` has settled with at least one file done. */
-export function useUploaded(fn: (dir: string) => void): void {
+/** Calls `fn(dir, base)` when a batch of uploads into `dir` (in the place `base`) has settled with a file done. */
+export function useUploaded(fn: (dir: string, base: string) => void): void {
   useEffect(() => {
     uploaded.add(fn);
     return () => {

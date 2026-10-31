@@ -100,7 +100,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
 
   const nav: Place[] = [
     { href: "/files/", label: t("nav.myFiles"), icon: "home", on: place === "files" },
-    { href: "/shared", label: t("nav.sharedWithMe"), icon: "users", on: false },
+    { href: "/shared", label: t("nav.sharedWithMe"), icon: "users", on: place === "shared" || place === "grant" },
     { href: "/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
     { href: "/trash", label: t("nav.trash"), icon: "trash", on: place === "trash" },
   ];

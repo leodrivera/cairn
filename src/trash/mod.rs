@@ -2,6 +2,7 @@
 //! or a permanent delete. The `trash` table holds one row per entry; nothing else about files is kept.
 
 pub mod folder;
+pub mod ops;
 
 use rusqlite::{OptionalExtension, params};
 
@@ -62,4 +63,103 @@ pub fn days(config: &Config, db: &Db) -> (u32, bool) {
 /// Whether deletes go to the trash at all.
 pub fn on(state: &AppState) -> bool {
     days(&state.config, &state.db).0 > 0
+}
+
+/// One trash entry, as the `trash` table holds it.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub id: String,
+    /// The trash folder holding it, relative to the root: `/.cairn-trash`, `/photos/.cairn-trash`.
+    pub trash_dir: String,
+    /// Where it was, relative to the root.
+    pub path: String,
+    pub name: Vec<u8>,
+    /// `file` or `folder`.
+    pub kind: String,
+    pub size: i64,
+    pub deleted_by: Option<i64>,
+    pub deleted_at: i64,
+    pub expires_at: i64,
+}
+
+const COLUMNS: &str = "id, trash_dir, path, name, kind, size, deleted_by, deleted_at, expires_at";
+
+fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Entry> {
+    Ok(Entry {
+        id: r.get(0)?,
+        trash_dir: r.get(1)?,
+        path: r.get(2)?,
+        name: r.get(3)?,
+        kind: r.get(4)?,
+        size: r.get(5)?,
+        deleted_by: r.get(6)?,
+        deleted_at: r.get(7)?,
+        expires_at: r.get(8)?,
+    })
+}
+
+pub fn insert(db: &Db, e: &Entry) -> rusqlite::Result<()> {
+    db.with(|c| {
+        c.execute(
+            &format!("INSERT INTO trash ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"),
+            params![
+                e.id,
+                e.trash_dir,
+                e.path,
+                e.name,
+                e.kind,
+                e.size,
+                e.deleted_by,
+                e.deleted_at,
+                e.expires_at
+            ],
+        )?;
+        Ok(())
+    })
+}
+
+pub fn get(db: &Db, id: &str) -> rusqlite::Result<Option<Entry>> {
+    db.with(|c| {
+        c.query_row(
+            &format!("SELECT {COLUMNS} FROM trash WHERE id = ?1"),
+            [id],
+            from_row,
+        )
+        .optional()
+    })
+}
+
+/// Every entry, newest first.
+pub fn all(db: &Db) -> rusqlite::Result<Vec<Entry>> {
+    db.with(|c| {
+        let mut q = c.prepare(&format!(
+            "SELECT {COLUMNS} FROM trash ORDER BY deleted_at DESC, rowid DESC"
+        ))?;
+        q.query_map([], from_row)?.collect()
+    })
+}
+
+pub fn delete_row(db: &Db, id: &str) -> rusqlite::Result<()> {
+    db.with(|c| c.execute("DELETE FROM trash WHERE id = ?1", [id]))?;
+    Ok(())
+}
+
+/// How a person reaches an entry: through their own scope (restore and delete), or a grant (restore only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Via {
+    Own,
+    Grant(String),
+}
+
+/// The entries `user` sees: those whose original place they may write to now.
+pub fn visible(db: &Db, user: &crate::users::User) -> Vec<(Entry, Via)> {
+    let Ok(rows) = all(db).inspect_err(|e| tracing::error!(event = "db.error", error = %e)) else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .filter_map(|e| {
+            (user.perms.write && crate::shares::split_scope(&e.path, &user.scope).is_some())
+                .then_some((e, Via::Own))
+        })
+        .collect()
 }

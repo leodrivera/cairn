@@ -40,7 +40,11 @@ pub fn harness(extra: &[(&str, &str)]) -> Harness {
 
 /// A server root and a data folder on disk, for the file routes. Keep the `TempDir` alive for the test.
 pub fn harness_with_root(extra: &[(&str, &str)]) -> (Harness, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+    harness_at(tempfile::tempdir().unwrap(), extra)
+}
+
+/// Like `harness_with_root`, in a folder the test filled first (`srv` and `data` are made if missing).
+pub fn harness_at(dir: tempfile::TempDir, extra: &[(&str, &str)]) -> (Harness, tempfile::TempDir) {
     let (srv, data) = (dir.path().join("srv"), dir.path().join("data"));
     std::fs::create_dir_all(&srv).unwrap();
     std::fs::create_dir_all(&data).unwrap();

@@ -114,6 +114,7 @@ async fn serve(config: Config, db: crate::db::Db) -> ExitCode {
     }
 
     let state = AppState::new(config, db);
+    spawn_trash_upkeep(&state);
     // Never awaited: the socket opens before any provider or broker answers.
     if let Some(broker) = state.broker.clone() {
         tokio::spawn(async move { broker.refresh().await });
@@ -213,6 +214,24 @@ async fn stop_signal() {
         _ = ctrl_c => {}
         _ = term.recv() => {}
     }
+}
+
+/// Reconciles and purges the trash once now, then every hour, off the async threads.
+fn spawn_trash_upkeep(state: &AppState) {
+    let (trash, db) = (state.trash.clone(), state.db.clone());
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            // The first tick is immediate, so this also runs at start.
+            tick.tick().await;
+            let (trash, db) = (trash.clone(), db.clone());
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::trash::ops::reconcile(&trash, &db);
+                crate::trash::ops::purge(&trash, &db, crate::now());
+            })
+            .await;
+        }
+    });
 }
 
 #[cfg(test)]

@@ -432,10 +432,11 @@ async fn upload_bigger_than_json_limit() {
     assert_eq!(std::fs::metadata(s.join("big.bin")).unwrap().len(), 3 << 20);
 }
 
+/// A permanent delete: these tests are about removing files; the trash has its own (tests/trash_api.rs).
 async fn delete_paths(h: &Harness, c: &str, paths: &[&str]) -> common::Res {
     Req::delete("/api/files")
         .cookie(c)
-        .json(json!({ "paths": paths }))
+        .json(json!({ "paths": paths, "permanent": true }))
         .send(&h.app)
         .await
 }
@@ -474,7 +475,10 @@ async fn delete_file_and_folder_tree() {
     touch(&s.join("a.txt"), "a");
     touch(&s.join("tree/x/y/z.txt"), "z");
     let res = delete_paths(&h, &c, &["a.txt", "tree"]).await;
-    assert_eq!(res.json, json!({ "deleted": 2, "failed": [] }));
+    assert_eq!(
+        res.json,
+        json!({ "deleted": 2, "failed": [], "entries": [] })
+    );
     assert!(!s.join("a.txt").exists() && !s.join("tree").exists());
 }
 

@@ -13,6 +13,7 @@ pub mod json;
 pub mod public_routes;
 pub mod shares_routes;
 pub mod sso_routes;
+pub mod trash_routes;
 pub mod users_routes;
 
 use std::sync::Arc;
@@ -106,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .merge(users_routes::routes())
         .merge(files_routes::routes())
         .merge(shares_routes::routes())
+        .merge(trash_routes::routes())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),

@@ -289,6 +289,9 @@ async fn new_folder(
 #[serde(deny_unknown_fields)]
 struct DeleteBody {
     paths: Vec<String>,
+    /// Skip the trash. Needs one's own write access.
+    #[serde(default)]
+    permanent: bool,
 }
 
 /// One failure in a batch, with the same code and message a single request would get.
@@ -298,6 +301,7 @@ pub fn failure(key: &str, value: &str, e: FsError) -> Value {
 }
 
 async fn delete_paths(
+    axum::extract::State(s): axum::extract::State<AppState>,
     fu: FileUser,
     crate::http::json::StrictJson(b): crate::http::json::StrictJson<DeleteBody>,
 ) -> Result<Json<Value>, ApiError> {
@@ -306,25 +310,43 @@ async fn delete_paths(
         return Err(ApiError::bad_request("Send between 1 and 10000 paths."));
     }
     let user = fu.user.id;
+    let base = fu.user.scope.clone();
     let scope = fu.scope;
-    let (deleted, failed) = blocking(move || {
-        let (mut deleted, mut failed) = (0, Vec::new());
+    let (days, _) = crate::trash::days(&s.config, &s.db);
+    let now = crate::now();
+    let permanent = b.permanent;
+    let (deleted, failed, entries) = blocking(move || {
+        let (mut deleted, mut failed, mut entries) = (0, Vec::new(), Vec::new());
         for raw in &b.paths {
-            match RelPath::parse(raw).and_then(|p| crate::fs::edit::remove(&scope, &p)) {
-                Ok(()) => deleted += 1,
+            let result = RelPath::parse(raw).and_then(|p| {
+                if permanent {
+                    crate::fs::edit::remove(&scope, &p).map(|()| None)
+                } else {
+                    crate::trash::ops::to_trash(&s.trash, &s.db, &scope, &base, &p, user, now, days)
+                        .map(Some)
+                }
+            });
+            match result {
+                Ok(entry) => {
+                    deleted += 1;
+                    entries.extend(entry);
+                }
                 Err(e) => failed.push(failure("path", raw, e)),
             }
         }
-        Ok((deleted, failed))
+        Ok((deleted, failed, entries))
     })
     .await?;
     tracing::info!(
         event = "file.delete",
         user,
         paths = deleted,
-        failed = failed.len()
+        failed = failed.len(),
+        permanent
     );
-    Ok(Json(json!({ "deleted": deleted, "failed": failed })))
+    Ok(Json(
+        json!({ "deleted": deleted, "failed": failed, "entries": entries }),
+    ))
 }
 
 #[derive(serde::Deserialize)]

@@ -4,6 +4,7 @@ pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod grants;
 pub mod health;
 pub mod http;
 pub mod log;

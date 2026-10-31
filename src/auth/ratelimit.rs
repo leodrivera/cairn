@@ -158,6 +158,8 @@ pub struct Limiters {
     pub sso_start: FailureLimiter,
     /// Wrong share link passwords: 10 per link and IP together in 15 minutes.
     pub share_password: FailureLimiter,
+    /// E-mails without an account asked for when granting: 20 per person in 15 minutes.
+    pub grant_lookup: FailureLimiter,
 }
 
 impl Default for Limiters {
@@ -173,6 +175,7 @@ impl Limiters {
             password_change: FailureLimiter::new(0, 5, 15 * 60, 10_000),
             sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
             share_password: FailureLimiter::new(0, 10, 15 * 60, 10_000),
+            grant_lookup: FailureLimiter::new(0, 20, 15 * 60, 10_000),
         }
     }
 }

@@ -625,3 +625,48 @@ async fn zip_of_chosen_items_in_grant() {
         .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn grant_paths_decoded_once() {
+    use std::os::unix::ffi::OsStrExt;
+    let w = world(&[]).await;
+    let team = w.root().join("team");
+    std::fs::write(team.join("Report #1 (50%) ✓ café.txt"), "unicode").unwrap();
+    std::fs::write(team.join("q?r.txt"), "query").unwrap();
+    std::fs::write(team.join("x%41.txt"), "percent").unwrap();
+    std::fs::write(team.join("xA.txt"), "other").unwrap();
+    std::fs::create_dir(team.join("a b")).unwrap();
+    std::fs::write(team.join("a b/c.txt"), "space").unwrap();
+    let raw: &[u8] = b"caf\xe9.txt";
+    std::fs::write(team.join(std::ffi::OsStr::from_bytes(raw)), "raw").unwrap();
+    let id = give(&w, "team", "write").await;
+    for (name, body) in [
+        ("Report #1 (50%) ✓ café.txt", "unicode"),
+        ("q?r.txt", "query"),
+        ("x%41.txt", "percent"),
+        ("a b/c.txt", "space"),
+    ] {
+        let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/{}", enc(name))).await;
+        assert_eq!(res.status, StatusCode::OK, "{name}: {}", res.json);
+        assert_eq!(res.body, body.as_bytes(), "{name}");
+    }
+    let res = get(&w, &w.bob, &format!("/api/g/{id}/files/{}", enc("a b"))).await;
+    assert_eq!(names(&res.json), vec!["c.txt"]);
+    let seg = cairn::fs::path::RelPath::segment_for(raw);
+    let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/{}", enc(&seg))).await;
+    assert_eq!(res.status, StatusCode::OK, "raw: {}", res.json);
+    assert_eq!(res.body, b"raw");
+    // A save to the name with %41 in it changes that file, never xA.txt.
+    let url = format!("/api/g/{id}/text/{}", enc("x%41.txt"));
+    let raw_url = format!("/api/g/{id}/raw/{}", enc("x%41.txt"));
+    let tag = get(&w, &w.bob, &raw_url).await.header("etag").to_string();
+    let res = Req::put(&url)
+        .cookie(&w.bob)
+        .header("if-match", &tag)
+        .bytes(b"changed")
+        .send(&w.h.app)
+        .await;
+    assert!(res.status.is_success(), "{}", res.json);
+    assert_eq!(std::fs::read(team.join("x%41.txt")).unwrap(), b"changed");
+    assert_eq!(std::fs::read(team.join("xA.txt")).unwrap(), b"other");
+}

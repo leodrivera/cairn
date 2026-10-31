@@ -51,14 +51,17 @@ async fn info(
 }
 
 /// A fresh request for the file routes: the path after the grant, the same method, headers, body and query, who is
-/// signed in, and the grant. The outer route's parameters stay behind, so the handlers see only their own.
-async fn forward(
-    inner: Router,
-    Path((id, rest)): Path<(String, String)>,
-    req: Request,
-) -> Response {
+/// signed in, and the grant. The outer route's parameters stay behind, so the handlers see only their own. The path
+/// is taken still percent-encoded from the request, not from the decoded parameter, so the file routes decode it once:
+/// names with spaces, `#`, `?`, `%41` or raw bytes reach the same file as outside a grant.
+async fn forward(inner: Router, Path((id, _)): Path<(String, String)>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let mut path = format!("/{rest}");
+    let marker = format!("/g/{id}/");
+    let raw = parts.uri.path();
+    let Some(at) = raw.find(&marker) else {
+        return ApiError::not_found().into_response();
+    };
+    let mut path = format!("/{}", &raw[at + marker.len()..]);
     if let Some(q) = parts.uri.query() {
         path = format!("{path}?{q}");
     }

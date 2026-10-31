@@ -6,6 +6,7 @@ import { errorText, t, type Key } from "../i18n/index";
 import { showToast } from "../components/toast";
 import { useSession, useUser } from "../state/session";
 import type { Lang, User } from "../lib/types";
+import { PasswordInput } from "../components/password-input";
 
 function failure(e: unknown): string {
   return errorText(e instanceof ApiFailure ? e : offline());
@@ -145,6 +146,7 @@ function ChangePassword() {
   const [repeat, setRepeat] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(0);
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -157,6 +159,7 @@ function ChangePassword() {
       setCurrent("");
       setNext("");
       setRepeat("");
+      setDone(done + 1);
       showToast(t("profile.passwordChanged"));
     } catch (err) {
       setError(failure(err));
@@ -169,14 +172,7 @@ function ChangePassword() {
       <label class="field-label" for={id}>
         {label}
       </label>
-      <input
-        id={id}
-        class="input"
-        type="password"
-        autocomplete={auto}
-        value={value}
-        onInput={(e) => set(e.currentTarget.value)}
-      />
+      <PasswordInput id={id} autocomplete={auto} value={value} onInput={set} resetKey={done} />
     </div>
   );
 

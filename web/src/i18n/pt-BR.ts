@@ -30,6 +30,8 @@ export const ptBR: Table = {
   "explorer.galleryView": "Ver em galeria",
   "explorer.newFolder": "Nova pasta",
   "explorer.new": "Novo",
+  "password.show": "Mostrar senha",
+  "password.hide": "Ocultar senha",
   "explorer.newTextFile": "Novo arquivo de texto",
   "dialog.fileName": "Nome do arquivo",
   "explorer.upload": "Enviar",

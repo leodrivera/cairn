@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ShareDialog } from "./share-dialog";
 import { Toast } from "./toast";
-import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor } from "../test/dom";
+import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor, passwordToggles } from "../test/dom";
 import { errorText, setLang } from "../i18n/index";
 import { ApiFailure } from "../lib/api";
 import type { Share } from "../lib/types";
@@ -237,4 +237,12 @@ test("without a public address the dialog says the link may not work outside", a
   const el2 = open();
   await created(el2);
   assert.doesNotMatch(el2.textContent!, /no public address/);
+});
+
+test("password_field_has_toggle", async () => {
+  stubFetch({});
+  const el = open();
+  byLabel(el, "Require a password").click();
+  await flush();
+  assert.equal(passwordToggles(el), 1);
 });

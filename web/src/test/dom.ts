@@ -114,3 +114,15 @@ export function phoneWidth(on = true): () => void {
     window.matchMedia = real;
   };
 }
+
+/** Every password field in `root` has a Show password button that controls it; returns how many there are. */
+export function passwordToggles(root: HTMLElement): number {
+  const fields = [...root.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+  for (const f of fields) {
+    const b = root.querySelector<HTMLButtonElement>(`button[aria-controls="${CSS.escape(f.id)}"]`);
+    if (!b) throw new Error(`no toggle for #${f.id}`);
+    if (b.getAttribute("aria-label") !== "Show password") throw new Error(`toggle for #${f.id} says ${b.getAttribute("aria-label")}`);
+    if (b.type !== "button") throw new Error(`toggle for #${f.id} would submit`);
+  }
+  return fields.length;
+}

@@ -2,7 +2,7 @@ import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
-import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor, type Handler } from "../test/dom";
+import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor, type Handler, passwordToggles } from "../test/dom";
 import { config, file, folder } from "../test/fixtures";
 import type { ShareInfo } from "../lib/types";
 
@@ -226,4 +226,12 @@ test("the page has a heading and a tab title", async () => {
   const { el: el2 } = visit(`/s/${ID}`, { [`GET /s/${ID}/info`]: () => json(info()) });
   await waitFor(() => assert.equal(el2.querySelector("h1")?.textContent, "trail-ridge.jpg"));
   assert.equal(document.title, "trail-ridge.jpg");
+});
+
+test("password_field_has_toggle", async () => {
+  const { el } = visit(`/s/${ID}`, {
+    [`GET /s/${ID}/info`]: () => json({ error: "share_locked", message: "x" }, 403),
+  });
+  await waitFor(() => assert.match(el.textContent!, /This link needs a password/));
+  assert.equal(passwordToggles(el), 1);
 });

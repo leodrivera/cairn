@@ -6,6 +6,7 @@ import { errorText, t } from "../i18n/index";
 import { showToast } from "./toast";
 import { Dialog } from "./dialogs";
 import type { Perms, User } from "../lib/types";
+import { PasswordInput } from "./password-input";
 
 type Props = {
   user?: User;
@@ -133,14 +134,12 @@ export function UserForm({ user, sso, onSaved, onChanged, onClose }: Props) {
           <label class="field-label" for={`${id}-password`}>
             {user ? t("form.newPassword") : t("form.password")}
           </label>
-          <input
+          <PasswordInput
             id={`${id}-password`}
-            class="input"
-            type="password"
             autocomplete="new-password"
             value={password}
-            aria-describedby={`${id}-password-hint`}
-            onInput={(e) => setPassword(e.currentTarget.value)}
+            describedBy={`${id}-password-hint`}
+            onInput={setPassword}
           />
           <p id={`${id}-password-hint`} class="hint">
             {t("form.passwordHint")} {user ? t("form.newPasswordHint") : sso ? t("form.passwordSso") : ""}

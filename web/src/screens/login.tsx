@@ -8,6 +8,7 @@ import { Mark } from "../components/icons";
 import { useSession } from "../state/session";
 import type { LoginError } from "../lib/router";
 import type { User } from "../lib/types";
+import { PasswordInput } from "../components/password-input";
 
 /** The sentence for a provider sign-in that came back here. */
 function providerError(error: LoginError, deniedEmail: string | undefined): string {
@@ -135,15 +136,14 @@ export function Login({ error: from }: { error?: LoginError }) {
               </div>
               <div class="field">
                 <label for="login-password">{t("login.password")}</label>
-                <input
+                <PasswordInput
                   id="login-password"
-                  ref={passwordInput}
+                  inputRef={passwordInput}
                   class="input input-large"
-                  type="password"
                   autocomplete="current-password"
                   required
                   value={password}
-                  onInput={(e) => setPassword(e.currentTarget.value)}
+                  onInput={setPassword}
                 />
               </div>
               {config.captcha && <div class="captcha" ref={captchaBox} aria-label={t("login.captcha")} />}

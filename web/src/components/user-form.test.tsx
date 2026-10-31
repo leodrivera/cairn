@@ -2,7 +2,7 @@ import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { UserForm } from "./user-form";
-import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor } from "../test/dom";
+import { buttonNamed, byLabel, flush, json, render, setValue, stubFetch, waitFor, passwordToggles } from "../test/dom";
 import { reader } from "../test/fixtures";
 
 function check(el: HTMLElement, label: string): HTMLInputElement {
@@ -138,4 +138,10 @@ test("the form opens with Name focused", async () => {
   const el = render(<UserForm sso={false} onSaved={() => {}} onClose={() => {}} />);
   await flush();
   assert.ok(document.activeElement === byLabel(el, "Name"));
+});
+
+test("password_field_has_toggle", async () => {
+  const el = render(<UserForm sso={false} onSaved={() => {}} onClose={() => {}} />);
+  await flush();
+  assert.equal(passwordToggles(el), 1);
 });

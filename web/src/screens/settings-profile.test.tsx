@@ -2,7 +2,7 @@ import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
-import { buttonNamed, byLabel, flush, json, render, setValue, waitFor } from "../test/dom";
+import { buttonNamed, byLabel, flush, json, render, setValue, waitFor, passwordToggles } from "../test/dom";
 import { admin, startAt } from "../test/fixtures";
 
 async function profile(el: HTMLElement) {
@@ -81,4 +81,11 @@ test("profile: a wrong current password says so; a good change clears the fields
   buttonNamed(el, "Change password").click();
   await waitFor(() => assert.match(el.textContent!, /Password changed\./));
   assert.equal(byLabel(el, "Current password").value, "");
+});
+
+test("password_field_has_toggle", async () => {
+  startAt("/settings/profile", admin);
+  const el = render(<App />);
+  await profile(el);
+  assert.equal(passwordToggles(el), 3);
 });

@@ -13,6 +13,7 @@ import { FileIcon } from "../components/file-icon";
 import { StatePanel } from "../components/states";
 import { applyLang, applyTheme } from "../state/session";
 import type { Config, Entry, ShareInfo } from "../lib/types";
+import { PasswordInput } from "../components/password-input";
 
 type Props = { id: string; path: string; file: boolean };
 
@@ -131,14 +132,12 @@ function Unlock({ id, onOpen }: { id: string; onOpen(): void }) {
       <label class="field-label" for="public-password">
         {t("public.password")}
       </label>
-      <input
+      <PasswordInput
         id="public-password"
-        class="input"
-        type="password"
         autocomplete="off"
         value={password}
-        aria-describedby={error ? "public-password-error" : undefined}
-        onInput={(e) => setPassword(e.currentTarget.value)}
+        describedBy={error ? "public-password-error" : undefined}
+        onInput={setPassword}
       />
       {error && (
         <p id="public-password-error" class="error-line" role="alert">

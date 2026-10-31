@@ -57,3 +57,36 @@ test("a name in a list row is a 44 px target on phones too", () => {
   assert.match(cell, /align-self:\s*stretch/, "the cell is as tall as the row, not just its text");
   assert.match(css, /\.narrow \.cell-name \.name::after\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
 });
+
+function tokens(theme: "dark" | "light"): Record<string, string> {
+  const css = readFileSync("../tokens.css", "utf8");
+  const block = theme === "dark" ? /:root,\s*:root\[data-theme="dark"\]\s*\{([^}]*)\}/ : /:root\[data-theme="light"\]\s*\{([^}]*)\}/;
+  const body = css.match(block)![1];
+  return Object.fromEntries([...body.matchAll(/(--[\w-]+):\s*(#[0-9a-f]{6})/gi)].map((m) => [m[1], m[2]]));
+}
+
+function luminance(hex: string): number {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const l = c.map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+}
+
+function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+test("row_menu_icon_is_visible", () => {
+  for (const theme of ["dark", "light"] as const) {
+    const t = tokens(theme);
+    for (const bg of ["--cairn-bg", "--cairn-surface", "--cairn-raised"]) {
+      const c = contrast(t["--cairn-muted"], t[bg]);
+      assert.ok(c >= 3, `${theme}: muted on ${bg} is ${c.toFixed(2)}:1`);
+    }
+  }
+  const css = readFileSync("src/app.css", "utf8");
+  for (const m of css.matchAll(/([^{}]*\.(?:cell-more|tile-more)[^{}]*)\{([^}]*)\}/g)) {
+    if (/:hover|:focus/.test(m[1])) continue;
+    assert.ok(!/opacity|visibility\s*:\s*hidden|display\s*:\s*none/.test(m[2]), `${m[1].trim()} hides the button`);
+  }
+});

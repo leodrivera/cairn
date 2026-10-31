@@ -165,6 +165,21 @@ textarea {
   color: var(--cairn-text);
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field .input {
+  padding-right: var(--cairn-target);
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+}
+
 .check {
   display: flex;
   align-items: center;

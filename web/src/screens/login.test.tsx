@@ -2,7 +2,7 @@ import "../test/dom";
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { App } from "../app";
-import { flush, json, render, stubFetch, waitFor } from "../test/dom";
+import { flush, json, render, stubFetch, waitFor, passwordToggles } from "../test/dom";
 import type { Config, User } from "../lib/types";
 
 const config: Config = {
@@ -211,4 +211,10 @@ test("pt-BR sso error", async () => {
     if (before) Object.defineProperty(navigator, "languages", before);
     else delete (navigator as { languages?: unknown }).languages;
   }
+});
+
+test("password_field_has_toggle", async () => {
+  const { el } = open({});
+  await ready(el);
+  assert.equal(passwordToggles(el), 1);
 });

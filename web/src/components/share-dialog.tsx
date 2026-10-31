@@ -7,6 +7,7 @@ import { errorText, t } from "../i18n/index";
 import { Dialog } from "./dialogs";
 import { showToast } from "./toast";
 import type { Share } from "../lib/types";
+import { PasswordInput } from "./password-input";
 
 type Props = { entryPath: string; kind: "file" | "folder"; onClose(): void };
 
@@ -135,15 +136,14 @@ export function ShareDialog({ entryPath, kind, onClose }: Props) {
             <label class="field-label" for="share-password">
               {t("share.passwordField")}
             </label>
-            <input
+            <PasswordInput
               id="share-password"
-              class="input"
-              type="password"
               autocomplete="new-password"
               value={password}
               maxLength={256}
-              aria-describedby="share-password-hint"
-              onInput={(e) => setPassword(e.currentTarget.value)}
+              describedBy="share-password-hint"
+              onInput={setPassword}
+              resetKey={share}
             />
             <p id="share-password-hint" class="hint">
               {t("share.passwordRule")}

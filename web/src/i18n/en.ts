@@ -28,6 +28,8 @@ export const en = {
   "explorer.galleryView": "Gallery view",
   "explorer.newFolder": "New folder",
   "explorer.new": "New",
+  "password.show": "Show password",
+  "password.hide": "Hide password",
   "explorer.newTextFile": "New text file",
   "dialog.fileName": "File name",
   "explorer.upload": "Upload",

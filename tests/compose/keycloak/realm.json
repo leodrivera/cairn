@@ -1,0 +1,85 @@
+{
+  "realm": "cairn",
+  "enabled": true,
+  "sslRequired": "external",
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "tinyauth",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "tinyauth-test-secret-0123456789abcdef",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://auth.example.com/api/oauth/callback/keycloak"
+      ],
+      "attributes": {}
+    },
+    {
+      "clientId": "cairn",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "cairn-test-secret-0123456789abcdef",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://files.example.com/auth/oidc/google/callback"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@example.com",
+      "email": "admin@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trail-ridge 2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "stranger@example.com",
+      "email": "stranger@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Stranger",
+      "lastName": "Person",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trail-ridge 2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "unverified@example.com",
+      "email": "unverified@example.com",
+      "emailVerified": false,
+      "enabled": true,
+      "firstName": "Unverified",
+      "lastName": "Person",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Trail-ridge 2026!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

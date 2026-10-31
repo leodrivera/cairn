@@ -1,0 +1,105 @@
+# Cairn behind Traefik, with password sign-in plus sign-in through Tinyauth (an OAuth broker), and reCAPTCHA v2 on
+# the password form. Only the exact path /auth/sso goes through Tinyauth; every other path reaches Cairn directly.
+# files.example.com and auth.example.com must point at this machine, with ports 80 and 443 open to the internet.
+# Before the first start:
+#   mkdir files secrets && sudo chown 10001:10001 files
+#   printf '%s' 'your-recaptcha-secret-key' > secrets/captcha_secret
+#   printf '%s' 'your-oauth-client-secret' > secrets/oauth_client_secret
+#   echo "CAIRN_SSO_SECRET=$(openssl rand -hex 32)" > .env
+services:
+  traefik:
+    image: traefik:v3.7
+    restart: unless-stopped
+    command:
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.certresolver=le
+      - --certificatesresolvers.le.acme.email=admin@example.com
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+
+  tinyauth:
+    # Cairn speaks Tinyauth's v5 API: keep the tag on v5.
+    image: ghcr.io/tinyauthapp/tinyauth:v5
+    restart: unless-stopped
+    environment:
+      TINYAUTH_APPURL: https://auth.example.com
+      # One OAuth provider; replace the URLs with your provider's. Its redirect URL is
+      # https://auth.example.com/api/oauth/callback/<id>, here <id> is keycloak.
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_NAME: Keycloak
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_CLIENTID: tinyauth
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_CLIENTSECRETFILE: /run/secrets/oauth_client_secret
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_AUTHURL: https://id.example.com/realms/cairn/protocol/openid-connect/auth
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_TOKENURL: https://id.example.com/realms/cairn/protocol/openid-connect/token
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_USERINFOURL: https://id.example.com/realms/cairn/protocol/openid-connect/userinfo
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_REDIRECTURL: https://auth.example.com/api/oauth/callback/keycloak
+      TINYAUTH_OAUTH_PROVIDERS_KEYCLOAK_SCOPES: openid email profile
+    secrets:
+      - oauth_client_secret
+    volumes:
+      - tinyauth-data:/data
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.tinyauth.rule: Host(`auth.example.com`)
+      traefik.http.routers.tinyauth.entrypoints: websecure
+      traefik.http.services.tinyauth.loadbalancer.server.port: "3000"
+      traefik.http.middlewares.tinyauth.forwardauth.address: http://tinyauth:3000/api/auth/traefik
+      traefik.http.middlewares.tinyauth.forwardauth.authResponseHeaders: Remote-Email,Remote-Name
+
+  cairn:
+    image: ghcr.io/OWNER/cairn:0.1
+    container_name: cairn
+    restart: unless-stopped
+    volumes:
+      - ./files:/srv
+      - cairn-data:/data
+    environment:
+      CAIRN_PUBLIC_URL: https://files.example.com
+      CAIRN_TRUSTED_PROXIES: 172.31.0.0/24
+      CAIRN_AUTH_METHODS: password,oauth
+      CAIRN_OAUTH_BROKER_URL: http://tinyauth:3000
+      # The same value Traefik adds as X-Auth-Secret below; both come from .env.
+      CAIRN_OAUTH_SECRET: ${CAIRN_SSO_SECRET:?set CAIRN_SSO_SECRET in .env}
+      CAIRN_OAUTH_LOGOUT_URL: https://auth.example.com/logout
+      CAIRN_CAPTCHA: recaptcha
+      CAIRN_CAPTCHA_SITE_KEY: 6Lc-your-site-key
+      CAIRN_CAPTCHA_SECRET_FILE: /run/secrets/captcha_secret
+    secrets:
+      - captcha_secret
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.cairn.rule: Host(`files.example.com`)
+      traefik.http.routers.cairn.entrypoints: websecure
+      # /auth/sso alone goes through Tinyauth, which adds Remote-Email; then Traefik adds the shared secret, which
+      # Tinyauth does not send by itself.
+      traefik.http.routers.cairn-sso.rule: Host(`files.example.com`) && Path(`/auth/sso`)
+      traefik.http.routers.cairn-sso.entrypoints: websecure
+      traefik.http.routers.cairn-sso.middlewares: tinyauth,cairn-sso-secret
+      traefik.http.middlewares.cairn-sso-secret.headers.customrequestheaders.X-Auth-Secret: ${CAIRN_SSO_SECRET}
+      traefik.http.services.cairn.loadbalancer.server.port: "8080"
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+volumes:
+  cairn-data:
+  tinyauth-data:
+  letsencrypt:
+
+secrets:
+  captcha_secret:
+    file: ./secrets/captcha_secret
+  oauth_client_secret:
+    file: ./secrets/oauth_client_secret

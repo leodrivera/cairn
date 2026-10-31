@@ -1,0 +1,32 @@
+# Your own Keycloak at id.example.com, behind the Traefik of the example it is added to:
+#   docker compose -f compose.yml -f ../keycloak.yml up -d
+# Set KC_ADMIN and KC_ADMIN_PASSWORD in .env for the first sign-in to the admin console.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start
+    restart: unless-stopped
+    environment:
+      # The public address; tokens carry it as the issuer.
+      KC_HOSTNAME: https://id.example.com
+      # Traefik ends TLS and sends X-Forwarded-* headers.
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN:?set KC_ADMIN in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?set KC_ADMIN_PASSWORD in .env}
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.keycloak.rule: Host(`id.example.com`)
+      traefik.http.routers.keycloak.entrypoints: websecure
+      traefik.http.services.keycloak.loadbalancer.server.port: "8080"
+
+volumes:
+  keycloak-data:

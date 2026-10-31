@@ -9,7 +9,8 @@ ADMIN_PASSWORD='Trail-ridge 2026!'
 CHECKS=0
 FAILED=0
 CURRENT=""   # the example whose logs a failed check prints
-PROJECTS=()  # "project|dir|files..." of every project brought up, for the final teardown
+PROJECTS=()  # "project|files..." of every project brought up, for the final teardown
+ADDONS=()    # add-on files of examples/compose (keycloak.yml, own-ca.yml) that the current example runs with
 
 # The exact commands the README gives. tests/compose/check-readme.sh fails when one is missing from the README.
 # Sentences the README must carry word for word, because a reader acts on them.
@@ -66,14 +67,20 @@ prepare() { # example name
   cp "$ROOT/examples/compose/"*.yml "$WORK/" 2>/dev/null || true
   mkdir -p "$dir/files" "$dir/secrets"
   as_root "$dir" 'chown 10001:10001 /w/files'
-  printf '%s\n' "${CAPTCHA_SECRET:-6Lc-placeholder-secret}" > "$dir/secrets/captcha_secret"
+  printf '%s' 6Lc-placeholder-secret > "$dir/secrets/captcha_secret"
+  printf '%s' tinyauth-test-secret-0123456789abcdef > "$dir/secrets/oauth_client_secret"
+  printf '%s' cairn-test-secret-0123456789abcdef > "$dir/secrets/oidc_client_secret"
+  printf 'CAIRN_SSO_SECRET=%s\nKC_ADMIN=admin\nKC_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" \
+    > "$dir/.env"
 }
 
 up() { # example name [extra compose files...]
   local example=$1 name=$2
   shift 2
   CURRENT=$name
-  COMPOSE_FILES=("$WORK/$name/compose.yml" "$TESTS/override/$example.yml" "$@")
+  COMPOSE_FILES=("$WORK/$name/compose.yml")
+  for a in "${ADDONS[@]}"; do COMPOSE_FILES+=("$WORK/$a"); done
+  COMPOSE_FILES+=("$TESTS/override/$example.yml" "$@")
   # So that a plain `docker compose ...` from the README, run in the example's folder, reaches this project.
   export COMPOSE_PROJECT_NAME=cairn-test-$name
   COMPOSE_FILE=$(IFS=:; echo "${COMPOSE_FILES[*]}")
@@ -124,7 +131,10 @@ login() { # base email password jar [curl options...]
 # A path is allowed when it starts with a line of tests/compose/override/<example>.allow.
 override_only_allowed() { # example name
   local example=$1 name=$2 dir=$WORK/$2 bad
-  (cd "$dir" && docker compose -p "cairn-test-$name" -f compose.yml config --format json) > "$WORK/$name.alone.json" || return 1
+  local alone=(-f compose.yml)
+  for a in "${ADDONS[@]}"; do alone+=(-f "$WORK/$a"); done
+  (cd "$dir" && docker compose -p "cairn-test-$name" "${alone[@]}" config --format json) > "$WORK/$name.alone.json" \
+    || return 1
   (cd "$dir" && compose_cmd config --format json) > "$WORK/$name.test.json" || return 1
   bad=$(python3 -I - "$WORK/$name.alone.json" "$WORK/$name.test.json" "$TESTS/override/$example.allow" <<'EOF'
 import json, sys

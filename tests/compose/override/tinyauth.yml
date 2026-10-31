@@ -1,0 +1,34 @@
+# The image under test; Traefik on loopback ports with the test certificate, answering inside the network for the
+# three hosts; Tinyauth and Keycloak trusting the test CA; Keycloak loading the test realm; CAPTCHA off so a
+# password sign-in can run offline.
+services:
+  traefik:
+    command: !override
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --providers.file.filename=/certs/tls.yml
+    ports: !override
+      - 127.0.0.1:18081:80
+      - 127.0.0.1:18443:443
+    volumes:
+      - ${CAIRN_TEST_CA:?}:/certs:ro
+    networks:
+      default:
+        aliases: [files.example.com, auth.example.com, id.example.com]
+  tinyauth:
+    environment:
+      SSL_CERT_FILE: /certs/ca.pem
+    volumes:
+      - ${CAIRN_TEST_CA:?}:/certs:ro
+  keycloak:
+    command: !override [start, --import-realm]
+    volumes:
+      - ${CAIRN_TEST_REALM:?}:/opt/keycloak/data/import/realm.json:ro
+  cairn:
+    image: ${CAIRN_TEST_IMAGE:?}
+    environment:
+      CAIRN_CAPTCHA: none

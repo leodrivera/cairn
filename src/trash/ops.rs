@@ -97,6 +97,7 @@ pub fn to_trash(
     if days == 0 {
         return Err(FsError::TrashOff);
     }
+    let _moving = trashes.moving();
     let (dir, name) = scope.parent(rel)?;
     let st = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let top = mount_top(&open_root(trashes)?, &dir)?;
@@ -185,6 +186,7 @@ pub fn restore(
     base: &str,
     entry: &Entry,
 ) -> Result<RelPath, FsError> {
+    let _moving = trashes.moving();
     let rel = crate::shares::split_scope(&entry.path, base).ok_or(FsError::NotFound)?;
     let parent = rel.parent().ok_or(FsError::ScopeRoot)?;
     let holder_scope = trash_scope(trashes, entry)?;
@@ -230,6 +232,11 @@ pub fn restore(
 
 /// Deletes `entry` for good: its folder in the trash, then its row.
 pub fn remove(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> {
+    let _moving = trashes.moving();
+    remove_held(trashes, db, entry)
+}
+
+fn remove_held(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> {
     match trash_scope(trashes, entry)
         .and_then(|s| crate::fs::edit::remove(&s, &RelPath::parse(&entry.id)?))
     {
@@ -243,6 +250,7 @@ pub fn remove(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> 
 
 /// Removes every entry whose date has come. Returns how many went.
 pub fn purge(trashes: &Trashes, db: &Db, now: i64) -> usize {
+    let _upkeep = trashes.upkeep();
     trashes.refresh(db);
     let Ok(rows) = super::all(db) else {
         return 0;
@@ -251,7 +259,7 @@ pub fn purge(trashes: &Trashes, db: &Db, now: i64) -> usize {
         .iter()
         .filter(|e| e.expires_at <= now)
         .filter(|e| {
-            remove(trashes, db, e)
+            remove_held(trashes, db, e)
                 .inspect_err(|err| tracing::warn!(event = "trash.purge_failed", error = ?err))
                 .is_ok()
         })
@@ -265,6 +273,7 @@ pub fn purge(trashes: &Trashes, db: &Db, now: i64) -> usize {
 /// Drops rows whose item is gone from a trash folder of ours, and counts folders there that no row names (left
 /// alone). A trash folder that is not there right now (an unplugged disk) keeps its rows.
 pub fn reconcile(trashes: &Trashes, db: &Db) -> (usize, usize) {
+    let _upkeep = trashes.upkeep();
     trashes.refresh(db);
     let Ok(rows) = super::all(db) else {
         return (0, 0);

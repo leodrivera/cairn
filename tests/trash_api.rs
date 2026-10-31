@@ -582,3 +582,40 @@ async fn undo_restores_by_entries() {
     );
     assert!(root.join("a.txt").exists() && root.join("b.txt").exists());
 }
+
+#[tokio::test]
+async fn expired_entry_not_restorable() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "a.txt", "a");
+    let id = ids(&delete(&h, &c, &["a.txt"], None).await)[0].clone();
+    // Its date has come, but the hourly purge has not run yet.
+    h.state
+        .db
+        .with(|db| db.execute("UPDATE trash SET expires_at = 1", []))
+        .unwrap();
+    assert!(trash_list(&h, &c).await.is_empty());
+    let res = restore(&h, &c, &[&id]).await;
+    assert_eq!(res.json["failed"][0]["error"], "not_found", "{}", res.json);
+    assert!(!root.join("a.txt").exists());
+}
+
+#[test]
+fn reconcile_waits_for_moves_in_flight() {
+    let (h, _dir) = harness_with_root(&[]);
+    let trash = h.state.trash.clone();
+    let db = h.state.db.clone();
+    let guard = h.state.trash.moving();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        cairn::trash::ops::reconcile(&trash, &db);
+        cairn::trash::ops::purge(&trash, &db, cairn::now());
+        tx.send(()).unwrap();
+    });
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+        "reconcile ran while a move was in flight"
+    );
+    drop(guard);
+    rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+}

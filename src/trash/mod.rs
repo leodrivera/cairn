@@ -181,7 +181,9 @@ pub fn visible(state: &AppState, user: &crate::users::User) -> Vec<(Entry, Via)>
     let under = |path: &str, folder: &str| {
         crate::shares::split_scope(path, folder).is_some_and(|r| !r.is_root())
     };
+    // An entry whose date has come is gone for everyone, even before the hourly purge removes it.
     rows.into_iter()
+        .filter(|e| e.expires_at > now)
         .filter_map(|e| {
             if user.perms.write && crate::shares::split_scope(&e.path, &user.scope).is_some() {
                 return Some((e, Via::Own));

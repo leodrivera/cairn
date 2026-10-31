@@ -3,7 +3,7 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{Mode, OFlags};
@@ -97,6 +97,9 @@ struct Inner {
 pub struct Trashes {
     root: PathBuf,
     inner: Mutex<Inner>,
+    /// Moves into and out of the trash hold it shared; reconcile and the purge hold it alone, so they never see a
+    /// row whose item is between its row and its rename.
+    moves: RwLock<()>,
 }
 
 enum Found {
@@ -145,9 +148,20 @@ impl Trashes {
         let t = Trashes {
             root,
             inner: Mutex::new(Inner::default()),
+            moves: RwLock::new(()),
         };
         t.refresh(db);
         t
+    }
+
+    /// Held while an item moves into or out of the trash, or is removed from it.
+    pub fn moving(&self) -> RwLockReadGuard<'_, ()> {
+        self.moves.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Held by reconcile and the purge: no move is in flight meanwhile.
+    pub fn upkeep(&self) -> RwLockWriteGuard<'_, ()> {
+        self.moves.write().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Looks again at every mount top, for the startup check and each purge.

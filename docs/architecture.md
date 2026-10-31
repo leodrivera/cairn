@@ -359,7 +359,7 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
   `412`, and the editor says "This file changed on the server since you opened it."
 - Delete moves items to the trash (section 7.2) and needs a confirmation in the UI; "Delete permanently" is a second,
   separate choice. The API takes the list in the body, never a wildcard. A delete that cannot go to the trash is
-  refused for that item (`trash_off`, `trash_taken` or `other_disk`), never silently made permanent.
+  refused for that item (`trash_off`, `trash_taken`, `other_disk` or `holds_mount`), never silently made permanent.
 - Overwriting a file (an upload with `?replace=1`, or a text save) is not a delete and does not go to the trash.
 - Thumbnails, when the setting is on, are the original image served by `/api/raw` with `loading="lazy"`. No
   resizing and no cache on the server.
@@ -466,6 +466,9 @@ docker exec -it cairn /cairn user delete guest@example.com
   (`statx`, Linux 5.8), or on older kernels by the mount points in `/proc/self/mountinfo`. If the rename still
   fails with `EXDEV`, the item is refused with "{name} is on another disk, so it cannot go to the trash." and
   offered a permanent delete.
+- An item that is a mount point, or holds one, is refused by both the trash and a permanent delete with "{name} has
+  another disk mounted inside. Unmount it first." (`409 holds_mount`): the rename would carry the other disk into
+  the trash, and the purge would later empty it.
 - A trash folder is created on first use, mode `0700`, with a marker file naming this database. A `.cairn-trash`
   without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
   trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says
@@ -474,6 +477,9 @@ docker exec -it cairn /cairn user delete guest@example.com
   and when it goes. The row is written before the rename, so a crash leaves at most a row without a file, which
   reconciliation drops; files in a trash folder that no row names are counted, logged and left alone. Cairn
   never removes anything it did not put in the trash.
+- An entry whose date has come is gone from every list and cannot be restored, even before the hourly purge
+  removes it. Reconciliation and the purge wait for moves in flight, so they never drop a row whose item is on its
+  way into the trash.
 - Each entry keeps the removal date set when it was deleted: changing the days, or setting them to 0, affects later
   deletes only. With 0 nothing new enters; what is there stays until its date. Reconciliation and the purge run at
   start and every hour (`trash.purged` with a count).

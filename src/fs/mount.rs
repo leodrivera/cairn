@@ -42,10 +42,47 @@ pub fn mount_id(fd: &OwnedFd) -> Option<u64> {
         .then_some(x.stx_mnt_id)
 }
 
+fn fake_points() -> &'static Mutex<Vec<PathBuf>> {
+    static POINTS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+    POINTS.get_or_init(Default::default)
+}
+
+/// Tests only: the folder at `path` is listed as a mount point.
+#[doc(hidden)]
+pub fn fake_mount_point(path: &Path) {
+    let real = std::fs::canonicalize(path).expect("faked folder exists");
+    fake_points().lock().expect("fake points").push(real);
+}
+
+/// Refuses `name` in `dir` when it is a mount point or holds one: moving it into the trash would carry the other
+/// disk along, and removing it would empty that disk.
+pub fn refuse_mounts_inside(dir: &OwnedFd, name: &std::ffi::OsStr) -> Result<(), super::FsError> {
+    let Ok(here) = std::fs::read_link(format!(
+        "/proc/self/fd/{}",
+        rustix::fd::AsRawFd::as_raw_fd(dir)
+    )) else {
+        return Ok(());
+    };
+    let item = here.join(name);
+    if mount_points(&here).iter().any(|p| p.starts_with(&item)) {
+        return Err(super::FsError::HoldsMount(
+            name.to_string_lossy().into_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Mount points at or below `root`, from `/proc/self/mountinfo`.
 pub fn mount_points(root: &Path) -> Vec<PathBuf> {
+    let fakes: Vec<PathBuf> = fake_points()
+        .lock()
+        .expect("fake points")
+        .iter()
+        .filter(|p| *p != root && p.starts_with(root))
+        .cloned()
+        .collect();
     let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") else {
-        return Vec::new();
+        return fakes;
     };
     let unescape = |s: &str| {
         let b = s.as_bytes();
@@ -68,5 +105,6 @@ pub fn mount_points(root: &Path) -> Vec<PathBuf> {
     text.lines()
         .filter_map(|l| l.split(' ').nth(4).map(unescape))
         .filter(|p| p != root && p.starts_with(root))
+        .chain(fakes)
         .collect()
 }

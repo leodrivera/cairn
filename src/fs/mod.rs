@@ -43,6 +43,8 @@ pub enum FsError {
     Reserved,
     /// The item's mount could not be told apart, so it cannot be renamed into a trash folder.
     OtherDisk(String),
+    /// The item is a mount point or holds one (named): neither the trash nor a permanent delete may take it.
+    HoldsMount(String),
     /// The trash is off (0 days); a delete would be permanent.
     TrashOff,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
@@ -200,6 +202,11 @@ impl From<FsError> for ApiError {
                 S::CONFLICT,
                 "other_disk",
                 format!("{name} is on another disk, so it cannot go to the trash."),
+            ),
+            FsError::HoldsMount(name) => (
+                S::CONFLICT,
+                "holds_mount",
+                format!("{name} has another disk mounted inside. Unmount it first."),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

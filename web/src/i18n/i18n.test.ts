@@ -112,3 +112,9 @@ test("sharing_strings_in_pt_br", () => {
   assert.equal(t("shared.leave"), "Sair");
   assert.equal(t("error.grant_gone"), "Este item compartilhado não está mais disponível.");
 });
+
+test("holds_mount_in_pt_br", () => {
+  setLang("pt-BR");
+  const f = new ApiFailure(409, "holds_mount", "media has another disk mounted inside. Unmount it first.");
+  assert.equal(errorText(f, { name: "media" }), "media tem outro disco montado dentro. Desmonte-o primeiro.");
+});

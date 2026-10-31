@@ -26,6 +26,7 @@ pub fn mkdir(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
 
 pub fn remove(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
     let (dir, name) = scope.parent(path)?;
+    super::mount::refuse_mounts_inside(&dir, name.as_os_str())?;
     remove_at(scope, &dir, &name, 0)
 }
 

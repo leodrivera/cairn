@@ -99,6 +99,7 @@ pub fn to_trash(
     }
     let _moving = trashes.moving();
     let (dir, name) = scope.parent(rel)?;
+    crate::fs::mount::refuse_mounts_inside(&dir, name.as_os_str())?;
     let st = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let top = mount_top(&open_root(trashes)?, &dir)?;
     let (trash, trash_dir) = trashes.for_dir(db, &top)?;

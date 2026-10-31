@@ -613,9 +613,41 @@ fn reconcile_waits_for_moves_in_flight() {
         tx.send(()).unwrap();
     });
     assert!(
-        rx.recv_timeout(std::time::Duration::from_millis(200)).is_err(),
+        rx.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
         "reconcile ran while a move was in flight"
     );
     drop(guard);
     rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+}
+
+#[tokio::test]
+async fn folder_holding_mount_refused() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "media/photos/cat.jpg", "c");
+    put(&root, "media/notes.txt", "n");
+    cairn::fs::mount::fake_mount_point(&root.join("media/photos"));
+    for permanent in [None, Some(true)] {
+        let res = delete(&h, &c, &["media"], permanent).await;
+        assert_eq!(
+            res.json["failed"][0]["error"], "holds_mount",
+            "{}",
+            res.json
+        );
+        assert_eq!(
+            res.json["failed"][0]["message"],
+            "media has another disk mounted inside. Unmount it first.",
+        );
+    }
+    // The mount point itself is refused too; what sits beside it is not.
+    let res = delete(&h, &c, &["media/photos"], None).await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "holds_mount",
+        "{}",
+        res.json
+    );
+    assert!(root.join("media/photos/cat.jpg").exists());
+    let res = delete(&h, &c, &["media/notes.txt"], None).await;
+    assert_eq!(res.json["deleted"], 1, "{}", res.json);
 }

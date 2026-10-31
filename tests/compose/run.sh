@@ -12,6 +12,9 @@ examples=("$@")
 source "$(dirname "$0")/lib.sh"
 # The guide must quote the files this run checks.
 "$TESTS/check-readme.sh" || exit 1
+# The Fail2ban filter against forged lines, and the jail banning for real in a throwaway network namespace.
+"$TESTS/check-fail2ban.sh" || exit 1
+"$TESTS/check-fail2ban-jail.sh" || exit 1
 export CAIRN_TEST_IMAGE=$IMAGE
 WORK=$(mktemp -d)
 trap teardown EXIT
@@ -125,7 +128,7 @@ run_quick() {
 
 # The other examples keep their checks in a file of their own.
 for f in "$TESTS"/*.sh; do
-  [[ $f == */lib.sh || $f == */run.sh || $f == */check-readme.sh ]] || source "$f"
+  [[ $f == */lib.sh || $f == */run.sh || $f == */check-*.sh ]] || source "$f"
 done
 
 for example in "${examples[@]}"; do

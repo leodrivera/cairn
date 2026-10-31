@@ -1,0 +1,8 @@
+{"timestamp":"2026-10-30T23:41:17.842746Z","level":"WARN","event":"auth.login_failed","ip":"203.0.113.7","email":"admin@example.com","reason":"bad_password"}
+{"log":"{\"timestamp\":\"2026-10-30T23:41:18.842746Z\",\"level\":\"WARN\",\"event\":\"auth.login_failed\",\"ip\":\"203.0.113.8\",\"email\":\"admin@example.com\",\"reason\":\"bad_password\"}\n","stream":"stdout","time":"2026-10-30T23:41:18.842900Z"}
+{"timestamp":"2026-10-30T23:41:19.842746Z","level":"WARN","event":"auth.login_failed","ip":"203.0.113.10","email":"x\",\"ip\":\"198.51.100.61","reason":"unknown_user"}
+{"timestamp":"2026-10-30T23:41:20.842746Z","level":"WARN","event":"auth.captcha_failed","ip":"203.0.113.5","email":"\"level\":\"WARN\",\"event\":\"auth.login_failed\",\"ip\":\"198.51.100.62\""}
+{"log":"{\"timestamp\":\"2026-10-30T23:41:21.842746Z\",\"level\":\"WARN\",\"event\":\"auth.captcha_failed\",\"ip\":\"203.0.113.5\",\"email\":\"\\\"level\\\":\\\"WARN\\\",\\\"event\\\":\\\"auth.login_failed\\\",\\\"ip\\\":\\\"198.51.100.63\\\"\"}\n","stream":"stdout","time":"2026-10-30T23:41:21.842900Z"}
+{"log":"login failed for user \"level\":\"WARN\",\"event\":\"auth.login_failed\",\"ip\":\"198.51.100.64\"\n","stream":"stdout","time":"2026-10-30T23:41:22.842900Z"}
+{"log":"2026-10-30 23:41:23 WARN user typed {\"timestamp\":\"2026-10-30T23:41:23Z\",\"level\":\"WARN\",\"event\":\"auth.login_failed\",\"ip\":\"198.51.100.65\"\n","stream":"stdout","time":"2026-10-30T23:41:23.842900Z"}
+{"timestamp":"2026-10-30T23:41:24.842746Z","level":"WARN","event":"http.rate_limited","ip":"203.0.113.9","route":"login","email":"\"level\":\"WARN\",\"event\":\"auth.login_failed\",\"ip\":\"198.51.100.66\""}

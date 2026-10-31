@@ -278,13 +278,14 @@ ban for an address that tries many accounts. A failed password sign-in is the on
 <!-- file: examples/compose/fail2ban/cairn.conf -->
 ```ini
 # Fail2ban filter for Cairn: counts only failed password sign-ins (the 401 of POST /api/auth/login).
-# Matches Cairn's JSON log line as written, and as Docker's json-file log stores it (inside "log", quotes escaped).
-# The patterns hold no optional backslash: a quote typed into a field (the e-mail) is always escaped one level
-# deeper than these, so an address typed there is never read as the client's.
+# Matches Cairn's JSON log line as written (journald, docker logs) and as Docker's json-file log stores it (inside
+# "log", quotes escaped). Both patterns are anchored at the start of the line and spell out the fields before the
+# address, so text someone typed (an e-mail, another app's log) can never supply the address that gets banned.
+# Fail2ban cuts the date out of the line before matching, which is why the timestamp's value is "[^"]*".
 # Copy to /etc/fail2ban/filter.d/cairn.conf.
 [Definition]
-failregex = "level":"WARN","event":"auth\.login_failed","ip":"<HOST>"
-            \\"level\\":\\"WARN\\",\\"event\\":\\"auth\.login_failed\\",\\"ip\\":\\"<HOST>\\"
+failregex = ^\{"timestamp":"[^"]*","level":"WARN","event":"auth\.login_failed","ip":"<HOST>",
+            ^\{"log":"\{\\"timestamp\\":\\"[^"\\]*\\",\\"level\\":\\"WARN\\",\\"event\\":\\"auth\.login_failed\\",\\"ip\\":\\"<HOST>\\",
 ignoreregex =
 ```
 
@@ -296,19 +297,25 @@ ignoreregex =
 [cairn]
 enabled  = true
 filter   = cairn
-# Docker's json-file logs; the filter matches only Cairn's line. With the journald log driver, use
-# backend = systemd and journalmatch = CONTAINER_NAME=cairn instead.
+# Docker's json-file logs; the filter matches only Cairn's line. Some distributions (Ubuntu 24.04) default to
+# backend = systemd, which ignores logpath, so the backend is set here.
+backend  = auto
 logpath  = /var/lib/docker/containers/*/*-json.log
 maxretry = 8
 findtime = 15m
 bantime  = 1h
-# Published ports skip the INPUT chain, so the ban goes in DOCKER-USER.
+# Published ports skip the INPUT chain, so the ban goes in Docker's DOCKER-USER chain, which only the iptables
+# actions reach (Ubuntu 24.04 defaults to nftables, which uses a table of its own).
+banaction = iptables-multiport
 chain    = DOCKER-USER
 port     = http,https
 ```
 
 Keep `maxretry` between 6 and 10 and `findtime` at 15 minutes or more: a person mistyping their own password then
 meets Cairn's `429` before any ban. Behind a proxy, set `CAIRN_TRUSTED_PROXIES` first, or the ban hits the proxy.
+The jail sets `backend` and `banaction` itself, because some distributions (Ubuntu 24.04) default to the systemd
+journal and to nftables, which would leave it reading nothing and banning nowhere Docker's ports pass. With the
+journald log driver instead of json-file, use `backend = systemd` and `journalmatch = CONTAINER_NAME=cairn`.
 
 ## Building from source
 

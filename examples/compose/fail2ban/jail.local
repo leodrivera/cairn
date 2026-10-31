@@ -4,12 +4,15 @@
 [cairn]
 enabled  = true
 filter   = cairn
-# Docker's json-file logs; the filter matches only Cairn's line. With the journald log driver, use
-# backend = systemd and journalmatch = CONTAINER_NAME=cairn instead.
+# Docker's json-file logs; the filter matches only Cairn's line. Some distributions (Ubuntu 24.04) default to
+# backend = systemd, which ignores logpath, so the backend is set here.
+backend  = auto
 logpath  = /var/lib/docker/containers/*/*-json.log
 maxretry = 8
 findtime = 15m
 bantime  = 1h
-# Published ports skip the INPUT chain, so the ban goes in DOCKER-USER.
+# Published ports skip the INPUT chain, so the ban goes in Docker's DOCKER-USER chain, which only the iptables
+# actions reach (Ubuntu 24.04 defaults to nftables, which uses a table of its own).
+banaction = iptables-multiport
 chain    = DOCKER-USER
 port     = http,https

@@ -90,3 +90,9 @@ test("row_menu_icon_is_visible", () => {
     assert.ok(!/opacity|visibility\s*:\s*hidden|display\s*:\s*none/.test(m[2]), `${m[1].trim()} hides the button`);
   }
 });
+
+test("dialog_buttons_wrap", () => {
+  const css = readFileSync("src/app.css", "utf8");
+  const rule = css.match(/\.dialog-buttons\s*\{([^}]*)\}/)![1];
+  assert.match(rule, /flex-wrap:\s*wrap/);
+});

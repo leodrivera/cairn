@@ -146,6 +146,35 @@ upgrade_pulls_new_image() {
   me_is_admin "$QUICK" "$WORK/upgrade.jar"
 }
 
+# One trash per mount, as on a NAS: ./files at /srv and ./photos at /srv/photos are two bind mounts, and rename does
+# not cross them. A delete in /srv/photos must land in photos/.cairn-trash and come back on restore.
+trash_per_mount() {
+  prepare quick permount
+  mkdir -p "$WORK/permount/photos"
+  as_root "$WORK/permount" 'chown 10001:10001 /w/photos'
+  printf 'services:\n  cairn:\n    volumes: !override\n      - ./files:/srv\n      - ./photos:/srv/photos\n      - cairn-data:/data\n' \
+    > "$WORK/permount/mounts.yml"
+  up quick permount "$WORK/permount/mounts.yml" || return 1
+  admin >/dev/null || return 1
+  local jar=$WORK/permount.jar
+  [[ $(login "$QUICK" admin@example.com "$ADMIN_PASSWORD" "$jar") == 200 ]] || return 1
+  local up_status
+  up_status=$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" -H 'X-Cairn: 1' -X PUT --data-binary 'trail' \
+    "$QUICK/api/upload/photos/a.txt")
+  [[ $up_status == 201 ]] || { echo "upload answered $up_status"; return 1; }
+  local res id
+  res=$(curl -s -b "$jar" -H 'X-Cairn: 1' -H 'Content-Type: application/json' -X DELETE \
+    --data '{"paths":["photos/a.txt"]}' "$QUICK/api/files")
+  id=$(jq -r '.entries[0] // empty' <<< "$res")
+  [[ -n $id ]] || { echo "delete answered $res"; return 1; }
+  as_root "$WORK/permount" "test -f /w/photos/.cairn-trash/$id/a.txt" || { echo "not in photos/.cairn-trash"; return 1; }
+  as_root "$WORK/permount" "test ! -e /w/files/.cairn-trash/$id" || { echo "crossed into the root's trash"; return 1; }
+  res=$(curl -s -b "$jar" -H 'X-Cairn: 1' -H 'Content-Type: application/json' \
+    --data "$(jq -cn --arg id "$id" '{ids: [$id]}')" "$QUICK/api/trash/restore")
+  jq -e '.restored[0].path == "photos/a.txt"' <<< "$res" >/dev/null || { echo "restore answered $res"; return 1; }
+  as_root "$WORK/permount" 'test "$(cat /w/photos/a.txt)" = trail' || { echo "not back in place"; return 1; }
+}
+
 run_quick() {
   prepare quick quick
   CURRENT=quick
@@ -166,6 +195,8 @@ run_quick() {
   down rootdata2
   check upgrade_pulls_new_image upgrade_pulls_new_image
   down upgrade
+  check trash_per_mount trash_per_mount
+  down permount
   docker rm -f "$REGISTRY" >/dev/null 2>&1
   docker image rm 127.0.0.1:15001/cairn:0.1 >/dev/null 2>&1
 }

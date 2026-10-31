@@ -265,3 +265,9 @@ test("delete_dialog_grant_mode", async () => {
   assert.match(el.textContent!, /Move 3 items to the trash\?/);
   assert.ok(![...el.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Delete permanently"));
 });
+
+test("trash_dialog_one_item_reads_singular", async () => {
+  const el = render(<DeleteDialog dir="" items={[file("notes.txt")]} mode="trash" onConfirm={async () => {}} onClose={() => {}} />);
+  await flush();
+  assert.match(el.textContent!, /notes\.txt will go to the trash\. You can restore it from there\./);
+});

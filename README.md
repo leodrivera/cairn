@@ -21,6 +21,8 @@ A cairn is a stack of stones that marks a trail. Cairn stacks your folders and f
 - View and edit text files in the browser
 - Optional image thumbnails: the browser loads the original file, and Cairn does no resizing
 - Share links with expiry, optional password and download control
+- Share a file or folder with other people on the same server, view only or with editing, for a set time
+- A trash: deleted items wait a set number of days (30 by default) and can be restored, or deleted for good
 - Multiple users, each limited to a scope (a folder) with read, write, share and admin permissions
 - Sign in with an e-mail and password, with OAuth providers through a broker such as Tinyauth, with any OpenID Connect provider directly, or any mix of these
 - Optional CAPTCHA on the password form: reCAPTCHA v2, Cloudflare Turnstile or hCaptcha
@@ -33,8 +35,7 @@ A cairn is a stack of stones that marks a trail. Cairn stacks your folders and f
 These keep Cairn small. Each one needs extra modules or state that a light server should not carry.
 
 - No terminal or command runner
-- No trash: deletes are permanent, behind a confirmation
-- No recent or starred files: Cairn keeps no state about your files, so nothing goes stale when you move them outside it
+- No recent or starred files: Cairn keeps only grants and trash entries, by path, so nothing goes stale when you move files outside it
 - No video preview, and no server-side image processing
 
 ## Installation
@@ -257,10 +258,18 @@ When everything starts at once, the log may show `oidc.unreachable` or `oauth.br
 before the provider or the broker. That is normal. Cairn asks an OIDC provider again every minute, and asks the
 broker again 20 seconds after a failed try; the sign-in buttons appear then.
 
+### The trash
+
+Deleted items go to a `.cairn-trash` folder at the top of the folder you mounted at `/srv`, and at the top of each
+other folder mounted inside it, so a delete is always a quick rename on the same disk. They stay 30 days, then
+go for good. Change the days in Server settings, or set `CAIRN_TRASH_DAYS` (0 to 3650; `0` turns the trash off and
+makes deletes permanent). Cairn only uses a `.cairn-trash` folder it made itself: if you already have a folder by
+that name, rename it, and Server settings tells you where.
+
 ### Backups and restore
 
-The database holds users, sessions, settings and share links; your files stay in their folder. `cairn backup`
-writes a consistent copy while Cairn runs:
+The database holds users, sessions, settings, share links, grants and the list of what is in the trash; your
+files, and the trash folders, stay in their folder. `cairn backup` writes a consistent copy while Cairn runs:
 
 ```bash
 docker exec cairn /cairn backup /data/backup.db

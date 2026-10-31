@@ -378,7 +378,7 @@ test("the menu offers Share… to people who may share", async () => {
   rows(el)[3].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }));
   await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
   click(menuItem(el, "Share…"));
-  await waitFor(() => assert.match(el.querySelector('[role="dialog"]')!.textContent!, /Share link/));
+  await waitFor(() => assert.equal(el.querySelector('[role="dialog"] h2')!.textContent, "Share notes.txt"));
 });
 
 test("Shift+F10 on a row opens its menu; F2 renames the selected item", async () => {

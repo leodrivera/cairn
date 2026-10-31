@@ -85,7 +85,7 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
   };
 
   return (
-    <Dialog title={t("share.title")} onClose={onClose}>
+    <Dialog title={t("share.title", { name })} onClose={onClose}>
       <form
         class="dialog-form share-form"
         noValidate

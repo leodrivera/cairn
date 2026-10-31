@@ -346,10 +346,10 @@ export function DeleteDialog({ dir, items, mode, reason, onConfirm, onClose }: D
     body = t("dialog.insteadBody", { names });
   } else if (forever) {
     title = tn("dialog.foreverTitle", items.length);
-    body = t("dialog.foreverBody", { names });
+    body = tn("dialog.foreverBody", items.length, { names });
   } else {
     title = tn("dialog.trashTitle", items.length);
-    body = t("dialog.trashBody", { names });
+    body = tn("dialog.trashBody", items.length, { names });
   }
   return (
     <Dialog title={title} onClose={onClose}>

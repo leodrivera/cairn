@@ -24,8 +24,10 @@ disagree, one of them has a bug.
 
 - One process, one static binary. The web front-end is compiled at build time and embedded in the binary.
 - No background workers, no job queue, no cache server, no search index. Every request does its own work and ends.
-- No state about files in the database: no recent files, no starred files, no trash. The filesystem is the only
-  record, so files moved outside Cairn (over SMB, from a terminal) never leave stale entries behind.
+- Almost no state about files in the database: no recent files, no starred files. The filesystem is the record.
+  Two things are kept, both by path like share links: grants (who else may open a file or folder, section 7.1) and
+  trash entries (what was deleted from where, section 7.2). Nothing follows a file that is moved outside Cairn; a
+  grant or link to a path that is gone simply stops working.
 - Two mounted volumes: `/srv` is the server root (the files people browse), `/data` holds the SQLite database.
   The database never lives under the server root, so no user can see or download it.
 - TLS is the reverse proxy's job. Cairn speaks plain HTTP inside the container network.
@@ -49,8 +51,8 @@ Target budget, checked in CI: binary under 12 MB, idle memory under 20 MB, front
 ## 3. Configuration
 
 All configuration comes from environment variables. Settings an admin changes in the UI (default theme,
-thumbnails) are stored in the database (`settings` rows `default_theme` and `thumbnails`, changed with
-`PUT /api/settings`); everything that decides security or networking is environment only, so
+thumbnails, trash days) are stored in the database (`settings` rows `default_theme`, `thumbnails` and `trash_days`,
+changed with `PUT /api/settings`); everything that decides security or networking is environment only, so
 the UI cannot be used to weaken it. The Server settings screen shows those values read-only.
 
 Every secret also accepts `<NAME>_FILE`, a path to a file holding the value (Docker and Compose secrets). Setting
@@ -81,6 +83,7 @@ Startup checks the whole configuration and exits with one clear message per prob
 | `CAIRN_EDIT_MAX` | `2097152` | Largest text file the editor opens, in bytes. |
 | `CAIRN_LOG` | `info` | `debug`, `info`, `warn` or `error`. |
 | `CAIRN_THREADS` | `1` | Worker threads, 1 to 64. 1 runs a single-thread runtime. |
+| `CAIRN_TRASH_DAYS` | none (the setting, default `30`) | Days a deleted item stays in the trash, 0 to 3650. `0` turns the trash off: deletes are permanent. When set, it wins over the setting in Server settings, which then shows it read-only. |
 | `CAIRN_DEV_USER` | none | Development only: every request is this user, no sign-in. Refused unless the binary is a debug build. |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | the system's list | A PEM file (or folder) of extra certificate authorities, for an identity provider or broker whose certificate comes from your own CA. Cairn adds them to Mozilla's list built into the binary, so the file may hold only your CA; public sites (CAPTCHA vendors, Google) stay trusted. |
 
@@ -238,6 +241,7 @@ store is needed; a restart clears them, which is acceptable.
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
+| E-mails without an account asked for when sharing with people | 20 per 15 min per user; the whole request is refused and nothing from it is saved |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
 `http.rate_limited`. A sign-in, link-password or current-password try counts before the password is checked, in the
@@ -307,6 +311,11 @@ contain NUL, so this never collides with one.
 Symlinks inside the scope that point inside the scope work. Symlinks that point outside are listed with a "link
 outside your folder" marker and cannot be opened.
 
+Trash folders (section 7.2) are reserved the same way as the data folder: every one of Cairn's `.cairn-trash`
+folders is refused by device and inode, so no listing shows it and no route reaches into it, through a link or
+otherwise. Nothing can be created under the name `.cairn-trash` in the server root or at the top of a mount inside
+it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
+
 ### 5.2 Operations
 
 | Action | Route | Permission |
@@ -318,11 +327,16 @@ outside your folder" marker and cannot be opened.
 | Upload | `PUT /api/upload/{path}` | write |
 | New folder | `POST /api/folders/{path}` | write |
 | Rename, move, copy | `POST /api/ops` with a list of `{ op, from, to }` | write |
-| Delete | `DELETE /api/files` with a list of paths | write |
+| Delete | `DELETE /api/files` with `{ paths, permanent? }`: to the trash, or for good with `permanent: true` | write |
 | Save text file | `PUT /api/text/{path}` with `If-Match` | write |
 | List share links | `GET /api/shares` (own; admins all) | any |
 | Create a share link | `POST /api/shares` with `{ path, expiresDays, password?, download }` | share |
 | Change or delete a share link | `PATCH` / `DELETE /api/shares/{id}` | its creator, or an admin |
+| Share with people | `POST /api/grants` with `{ path, emails, permission, expiresDays? }` | share (and write for "Can edit") |
+| Grants given; received | `GET /api/grants` (own; admins all); `GET /api/grants/received` | any |
+| Change or end a grant | `PATCH /api/grants/{id}` (owner who may share, or admin); `DELETE /api/grants/{id}` (owner, admin, or the recipient: Leave) | |
+| Inside a grant | `GET /api/g/{id}`, then the routes above under `/api/g/{id}/…` | the grant's |
+| Trash | `GET /api/trash`, `POST /api/trash/restore` and `DELETE /api/trash` with `{ ids }`, `POST /api/trash/empty` | write to the place it came from |
 
 - Listings stream as JSON, sorted on the server (folders first, then natural name order), so the browser can window
   them without sorting 50 000 entries. Each entry: name, kind, size, modified time, and a MIME guess from the
@@ -343,7 +357,10 @@ outside your folder" marker and cannot be opened.
   many items moved and which ones failed.
 - Text editing uses the file's ETag (size plus modified time). A save whose `If-Match` no longer matches answers
   `412`, and the editor says "This file changed on the server since you opened it."
-- Delete is permanent and needs a confirmation in the UI. The API takes the list in the body, never a wildcard.
+- Delete moves items to the trash (section 7.2) and needs a confirmation in the UI; "Delete permanently" is a second,
+  separate choice. The API takes the list in the body, never a wildcard. A delete that cannot go to the trash is
+  refused for that item (`trash_off`, `trash_taken` or `other_disk`), never silently made permanent.
+- Overwriting a file (an upload with `?replace=1`, or a text save) is not a delete and does not go to the trash.
 - Thumbnails, when the setting is on, are the original image served by `/api/raw` with `loading="lazy"`. No
   resizing and no cache on the server.
 
@@ -409,6 +426,63 @@ docker exec -it cairn /cairn user delete guest@example.com
 - Expired shares are removed lazily, on the next write to the shares table. Deleting a user deletes their shares.
 - Share ids are bearer secrets: they are never logged.
 
+### 7.1 Sharing with people (grants)
+
+- A grant lets one other Cairn user open one file or folder: owner, recipient, path (relative to `CAIRN_ROOT`, like
+  a share's), permission (`read` or `write`), an expiry (1, 7 or 30 days, or never) and a creation time. Granting
+  the same path to the same person again changes permission and expiry. Grant ids are random like share ids and
+  never logged.
+- Creating one needs `share` and `read`; "Can edit" also needs the owner's own `write`. Nobody grants to
+  themselves. The Share dialog takes several e-mails at once and answers per address: added (with the person's
+  name), "No account for x@example.com." or "That is you." E-mails are trimmed, compared lower-cased and counted
+  once. Each one counts toward a limit of 20 per 15 minutes per person before it is looked up, and one with an
+  account gives its try back, so only addresses without an account count (section 4.6); past the limit the
+  request answers `429` and saves nothing. Typed addresses are never logged; `grant.unknown_email` logs a count.
+- What the recipient may do: with `read`, list, preview, download and ZIP inside the item; with `write`, also
+  create, upload, edit, rename, move, copy and delete inside it, whatever their own account's flags. The granted
+  item itself cannot be renamed, moved or deleted by the recipient; a write grant on a single file changes its
+  contents only (text save, upload with replace). A granted folder is opened as a scope of its own, so nothing
+  outside it is reachable, symlinks included; a granted file is reached through its folder, limited to that one
+  name.
+- Deletes inside a grant always go to the trash. The recipient never deletes permanently: the API refuses
+  `permanent: true` through a grant, and when the item cannot go to the trash the delete is refused with the
+  reason.
+- Nothing received is shared on: under `/api/g/{id}/…` only the file routes exist, so no link and no grant can be
+  made from inside a grant.
+- A grant stops working, checked on every request like a link, when it expires, when it is revoked or left, when
+  its owner loses `share`, when its path leaves the owner's scope or is deleted, moved or renamed. A write grant
+  works as read while its owner has no `write`. Every case that can come back (the permission, the scope, the path
+  restored from the trash) makes the grant work again. Deleting either user deletes their grants. A dead grant
+  answers `404 grant_gone`: "This shared item is no longer available."
+- The recipient finds grants under Shared with me (`/shared`), opens them at `/shared/{id}` (then `/files/…` for a
+  folder inside, `/view/…` for a file) and may Leave one. The owner manages them on the Shared links page, under
+  People with access; admins see everyone's. The recipient never sees the owner's path, only the item's name.
+
+### 7.2 Trash
+
+- A delete moves the item, by `rename`, into `.cairn-trash/<entry id>/<original name>` at the top of the mount that
+  holds it: `<CAIRN_ROOT>/.cairn-trash` for the root's own mount, and one per mount inside the root (two bind mounts
+  of one disk are two mounts, and `rename` does not cross them). The mount is found by the kernel's mount id
+  (`statx`, Linux 5.8); on older kernels everything uses the root's trash, and an item on another mount is refused
+  with "{name} is on another disk, so it cannot go to the trash." and offered a permanent delete.
+- A trash folder is created on first use, mode `0700`, with a marker file naming this database. A `.cairn-trash`
+  without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
+  trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says
+  to rename it.
+- Each entry is a row in `trash`: id, its trash folder, its original path, name, kind, size, who deleted it, when,
+  and when it goes. The row is written before the rename, so a crash leaves at most a row without a file, which
+  reconciliation drops; files in a trash folder that no row names are counted, logged and left alone. Cairn
+  never removes anything it did not put in the trash.
+- Each entry keeps the removal date set when it was deleted: changing the days, or setting them to 0, affects later
+  deletes only. With 0 nothing new enters; what is there stays until its date. Reconciliation and the purge run at
+  start and every hour (`trash.purged` with a count).
+- An entry is shown to every person who may now write to the place it came from: through their own scope (restore
+  and delete permanently) or through a write grant on a folder holding it (restore only). Restore puts it back at
+  its path, recreating missing folders; when the name is taken it comes back as `name (restored).ext`, then
+  `name (restored 2).ext` (folders: `name (restored)`). The toast after a delete offers Undo, which restores.
+- Server settings shows the days (or `CAIRN_TRASH_DAYS`), the total size of the entries and any trash folder that
+  is not Cairn's.
+
 ## 8. Database
 
 SQLite, one file, `PRAGMA journal_mode=WAL`, `foreign_keys=ON`. Migrations are numbered SQL files embedded in the
@@ -456,7 +530,32 @@ CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE trash (
+  id         TEXT PRIMARY KEY,
+  trash_dir  TEXT NOT NULL,           -- the trash folder holding it, relative to CAIRN_ROOT
+  path       TEXT NOT NULL,           -- where it was, relative to CAIRN_ROOT
+  name       BLOB NOT NULL,           -- the original name's bytes
+  kind       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL         -- fixed when it was deleted
+);
+
+CREATE TABLE grants (
+  id           TEXT PRIMARY KEY,
+  owner_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  path         TEXT NOT NULL,         -- relative to CAIRN_ROOT
+  write        INTEGER NOT NULL DEFAULT 0,
+  expires_at   INTEGER,
+  created_at   INTEGER NOT NULL,
+  UNIQUE (owner_id, recipient_id, path)
+);
 ```
+
+The `settings` table also holds `trash_marker`, the token in every trash folder's marker.
 
 Backup is copying `/data/cairn.db` while Cairn is stopped, or `cairn backup /data/backup.db` (SQLite online
 backup) while it runs.
@@ -481,9 +580,10 @@ One JSON object per line on stdout: time, level, event, and fields. Events are s
 `auth.login`, `auth.login_failed`, `auth.captcha_failed`, `auth.sso`, `auth.oidc`, `auth.oidc_failed`,
 `auth.unknown_email`, `auth.sso_failed`, `auth.proxy_secret_mismatch`, `auth.oauth_start_failed`,
 `oauth.broker_unreachable`, `oidc.ready`, `oidc.unreachable`, `startup.no_users`, `startup.captcha_disabled`, `file.delete`, `share.create`,
-`share.update`, `share.delete`, `share.password_failed`, `http.rate_limited` (with a `route`, such as
-`share_password`). A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
-(`unknown_user`, `no_password`, `bad_password`). Passwords, tokens, share ids and share passwords are never logged.
+`share.update`, `share.delete`, `share.password_failed`, `grant.create`, `grant.update`, `grant.delete`,
+`grant.unknown_email` (a count), `trash.move`, `trash.restore`, `trash.delete`, `trash.purged`, `trash.reconciled`,
+`startup.trash_folder_taken`, `http.rate_limited` (with a `route`, such as `share_password` or `grant_lookup`). A failed sign-in logs the IP, the e-mail as typed (cut to 254 characters) and a reason
+(`unknown_user`, `no_password`, `bad_password`). Passwords, tokens, share ids, grant ids, share passwords and e-mails typed to share with people are never logged.
 The `auth.login_failed` line always begins with `timestamp`, `level`, `event` and `ip`, in that order: the
 documented Fail2ban filter reads the address from that position, so typed text later in the line can never supply
 it. Changing that order breaks every installed filter without a warning, so it is a breaking change for the
@@ -544,6 +644,8 @@ cairn/
 │   ├── auth/            # password, oauth broker, oidc, captcha, sessions, rate limits
 │   ├── fs/              # resolve, list, upload, ops, zip, text
 │   ├── shares.rs
+│   ├── grants.rs        # sharing with other users
+│   ├── trash/           # trash folders, entries, move, restore, purge
 │   ├── users.rs
 │   ├── db/              # connection, migrations/*.sql
 │   └── log.rs

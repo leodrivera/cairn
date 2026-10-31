@@ -92,6 +92,9 @@ docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --passwo
 
 Open `http://<this machine>:8080` and sign in. After the first admin, add people on the Users screen.
 
+If the container keeps restarting, `docker logs cairn` says why: most often a folder or a secret file that uid
+10001 cannot read or write, named in the message with what to change.
+
 To serve files that belong to your own user instead (your home folder, say), run Cairn as that user: add
 `user: "1000:1000"` (your `id -u` and `id -g`) to the `cairn` service, and mount a folder you own at `/data` in
 place of the volume.
@@ -109,6 +112,7 @@ Create the keys at [google.com/recaptcha/admin](https://www.google.com/recaptcha
 # Before the first start:
 #   mkdir files secrets && sudo chown 10001:10001 files
 #   printf '%s' 'your-recaptcha-secret-key' > secrets/captcha_secret
+#   sudo chown 10001:10001 secrets/captcha_secret && sudo chmod 400 secrets/captcha_secret
 services:
   traefik:
     image: traefik:v3.7
@@ -168,6 +172,12 @@ secrets:
     file: ./secrets/captcha_secret
 ```
 
+Cairn runs as uid 10001 and reads the secret file as that user. Give the file to it, readable by nobody else:
+
+```bash
+sudo chown 10001:10001 secrets/captcha_secret && sudo chmod 400 secrets/captcha_secret
+```
+
 Two settings matter behind any reverse proxy:
 
 - `CAIRN_PUBLIC_URL` is the address people use. Share links are built from it. Without it, a link uses the address
@@ -206,9 +216,16 @@ reads `CAIRN_OIDC_X_ISSUER`, `CAIRN_OIDC_X_CLIENT_ID`, `CAIRN_OIDC_X_CLIENT_SECR
 - The issuer must be `https`.
 - The provider must report a verified e-mail address; Cairn refuses an unverified one.
 
+Cairn reads both secret files as uid 10001:
+
+```bash
+sudo chown 10001:10001 secrets/captcha_secret secrets/oidc_client_secret && sudo chmod 400 secrets/captcha_secret secrets/oidc_client_secret
+```
+
 To run your own Keycloak at `id.example.com` behind the same Traefik, add
 [`examples/compose/keycloak.yml`](examples/compose/keycloak.yml). It sets the two variables Keycloak needs behind a
-proxy: `KC_HOSTNAME` with its public address, and `KC_PROXY_HEADERS=xforwarded`.
+proxy: `KC_HOSTNAME` with its public address, and `KC_PROXY_HEADERS=xforwarded`. Before the first start,
+set `KC_ADMIN` and `KC_ADMIN_PASSWORD` in `.env`: they are the first sign-in to Keycloak's admin console.
 
 ```bash
 docker compose -f compose.yml -f ../keycloak.yml up -d

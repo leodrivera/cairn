@@ -16,6 +16,8 @@ ADDONS=()    # add-on files of examples/compose (keycloak.yml, own-ca.yml) that 
 # Sentences the README must carry word for word, because a reader acts on them.
 README_SENTENCES=(
   "Docker opens published ports in the firewall itself, so ufw or firewalld rules do not close them"
+  "If the container keeps restarting, \`docker logs cairn\` says why"
+  "set \`KC_ADMIN\` and \`KC_ADMIN_PASSWORD\` in \`.env\`"
 )
 
 README_COMMANDS=(
@@ -27,6 +29,8 @@ README_COMMANDS=(
   "docker run --rm --volumes-from cairn -v \"\$PWD/cairn-backup.db:/backup.db:ro\" alpine:3.22 sh -c 'rm -f /data/cairn.db-wal /data/cairn.db-shm && cp /backup.db /data/cairn.db && chown 10001:10001 /data/cairn.db'"
   'docker compose start cairn'
   'docker compose pull && docker compose up -d'
+  'sudo chown 10001:10001 secrets/captcha_secret && sudo chmod 400 secrets/captcha_secret'
+  'sudo chown 10001:10001 secrets/captcha_secret secrets/oidc_client_secret && sudo chmod 400 secrets/captcha_secret secrets/oidc_client_secret'
 )
 
 say() { echo "$*" >&2; }
@@ -67,11 +71,22 @@ prepare() { # example name
   cp "$ROOT/examples/compose/"*.yml "$WORK/" 2>/dev/null || true
   mkdir -p "$dir/files" "$dir/secrets"
   as_root "$dir" 'chown 10001:10001 /w/files'
-  printf '%s' 6Lc-placeholder-secret > "$dir/secrets/captcha_secret"
-  printf '%s' tinyauth-test-secret-0123456789abcdef > "$dir/secrets/oauth_client_secret"
-  printf '%s' cairn-test-secret-0123456789abcdef > "$dir/secrets/oidc_client_secret"
+  # Written as a shell with umask 077 writes them: 0600, owned by the person running the test. Cairn (uid 10001)
+  # can read them only after the README's chown and chmod, which secrets_for_cairn applies.
+  (
+    umask 077
+    printf '%s' 6Lc-placeholder-secret > "$dir/secrets/captcha_secret"
+    printf '%s' tinyauth-test-secret-0123456789abcdef > "$dir/secrets/oauth_client_secret"
+    printf '%s' cairn-test-secret-0123456789abcdef > "$dir/secrets/oidc_client_secret"
+  )
+  secrets_for_cairn "$dir"
   printf 'CAIRN_SSO_SECRET=%s\nKC_ADMIN=admin\nKC_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" \
     > "$dir/.env"
+}
+
+# The README's chown and chmod for the secrets Cairn reads, done as root in a throwaway container (no sudo here).
+secrets_for_cairn() { # dir
+  as_root "$1" 'cd /w/secrets && chown 10001:10001 captcha_secret oidc_client_secret && chmod 400 captcha_secret oidc_client_secret'
 }
 
 up() { # example name [extra compose files...]
@@ -109,6 +124,7 @@ down() { # name
 }
 
 teardown() {
+  docker rm -f cairn-test-registry >/dev/null 2>&1
   local entry
   for entry in "${PROJECTS[@]}"; do down "${entry%%|*}"; done
   [[ -d $WORK ]] && as_root "$WORK" 'rm -rf /w/* /w/.[!.]*' >/dev/null 2>&1
@@ -132,7 +148,8 @@ login() { # base email password jar [curl options...]
 }
 
 # The keys whose values differ between the example alone and the example with its override, as dotted paths.
-# A path is allowed when it starts with a line of tests/compose/override/<example>.allow.
+# A path is allowed when it starts with a line of tests/compose/override/<example>.allow; a line ending in " +"
+# allows only additions to the list there.
 override_only_allowed() { # example name
   local example=$1 name=$2 dir=$WORK/$2 bad
   local alone=(-f compose.yml)
@@ -143,18 +160,26 @@ override_only_allowed() { # example name
   bad=$(python3 -I - "$WORK/$name.alone.json" "$WORK/$name.test.json" "$TESTS/override/$example.allow" <<'EOF'
 import json, sys
 a, b = (json.load(open(p)) for p in sys.argv[1:3])
-allow = [l.strip() for l in open(sys.argv[3]) if l.strip() and not l.startswith("#")]
+# A line "path" allows any change there; "path +" allows only additions to the list at that path.
+lines = [l.split() for l in open(sys.argv[3]) if l.strip() and not l.startswith("#")]
+allow = [l[0] for l in lines if len(l) == 1]
+grow = [l[0] for l in lines if l[1:] == ["+"]]
 for k in ("name",):
     a.pop(k, None); b.pop(k, None)
-diffs = []
+bad = []
 def walk(x, y, path):
+    p = ".".join(path)
+    if p in grow:
+        if not isinstance(x, list) or not isinstance(y, list) or any(e not in y for e in x):
+            bad.append(p + " (may only add entries)")
+        return
     if isinstance(x, dict) and isinstance(y, dict):
         for k in set(x) | set(y):
             walk(x.get(k), y.get(k), path + [str(k)])
-    elif x != y:
-        diffs.append(".".join(path))
+    elif x != y and not any(p == q or p.startswith(q + ".") for q in allow):
+        bad.append(p)
 walk(a, b, [])
-print("\n".join(d for d in sorted(diffs) if not any(d == p or d.startswith(p + ".") for p in allow)))
+print("\n".join(sorted(bad)))
 EOF
   )
   [[ -z $bad ]] || { echo "override changes keys it may not: $bad"; return 1; }

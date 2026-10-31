@@ -2,4 +2,4 @@
 services.cairn.image
 services.traefik.command
 services.traefik.ports
-services.traefik.volumes
+services.traefik.volumes +

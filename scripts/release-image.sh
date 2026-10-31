@@ -2,8 +2,9 @@
 # The two halves of publishing the image, shared by the release workflow and its local rehearsal.
 #
 #   scripts/release-image.sh push <repo> <platform>
-#     Builds the Dockerfile for <platform> on a machine of that architecture, runs check-image.sh on it, pushes it
-#     by digest only (no tag) and prints the digest last. Labels come from SOURCE_URL, VERSION and REVISION.
+#     Builds the Dockerfile for <platform> on a machine of that architecture, pushes it by digest only (no tag),
+#     pulls it back by that digest, runs check-image.sh on it and prints the digest last. Labels come from
+#     SOURCE_URL, VERSION and REVISION.
 #   scripts/release-image.sh merge <repo> <version> <minor> <latest> <minor_latest> <digest>...
 #     Joins the per-platform digests into one manifest tagged <version>, plus <minor> when <minor_latest> is true
 #     and latest when <latest> is true (both from release-version.sh, so an older release never moves them back).
@@ -22,14 +23,18 @@ case "$mode" in
       --label "org.opencontainers.image.version=$VERSION"
       --label "org.opencontainers.image.revision=$REVISION"
     )
-    local_tag="cairn-release:$VERSION-${platform//\//-}"
-    docker buildx build --platform "$platform" "${labels[@]}" --load -t "$local_tag" "$root" >&2
-    "$root/scripts/check-image.sh" "$local_tag" >&2
     metadata=$(mktemp)
-    docker buildx build --platform "$platform" "${labels[@]}" \
+    # No provenance or SBOM attestations: the index holds one image per platform and nothing ghcr shows as
+    # unknown/unknown.
+    docker buildx build --platform "$platform" "${labels[@]}" --provenance=false --sbom=false \
       --output "type=image,name=$repo,push-by-digest=true,name-canonical=true,push=true" \
       --metadata-file "$metadata" "$root" >&2
-    jq -r ".\"containerimage.digest\"" "$metadata"
+    digest=$(jq -r '."containerimage.digest"' "$metadata")
+    # Check the image that was pushed, pulled back by its digest. A failure leaves only an untagged digest.
+    docker pull -q "$repo@$digest" >&2
+    "$root/scripts/check-image.sh" "$repo@$digest" >&2
+    echo "checked $repo@$digest" >&2
+    echo "$digest"
     rm -f "$metadata"
     ;;
   merge)

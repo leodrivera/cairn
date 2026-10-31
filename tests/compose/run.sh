@@ -108,6 +108,44 @@ data_not_writable_message() {
     <<< "$out" || { echo "$out"; return 1; }
 }
 
+# The same unwritable /data through Compose, as the README runs it: with restart: unless-stopped the container
+# keeps restarting, and its log says why (the README tells people to look there).
+data_not_writable_in_compose() {
+  prepare quick rootdata2
+  mkdir -p "$WORK/rootdata2/data"
+  as_root "$WORK/rootdata2/data" 'chown 0:0 /w && chmod 755 /w'
+  printf 'services:\n  cairn:\n    volumes: !override\n      - ./files:/srv\n      - ./data:/data\n' > "$WORK/rootdata2/data.yml"
+  CURRENT=rootdata2
+  COMPOSE_FILES=("$WORK/rootdata2/compose.yml" "$TESTS/override/quick.yml" "$WORK/rootdata2/data.yml")
+  PROJECTS+=("rootdata2|${COMPOSE_FILES[*]}")
+  (cd "$WORK/rootdata2" && compose_cmd up -d >/dev/null 2>&1) || return 1
+  restarted() { (( $(docker inspect -f '{{.RestartCount}}' cairn) >= 1 )); }
+  wait_for 30 restarted || { echo "no restart"; return 1; }
+  docker logs cairn 2>&1 | grep -q '/data is not writable by this user (uid 10001 in the image)' \
+    || { docker logs cairn 2>&1 | tail -3; return 1; }
+}
+
+# The README's upgrade command, for real: a newer image under the same tag in a throwaway registry, then
+# `docker compose pull && docker compose up -d` must run it and keep the admin's session.
+REGISTRY=cairn-test-registry
+upgrade_pulls_new_image() {
+  local repo=127.0.0.1:15001/cairn
+  docker run -d --name "$REGISTRY" -p 127.0.0.1:15001:5000 \
+    registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null || return 1
+  docker tag "$IMAGE" "$repo:0.1" && docker push -q "$repo:0.1" >/dev/null || return 1
+  prepare quick upgrade
+  printf 'services:\n  cairn:\n    image: %s:0.1\n' "$repo" > "$WORK/upgrade/registry.yml"
+  up quick upgrade "$WORK/upgrade/registry.yml" || return 1
+  admin >/dev/null || return 1
+  [[ $(login "$QUICK" admin@example.com "$ADMIN_PASSWORD" "$WORK/upgrade.jar") == 200 ]] || return 1
+  printf 'FROM %s\nLABEL org.example.upgrade=2\n' "$IMAGE" | docker build -q -t "$repo:0.1" - >/dev/null || return 1
+  docker push -q "$repo:0.1" >/dev/null || return 1
+  (cd "$WORK/upgrade" && eval "${README_COMMANDS[7]}") >/dev/null 2>&1 || return 1
+  wait_for 60 healthy || return 1
+  [[ $(docker inspect -f '{{index .Config.Labels "org.example.upgrade"}}' cairn) == 2 ]] || { echo "old image still running"; return 1; }
+  me_is_admin "$QUICK" "$WORK/upgrade.jar"
+}
+
 run_quick() {
   prepare quick quick
   CURRENT=quick
@@ -124,6 +162,12 @@ run_quick() {
   CURRENT=""
   check data_not_writable_message data_not_writable_message
   down asuser
+  check data_not_writable_in_compose data_not_writable_in_compose
+  down rootdata2
+  check upgrade_pulls_new_image upgrade_pulls_new_image
+  down upgrade
+  docker rm -f "$REGISTRY" >/dev/null 2>&1
+  docker image rm 127.0.0.1:15001/cairn:0.1 >/dev/null 2>&1
 }
 
 # The other examples keep their checks in a file of their own.

@@ -71,8 +71,15 @@ rehearsal() {
   digest=$(SOURCE_URL=https://example.com/cairn VERSION="$version" REVISION=$(git rev-parse HEAD) \
     scripts/release-image.sh push "$repo" linux/amd64 2> "$work/push.log" | tail -1)
   [[ $digest == sha256:* ]] || { echo "push printed '$digest'"; tail -20 "$work/push.log"; return 1; }
+  # What was checked is what was pushed: the image pulled back by its digest.
+  grep -qxF "checked $repo@$digest" "$work/push.log" || { echo "the pushed digest was not the one checked"; return 1; }
   scripts/release-image.sh merge "$repo" "$version" "$minor" true true "$digest" > "$work/merge.log" 2>&1 \
     || { tail -20 "$work/merge.log"; return 1; }
+  # One entry per platform and nothing else (no attestation entries that ghcr lists as unknown/unknown).
+  local platforms
+  platforms=$(docker buildx imagetools inspect --raw "$repo:$version" \
+    | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' | sort | tr '\n' ' ')
+  [[ $platforms == "linux/amd64 " ]] || { echo "manifest lists: $platforms"; return 1; }
   for tag in "$version" "$minor" latest; do
     docker pull -q "$repo:$tag" >/dev/null || { echo "cannot pull $repo:$tag"; return 1; }
   done
@@ -112,6 +119,20 @@ print("; ".join(problems))
 sys.exit(1 if problems else 0)
 PY
 ); then ok release_runs_ci_first; else fail release_runs_ci_first "$msg"; fi
+
+# Secrets reach scripts through env:, never pasted into the script text.
+if msg=$(python3 -I - .github/workflows/release.yml .github/workflows/ci.yml <<'PY' 2>&1
+import sys, yaml
+bad = []
+for path in sys.argv[1:]:
+    for name, job in (yaml.safe_load(open(path)).get("jobs") or {}).items():
+        for step in job.get("steps", []):
+            if "${{ secrets." in step.get("run", ""):
+                bad.append(f"{path}: {name}: {step.get('name', '?')}")
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+PY
+); then ok secrets_through_env; else fail secrets_through_env "$msg"; fi
 
 # actionlint
 if msg=$(docker run --rm -v "$root:/repo" -w /repo \

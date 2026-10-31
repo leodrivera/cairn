@@ -3,9 +3,9 @@ services.cairn.image
 services.cairn.environment.CAIRN_CAPTCHA
 services.traefik.command
 services.traefik.ports
-services.traefik.volumes
+services.traefik.volumes +
 services.traefik.networks
 services.tinyauth.environment.SSL_CERT_FILE
-services.tinyauth.volumes
+services.tinyauth.volumes +
 services.keycloak.command
-services.keycloak.volumes
+services.keycloak.volumes +

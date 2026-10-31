@@ -34,6 +34,19 @@ forwarded_ignored_once() {
   [[ $(docker logs cairn 2>&1 | grep -c '"event":"http.forwarded_ignored"') == 1 ]]
 }
 
+# The override check itself: an override that drops the example's Docker socket mount must not pass.
+override_check_catches_removed_mount() {
+  local saved=("${COMPOSE_FILES[@]}")
+  printf 'services:\n  traefik:\n    volumes: !override\n      - letsencrypt:/letsencrypt\n      - %s:/certs:ro\n' "$WORK/ca" > "$WORK/traefik/drop.yml"
+  COMPOSE_FILES+=("$WORK/traefik/drop.yml")
+  if override_only_allowed traefik traefik >/dev/null 2>&1; then
+    COMPOSE_FILES=("${saved[@]}")
+    echo "an override that removes /var/run/docker.sock passed"
+    return 1
+  fi
+  COMPOSE_FILES=("${saved[@]}")
+}
+
 run_traefik() {
   ca || { check ca false; return; }
   export CAIRN_TEST_CA=$WORK/ca
@@ -42,6 +55,7 @@ run_traefik() {
   COMPOSE_FILES=("$WORK/traefik/compose.yml" "$TESTS/override/traefik.yml")
   check override_only_allowed override_only_allowed traefik traefik
   check traefik_flags_match traefik_flags_match traefik traefik
+  check override_check_catches_removed_mount override_check_catches_removed_mount
   if ! up traefik traefik; then check healthy false; return; fi
   check healthy healthy
   check https_only https_only

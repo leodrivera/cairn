@@ -30,3 +30,5 @@ configuration differs anywhere else:
 - Traefik's flags: the Let's Encrypt flags out and the test certificate in, and nothing else (`traefik_flags_match`).
 - bind mounts for the test certificate and CA.
 - values named in the test for each example (for example the OIDC issuer pointing at a local Keycloak).
+- A line ending in ` +` in an `.allow` file lets the override add entries to that list but not remove or change
+  the example's own (`override_check_catches_removed_mount` proves the check catches a dropped mount).

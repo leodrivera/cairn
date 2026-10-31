@@ -72,7 +72,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
-  const place = route.name === "files" || route.name === "view" ? "files" : route.name === "settings" ? route.page : "";
+  const place = route.name === "files" || route.name === "view" ? "files" : route.name === "links" ? "links" : "";
 
   const signOut = async () => {
     const queue = uploads();
@@ -100,7 +100,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
 
   const nav: Place[] = [
     { href: "/files/", label: t("nav.myFiles"), icon: "home", on: place === "files" },
-    { href: "/settings/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
+    { href: "/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
   ];
 
   const sidebar = (
@@ -125,7 +125,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
             </div>
           )}
           <div class="account">
-            <Link href="/settings/profile" class="account-link" aria-label={t("shell.settings")}>
+            <Link href="/settings/profile" class="account-link">
               <span class="avatar" aria-hidden="true">
                 {initials(user.name)}
               </span>
@@ -133,6 +133,9 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
                 <span class="account-name">{user.name}</span>
                 <span class="account-role">{user.permissions.admin ? t("shell.admin") : t("shell.user")}</span>
               </span>
+            </Link>
+            <Link href="/settings/profile" class="icon-button" aria-label={t("shell.settings")}>
+              <Icon name="settings" />
             </Link>
             <button type="button" class="icon-button" aria-label={t("shell.signOut")} onClick={signOut}>
               <Icon name="signOut" />

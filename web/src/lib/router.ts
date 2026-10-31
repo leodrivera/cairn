@@ -6,18 +6,20 @@ import { encodePath } from "./paths";
 /** Why a provider sign-in came back to the sign-in page. */
 export type LoginError = "sso" | "no-account";
 
-export type SettingsPage = "profile" | "users" | "server" | "links";
+export type SettingsPage = "profile" | "users" | "server";
 
 export type Route =
   | { name: "files"; path: string }
   | { name: "view"; path: string }
   | { name: "login"; next: string | null; error?: LoginError }
   | { name: "settings"; page: SettingsPage }
+  /** The share links of the signed-in person (every link, for an admin). */
+  | { name: "links" }
   /** A share link's public page; `path` is beneath the shared folder, `file` when it names a file. */
   | { name: "share"; id: string; path: string; file: boolean }
   | { name: "missing" };
 
-const pages: SettingsPage[] = ["profile", "users", "server", "links"];
+const pages: SettingsPage[] = ["profile", "users", "server"];
 
 /** Decodes the path after a prefix; null when a segment is empty inside, malformed, or hides a "/". */
 function decodePath(rest: string): string | null {
@@ -61,6 +63,9 @@ export function parseRoute(pathname: string, search: string): Route {
     return route;
   }
   if (pathname === "/settings" || pathname === "/settings/") return { name: "settings", page: "profile" };
+  // /settings/links is where the page lived before it left the settings; old bookmarks still open it.
+  if (pathname === "/links" || pathname === "/links/" || pathname === "/settings/links" || pathname === "/settings/links/")
+    return { name: "links" };
   const share = /^\/s\/([A-Za-z0-9_-]{22})$/.exec(pathname);
   if (share) {
     const q = new URLSearchParams(search);
@@ -84,6 +89,8 @@ export function href(r: Route): string {
       return r.next ? `/login?next=${encodeURIComponent(r.next)}` : "/login";
     case "settings":
       return `/settings/${r.page}`;
+    case "links":
+      return "/links";
     case "share":
       return r.path === "" ? `/s/${r.id}` : `/s/${r.id}?${r.file ? "file" : "path"}=${encodeURIComponent(r.path)}`;
     case "missing":

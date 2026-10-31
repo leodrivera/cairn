@@ -29,6 +29,8 @@ export const paths = {
   plus: "M12 5v14 M5 12h14",
   rename: "M4 20h4l10-10-4-4L4 16z M13 7l4 4",
   search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M20 20l-4-4",
+  settings:
+    "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 3v2.5 M12 18.5V21 M5.6 5.6l1.8 1.8 M16.6 16.6l1.8 1.8 M3 12h2.5 M18.5 12H21 M5.6 18.4l1.8-1.8 M16.6 7.4l1.8-1.8",
   signOut: "M14 4h5v16h-5 M10 8l-4 4 4 4 M6 12h10",
   sliders: "M4 6h10 M18 6h2 M4 12h4 M12 12h8 M4 18h12 M14 4v4 M8 10v4 M16 16v4",
   trash: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v5 M14 11v5",

@@ -352,8 +352,8 @@ outside your folder" marker and cannot be opened.
 - Fields: id, e-mail, name, password hash (optional), scope, permissions, preferred language, theme and view,
   created time.
 - Scope is a folder relative to `CAIRN_ROOT`, written like `/photos`. `/` is the whole root.
-- Permissions are four flags. `write` implies `read`. `share` needs `read`. `admin` gives the Users, Share links and
-  Server screens; an admin's file access still follows their own scope.
+- Permissions are four flags. `write` implies `read`. `share` needs `read`. `admin` gives the Users and Server
+  screens and every link on the Shared links page; an admin's file access still follows their own scope.
 - The last admin cannot be deleted or lose `admin`.
 - First run: the first admin is created with the command line, never from environment variables and never with a
   default password. While the users table is empty, startup logs `startup.no_users` with the command to run, and
@@ -381,8 +381,9 @@ docker exec -it cairn /cairn user delete guest@example.com
 
 - A share is a random 22-character id (128 bits) pointing at one file or folder, with an expiry (1 day, 7 days,
   30 days or never), an optional password and a download switch. Creating one needs `share`; the target must lie
-  inside the creator's scope. Each person sees and manages their own links in Settings → Share links; admins see
-  everyone's. Someone who lost `share` can still delete their links, but not change them.
+  inside the creator's scope. Each person sees and manages their own links on the Shared links page (`/links`,
+  beside My files); admins see everyone's. Someone who lost `share` can still delete their links, but not change
+  them.
 - A link password needs 8 to 256 characters. Wrong guesses are limited per link and address (section 4.6), so a
   short password would fall to someone with many addresses.
 - `GET /s/{id}` is the public page. With a password, the page asks for it and, when right, sets a cookie scoped to

@@ -13,6 +13,9 @@ test("parses each route", () => {
   assert.deepEqual(parseRoute("/settings", ""), { name: "settings", page: "profile" });
   assert.deepEqual(parseRoute("/settings/users", ""), { name: "settings", page: "users" });
   assert.deepEqual(parseRoute("/settings/nope", ""), { name: "missing" });
+  assert.deepEqual(parseRoute("/links", ""), { name: "links" });
+  // The old address of the page, from before it left the settings, still opens it.
+  assert.deepEqual(parseRoute("/settings/links", ""), { name: "links" });
   assert.deepEqual(parseRoute("/login", ""), { name: "login", next: null });
   assert.deepEqual(parseRoute("/nowhere", ""), { name: "missing" });
 });
@@ -32,6 +35,7 @@ test("hrefs", () => {
   assert.equal(href({ name: "files", path: "" }), "/files/");
   assert.equal(href({ name: "files", path: "a b" }), "/files/a%20b");
   assert.equal(href({ name: "settings", page: "server" }), "/settings/server");
+  assert.equal(href({ name: "links" }), "/links");
   assert.equal(href({ name: "login", next: "/files/a" }), "/login?next=%2Ffiles%2Fa");
   assert.equal(href({ name: "login", next: null }), "/login");
 });

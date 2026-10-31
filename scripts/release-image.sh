@@ -4,9 +4,9 @@
 #   scripts/release-image.sh push <repo> <platform>
 #     Builds the Dockerfile for <platform> on a machine of that architecture, runs check-image.sh on it, pushes it
 #     by digest only (no tag) and prints the digest last. Labels come from SOURCE_URL, VERSION and REVISION.
-#   scripts/release-image.sh merge <repo> <version> <minor> <prerelease> <digest>...
-#     Joins the per-platform digests into one manifest tagged <version>, plus <minor> and latest unless
-#     <prerelease> is true.
+#   scripts/release-image.sh merge <repo> <version> <minor> <latest> <minor_latest> <digest>...
+#     Joins the per-platform digests into one manifest tagged <version>, plus <minor> when <minor_latest> is true
+#     and latest when <latest> is true (both from release-version.sh, so an older release never moves them back).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -35,11 +35,13 @@ case "$mode" in
   merge)
     version=${3:?missing version}
     minor=${4:?missing minor}
-    prerelease=${5:?missing prerelease}
-    shift 5
+    latest=${5:?missing latest}
+    minor_latest=${6:?missing minor_latest}
+    shift 6
     (( $# > 0 )) || { echo "no digests" >&2; exit 1; }
     tags=(-t "$repo:$version")
-    if [[ $prerelease != true ]]; then tags+=(-t "$repo:$minor" -t "$repo:latest"); fi
+    if [[ $minor_latest == true ]]; then tags+=(-t "$repo:$minor"); fi
+    if [[ $latest == true ]]; then tags+=(-t "$repo:latest"); fi
     sources=()
     for digest in "$@"; do sources+=("$repo@$digest"); done
     docker buildx imagetools create "${tags[@]}" "${sources[@]}"

@@ -23,9 +23,26 @@ version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
 minor=${version%.*}
 
 # Tag check
-out=$(scripts/release-version.sh "v$version" 2>&1)
-want=$(printf 'version=%s\nminor=%s\nprerelease=false' "$version" "$minor")
+out=$(TAGS="v$version" scripts/release-version.sh "v$version" 2>&1)
+want=$(printf 'version=%s\nminor=%s\nprerelease=false\nlatest=true\nminor_latest=true' "$version" "$minor")
 [[ $out == "$want" ]] && ok tag_matches || fail tag_matches "$out"
+
+# latest and the minor tag move only for the highest release; pre-releases never count.
+moves() { # cargo-version tag tags... -> "latest minor_latest"
+  local v=$1 tag=$2
+  shift 2
+  sed "s/^version = \".*\"$/version = \"$v\"/" Cargo.toml > "$work/Cargo.toml"
+  CARGO_TOML="$work/Cargo.toml" TAGS="$*" scripts/release-version.sh "$tag" \
+    | sed -n 's/^\(latest\|minor_latest\)=//p' | tr '\n' ' '
+}
+[[ $(moves 0.1.1 v0.1.1 v0.1.0 v0.2.0 v0.1.1) == "false true " ]] && ok older_patch_keeps_latest \
+  || fail older_patch_keeps_latest "$(moves 0.1.1 v0.1.1 v0.1.0 v0.2.0 v0.1.1)"
+[[ $(moves 0.1.1 v0.1.1 v0.1.0 v0.1.2 v0.2.0 v0.1.1) == "false false " ]] && ok older_patch_keeps_minor \
+  || fail older_patch_keeps_minor "$(moves 0.1.1 v0.1.1 v0.1.0 v0.1.2 v0.2.0 v0.1.1)"
+[[ $(moves 0.2.1 v0.2.1 v0.1.0 v0.2.0 v0.3.0-rc.1 v0.2.1) == "true true " ]] && ok prerelease_tags_ignored \
+  || fail prerelease_tags_ignored "$(moves 0.2.1 v0.2.1 v0.1.0 v0.2.0 v0.3.0-rc.1 v0.2.1)"
+[[ $(moves 0.10.0 v0.10.0 v0.9.0 v0.10.0) == "true true " ]] && ok versions_compare_as_numbers \
+  || fail versions_compare_as_numbers "$(moves 0.10.0 v0.10.0 v0.9.0 v0.10.0)"
 
 out=$(scripts/release-version.sh v99.0.1 2>&1)
 rc=$?
@@ -37,8 +54,8 @@ rc=$?
 [[ $rc == 1 ]] && ok tag_without_v || fail tag_without_v "exit $rc"
 
 sed 's/^version = ".*"$/version = "0.2.0-rc.1"/' Cargo.toml > "$work/Cargo.toml"
-out=$(CARGO_TOML="$work/Cargo.toml" scripts/release-version.sh v0.2.0-rc.1 2>&1)
-want=$(printf 'version=0.2.0-rc.1\nminor=0.2\nprerelease=true')
+out=$(CARGO_TOML="$work/Cargo.toml" TAGS="v0.1.0 v0.2.0-rc.1" scripts/release-version.sh v0.2.0-rc.1 2>&1)
+want=$(printf 'version=0.2.0-rc.1\nminor=0.2\nprerelease=true\nlatest=false\nminor_latest=false')
 [[ $out == "$want" ]] && ok prerelease || fail prerelease "$out"
 
 # Rehearsal: push by digest and merge, as the workflow does, into a local registry
@@ -54,7 +71,7 @@ rehearsal() {
   digest=$(SOURCE_URL=https://example.com/cairn VERSION="$version" REVISION=$(git rev-parse HEAD) \
     scripts/release-image.sh push "$repo" linux/amd64 2> "$work/push.log" | tail -1)
   [[ $digest == sha256:* ]] || { echo "push printed '$digest'"; tail -20 "$work/push.log"; return 1; }
-  scripts/release-image.sh merge "$repo" "$version" "$minor" false "$digest" > "$work/merge.log" 2>&1 \
+  scripts/release-image.sh merge "$repo" "$version" "$minor" true true "$digest" > "$work/merge.log" 2>&1 \
     || { tail -20 "$work/merge.log"; return 1; }
   for tag in "$version" "$minor" latest; do
     docker pull -q "$repo:$tag" >/dev/null || { echo "cannot pull $repo:$tag"; return 1; }
@@ -66,7 +83,12 @@ rehearsal() {
   [[ $(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$repo:$version") == "$version" ]] \
     || { echo "version label missing"; return 1; }
   scripts/check-image.sh "$repo:$version" > "$work/check.log" || { cat "$work/check.log"; return 1; }
-  scripts/release-image.sh merge "$repo" 0.2.0-rc.1 0.2 true "$digest" > "$work/merge2.log" 2>&1 \
+  # A second image with another revision, so that a wrongly moved tag would change digest.
+  local other
+  other=$(SOURCE_URL=https://example.com/cairn VERSION=0.2.0-rc.1 REVISION=0000000 \
+    scripts/release-image.sh push "$repo" linux/amd64 2> "$work/push2.log" | tail -1)
+  [[ $other == sha256:* && $other != "$digest" ]] || { echo "second push printed '$other'"; return 1; }
+  scripts/release-image.sh merge "$repo" 0.2.0-rc.1 0.2 false false "$other" > "$work/merge2.log" 2>&1 \
     || { tail -20 "$work/merge2.log"; return 1; }
   [[ $(docker buildx imagetools inspect "$repo:latest" --format '{{.Manifest.Digest}}') == "$c" ]] \
     || { echo "a pre-release moved latest"; return 1; }
@@ -74,6 +96,22 @@ rehearsal() {
   docker image rm "$repo:$version" "$repo:$minor" "$repo:latest" >/dev/null 2>&1 || true
 }
 if msg=$(rehearsal 2>&1); then ok rehearsal; else fail rehearsal "$msg"; fi
+
+# The release runs ci.yml's checks before it builds, one release at a time.
+if msg=$(python3 -I - .github/workflows/release.yml .github/workflows/ci.yml <<'PY' 2>&1
+import sys, yaml
+release, ci = (yaml.safe_load(open(p)) for p in sys.argv[1:3])
+ci_on = ci.get(True, ci.get("on"))
+problems = []
+if "workflow_call" not in ci_on: problems.append("ci.yml cannot be called")
+if release["jobs"].get("test", {}).get("uses") != "./.github/workflows/ci.yml": problems.append("no test job calling ci.yml")
+needs = release["jobs"]["build"]["needs"]
+if "test" not in (needs if isinstance(needs, list) else [needs]): problems.append("build does not need test")
+if release.get("concurrency", {}).get("cancel-in-progress") is not False: problems.append("no release concurrency group")
+print("; ".join(problems))
+sys.exit(1 if problems else 0)
+PY
+); then ok release_runs_ci_first; else fail release_runs_ci_first "$msg"; fi
 
 # actionlint
 if msg=$(docker run --rm -v "$root:/repo" -w /repo \

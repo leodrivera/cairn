@@ -7,16 +7,30 @@ on:
 permissions:
   contents: read
 
+# One release at a time, so two tags cannot race for latest.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # The tests, lints, license check and image checks of ci.yml, on the tagged commit.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   version:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
       minor: ${{ steps.check.outputs.minor }}
-      prerelease: ${{ steps.check.outputs.prerelease }}
+      latest: ${{ steps.check.outputs.latest }}
+      minor_latest: ${{ steps.check.outputs.minor_latest }}
       repo: ${{ steps.check.outputs.repo }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every release tag, to tell whether this one is the highest.
+          fetch-depth: 0
+          fetch-tags: true
       - name: The tag matches Cargo.toml
         id: check
         run: |
@@ -24,7 +38,7 @@ jobs:
           echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cairn" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: version
+    needs: [test, version]
     # Each platform builds natively: aarch64 on an arm64 runner, never under emulation.
     strategy:
       fail-fast: true
@@ -80,9 +94,10 @@ jobs:
           REPO: ${{ needs.version.outputs.repo }}
           VERSION: ${{ needs.version.outputs.version }}
           MINOR: ${{ needs.version.outputs.minor }}
-          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          LATEST: ${{ needs.version.outputs.latest }}
+          MINOR_LATEST: ${{ needs.version.outputs.minor_latest }}
         run: |
           mapfile -t digests < <(cat digests/*)
-          scripts/release-image.sh merge "$REPO" "$VERSION" "$MINOR" "$PRERELEASE" "${digests[@]}"
+          scripts/release-image.sh merge "$REPO" "$VERSION" "$MINOR" "$LATEST" "$MINOR_LATEST" "${digests[@]}"
           docker buildx imagetools inspect "$REPO:$VERSION" | tee inspect.txt
           grep -q 'linux/amd64' inspect.txt && grep -q 'linux/arm64' inspect.txt

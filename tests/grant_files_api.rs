@@ -670,3 +670,34 @@ async fn grant_paths_decoded_once() {
     assert_eq!(std::fs::read(team.join("x%41.txt")).unwrap(), b"changed");
     assert_eq!(std::fs::read(team.join("xA.txt")).unwrap(), b"other");
 }
+
+#[tokio::test]
+async fn trash_from_hides_owner_path() {
+    let w = world(&[]).await;
+    std::fs::create_dir_all(w.root().join("team/sub/deep")).unwrap();
+    std::fs::write(w.root().join("team/sub/deep/c.txt"), "c").unwrap();
+    let id = give(&w, "team/sub", "write").await;
+    let res = del(
+        &w,
+        &w.bob,
+        &format!("/api/g/{id}/files"),
+        json!({ "paths": ["b.txt", "deep/c.txt"] }),
+    )
+    .await;
+    assert_eq!(res.json["deleted"], 2, "{}", res.json);
+    let mut from: Vec<String> = trash_of(&w, &w.bob)
+        .await
+        .iter()
+        .map(|e| e["from"].as_str().unwrap().to_string())
+        .collect();
+    from.sort();
+    // Beneath the granted folder's name, never the owner's `/team/sub`.
+    assert_eq!(from, vec!["/sub", "/sub/deep"]);
+    let mut owner: Vec<String> = trash_of(&w, &w.ana)
+        .await
+        .iter()
+        .map(|e| e["from"].as_str().unwrap().to_string())
+        .collect();
+    owner.sort();
+    assert_eq!(owner, vec!["/team/sub", "/team/sub/deep"]);
+}

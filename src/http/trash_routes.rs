@@ -35,18 +35,37 @@ fn check_ids(ids: &[String]) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// An entry as `viewer` sees it: the folder it came from is shown beneath the viewer's own scope.
+/// The folder an entry came from, as the viewer may see it: beneath their own scope, or, through a grant, beneath
+/// the granted folder's name, so a recipient never sees the owner's path.
+fn from_json(e: &Entry, via: &Via, viewer: &User) -> String {
+    let Some(parent) = RelPath::parse(&e.path).ok().and_then(|p| p.parent()) else {
+        return "/".into();
+    };
+    let parent = format!("/{parent}");
+    match via {
+        Via::Own => match crate::shares::split_scope(&parent, &viewer.scope) {
+            Some(rel) => format!("/{rel}"),
+            None => parent,
+        },
+        Via::Grant { folder, .. } => {
+            let base = RelPath::parse(folder).ok();
+            let name = base
+                .as_ref()
+                .and_then(|b| b.name_bytes())
+                .map(RelPath::segment_for)
+                .unwrap_or_default();
+            match crate::shares::split_scope(&parent, folder) {
+                Some(rel) if !rel.is_root() => format!("/{name}/{rel}"),
+                _ => format!("/{name}"),
+            }
+        }
+    }
+}
+
+/// An entry as `viewer` sees it.
 pub fn entry_json(s: &AppState, e: &Entry, via: &Via, viewer: &User) -> Value {
     let name = String::from_utf8_lossy(&e.name).into_owned();
-    let from = RelPath::parse(&e.path)
-        .ok()
-        .and_then(|p| p.parent())
-        .map(|p| format!("/{p}"))
-        .map(|p| match crate::shares::split_scope(&p, &viewer.scope) {
-            Some(rel) => format!("/{rel}"),
-            None => p,
-        })
-        .unwrap_or_else(|| "/".into());
+    let from = from_json(e, via, viewer);
     let by = e
         .deleted_by
         .and_then(|id| users::by_id(&s.db, id).ok().flatten())
@@ -99,7 +118,7 @@ async fn restore(
                 .ok_or(FsError::NotFound)
                 .and_then(|(e, via)| match via {
                     Via::Own => trash::ops::restore(&s.trash, &s.db, &fu.scope, &fu.user.scope, &e),
-                    Via::Grant(grant) => restore_through(&s, &fu.user, &grant, &e),
+                    Via::Grant { id: grant, .. } => restore_through(&s, &fu.user, &grant, &e),
                 });
             match result {
                 Ok(at) => restored.push(json!({

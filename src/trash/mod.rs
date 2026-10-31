@@ -148,7 +148,8 @@ pub fn delete_row(db: &Db, id: &str) -> rusqlite::Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Via {
     Own,
-    Grant(String),
+    /// Through the grant with this id, on the folder stored at `folder`.
+    Grant { id: String, folder: String },
 }
 
 /// The entries `user` sees: those whose original place they may write to now, through their own scope or a live
@@ -185,12 +186,8 @@ pub fn visible(state: &AppState, user: &crate::users::User) -> Vec<(Entry, Via)>
             if user.perms.write && crate::shares::split_scope(&e.path, &user.scope).is_some() {
                 return Some((e, Via::Own));
             }
-            let id = granted
-                .iter()
-                .find(|(_, folder)| under(&e.path, folder))?
-                .0
-                .clone();
-            Some((e, Via::Grant(id)))
+            let (id, folder) = granted.iter().find(|(_, folder)| under(&e.path, folder))?.clone();
+            Some((e, Via::Grant { id, folder }))
         })
         .collect()
 }

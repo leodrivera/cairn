@@ -45,7 +45,7 @@ run_traefik() {
   if ! up traefik traefik; then check healthy false; return; fi
   check healthy healthy
   check https_only https_only
-  check served_over_https wait_for 20 served_over_https
+  check served_over_https served_over_https
   check captcha_on captcha_on
   check readme_admin_command admin_created
   check captcha_refuses_without_token captcha_refuses_without_token

@@ -91,6 +91,10 @@ up() { # example name [extra compose files...]
     (cd "$WORK/$name" && compose_cmd logs --tail 30 2>&1 | sed 's/^/    /' >&2)
     return 1
   }
+  # A healthy container is not routed yet: Traefik picks it up from Docker's events a moment later.
+  if grep -q '^  traefik:' "$WORK/$name/compose.yml"; then
+    wait_for 30 served_over_https >/dev/null || { say "Traefik does not route files.example.com"; return 1; }
+  fi
 }
 
 down() { # name

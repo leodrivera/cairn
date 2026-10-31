@@ -1,0 +1,10 @@
+# Trust your own certificate authority for Cairn's outbound HTTPS: an OIDC provider or a broker on a home network
+# whose certificate your own CA signed. Put the CA's certificate (PEM) next to compose.yml as ca.pem, then:
+#   docker compose -f compose.yml -f ../own-ca.yml up -d
+# Cairn adds it to the list built into the binary, so the file may hold only your CA; public sites stay trusted.
+services:
+  cairn:
+    volumes:
+      - ./ca.pem:/etc/cairn/ca.pem:ro
+    environment:
+      SSL_CERT_FILE: /etc/cairn/ca.pem

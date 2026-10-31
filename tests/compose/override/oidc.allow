@@ -1,0 +1,11 @@
+# Keys tests/compose/override/oidc.yml may change.
+services.cairn.image
+services.cairn.environment.CAIRN_OIDC_GOOGLE_ISSUER
+services.cairn.environment.CAIRN_OIDC_GOOGLE_CLIENT_ID
+services.cairn.environment.CAIRN_CAPTCHA
+services.traefik.command
+services.traefik.ports
+services.traefik.volumes
+services.traefik.networks
+services.keycloak.command
+services.keycloak.volumes

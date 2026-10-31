@@ -131,6 +131,7 @@ for example in "${examples[@]}"; do
     quick) run_quick ;;
     traefik) run_traefik ;;
     tinyauth) run_tinyauth ;;
+    oidc) run_oidc ;;
     *) say "unknown example $example"; FAILED=$((FAILED + 1)) ;;
   esac
 done

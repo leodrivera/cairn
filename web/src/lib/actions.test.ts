@@ -41,7 +41,7 @@ test("move reports partial", async () => {
 test("delete body paths", async () => {
   const log = stubFetch({ "DELETE /api/files": () => json({ deleted: 2, failed: [] }) });
   const r = await remove("photos", [folder("2026"), raw]);
-  assert.deepEqual(r, { deleted: 2, failed: [] });
+  assert.deepEqual(r, { deleted: 2, failed: [], entries: [] });
   assert.deepEqual(await log[0].json(), { paths: ["photos/2026", "photos/\u0000Y2Fm6S50eHQ"] });
 });
 

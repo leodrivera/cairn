@@ -23,7 +23,7 @@ test("shared links is a place beside My files, not a settings page", async () =>
   await waitFor(() => assert.match(el.textContent!, /Every link that is currently active/));
   assert.ok(!el.querySelector(".settings-nav"));
   const places = [...el.querySelectorAll(".places a")].map((a) => a.textContent!.trim());
-  assert.deepEqual(places, ["My files", "Shared links"]);
+  assert.deepEqual(places, ["My files", "Shared with me", "Shared links", "Trash"]);
   assert.equal(el.querySelector('.places [aria-current="page"]')!.textContent!.trim(), "Shared links");
 });
 

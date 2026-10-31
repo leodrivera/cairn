@@ -300,26 +300,58 @@ export function nameList(items: Entry[]): string {
   return new Intl.ListFormat(lang(), { type: "conjunction" }).format(names);
 }
 
-type DeleteProps = { dir: string; items: Entry[]; onConfirm(): Promise<void>; onClose(): void };
+/**
+ * `trash`: moves to the trash, with a permanent delete behind a second question. `permanent`: the trash is off.
+ * `grant`: inside a grant, only the trash. `instead`: the trash refused these items (`reason` says why); offers a
+ * permanent delete.
+ */
+export type DeleteMode = "trash" | "permanent" | "grant" | "instead";
 
-export function DeleteDialog({ dir, items, onConfirm, onClose }: DeleteProps) {
+type DeleteProps = {
+  dir: string;
+  items: Entry[];
+  mode: DeleteMode;
+  reason?: string;
+  onConfirm(permanent: boolean): Promise<void>;
+  onClose(): void;
+};
+
+export function DeleteDialog({ dir, items, mode, reason, onConfirm, onClose }: DeleteProps) {
   const cancel = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useLayoutEffect(() => cancel.current?.focus(), []);
-  const confirm = async () => {
+  const [forever, setForever] = useState(mode === "permanent" || mode === "instead");
+  useLayoutEffect(() => cancel.current?.focus(), [forever]);
+  const confirm = async (permanent: boolean) => {
     setBusy(true);
     try {
-      await onConfirm();
+      await onConfirm(permanent);
       onClose();
     } catch (e) {
       setError(failureText(e));
       setBusy(false);
     }
   };
+  const names = nameList(items);
+  let title: string;
+  let body: string;
+  if (mode === "permanent") {
+    title = tn("dialog.deleteTitle", items.length);
+    body = `${t("dialog.deleteBody", { names, folder: folderLabel(dir) })} ${t("dialog.trashOff")}`;
+  } else if (mode === "instead") {
+    title = tn("dialog.foreverTitle", items.length);
+    body = t("dialog.insteadBody", { names });
+  } else if (forever) {
+    title = tn("dialog.foreverTitle", items.length);
+    body = t("dialog.foreverBody", { names });
+  } else {
+    title = tn("dialog.trashTitle", items.length);
+    body = t("dialog.trashBody", { names });
+  }
   return (
-    <Dialog title={tn("dialog.deleteTitle", items.length)} onClose={onClose}>
-      <p class="dialog-body">{t("dialog.deleteBody", { names: nameList(items), folder: folderLabel(dir) })}</p>
+    <Dialog title={title} onClose={onClose}>
+      {reason && <p class="dialog-body">{reason}</p>}
+      <p class="dialog-body">{body}</p>
       {error && (
         <p class="error-line" role="alert">
           {error}
@@ -329,9 +361,22 @@ export function DeleteDialog({ dir, items, onConfirm, onClose }: DeleteProps) {
         <button ref={cancel} type="button" class="button" onClick={onClose}>
           {t("dialog.cancel")}
         </button>
-        <button type="button" class="button danger" disabled={busy} onClick={confirm}>
-          {t("explorer.delete")}
-        </button>
+        {forever ? (
+          <button type="button" class="button danger" disabled={busy} onClick={() => confirm(true)}>
+            {mode === "permanent" ? t("explorer.delete") : t("dialog.deleteForever")}
+          </button>
+        ) : (
+          <>
+            {mode === "trash" && (
+              <button type="button" class="button quiet danger-text" disabled={busy} onClick={() => setForever(true)}>
+                {t("dialog.deleteForever")}
+              </button>
+            )}
+            <button type="button" class="button primary" disabled={busy} onClick={() => confirm(false)}>
+              {t("dialog.moveToTrash")}
+            </button>
+          </>
+        )}
       </div>
     </Dialog>
   );

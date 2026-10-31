@@ -117,7 +117,7 @@ test("delete focuses Cancel and lists three names", async () => {
   const items = ["cover.png", "trail-ridge.jpg", "notes.txt", "a.txt", "b.txt"].map((n) => file(n));
   let confirmed = 0;
   const el = render(
-    <DeleteDialog dir="photos/2026" items={items} onConfirm={async () => void confirmed++} onClose={() => {}} />,
+    <DeleteDialog dir="photos/2026" items={items} mode="permanent" onConfirm={async () => void confirmed++} onClose={() => {}} />,
   );
   await flush();
   assert.ok(document.activeElement === button(el, "Cancel"));
@@ -130,7 +130,7 @@ test("delete focuses Cancel and lists three names", async () => {
 
 test("delete of two names them both", async () => {
   const el = render(
-    <DeleteDialog dir="" items={[file("cover.png"), file("trail-ridge.jpg")]} onConfirm={async () => {}} onClose={() => {}} />,
+    <DeleteDialog dir="" items={[file("cover.png"), file("trail-ridge.jpg")]} mode="permanent" onConfirm={async () => {}} onClose={() => {}} />,
   );
   await flush();
   assert.match(el.textContent!, /cover\.png and trail-ridge\.jpg will be removed from My files\./);
@@ -226,4 +226,42 @@ test("new_text_file_dialog_selects_base_name", async () => {
   assert.equal(input.value, "untitled.txt");
   assert.equal(input.selectionStart, 0);
   assert.equal(input.selectionEnd, 8);
+});
+
+const three = [file("a.txt"), file("b.txt"), file("c.txt")];
+
+test("delete_dialog_trash_mode", async () => {
+  const calls: boolean[] = [];
+  const el = render(<DeleteDialog dir="" items={three} mode="trash" onConfirm={async (p) => void calls.push(p)} onClose={() => {}} />);
+  await flush();
+  assert.match(el.textContent!, /Move 3 items to the trash\?/);
+  assert.match(el.textContent!, /You can restore them from there\./);
+  button(el, "Move to trash").click();
+  await waitFor(() => assert.deepEqual(calls, [false]));
+  const again = render(<DeleteDialog dir="" items={three} mode="trash" onConfirm={async (p) => void calls.push(p)} onClose={() => {}} />);
+  await flush();
+  button(again, "Delete permanently").click();
+  await flush();
+  assert.match(again.textContent!, /Delete 3 items permanently\?/);
+  assert.match(again.textContent!, /This can't be undone\./);
+  assert.deepEqual(calls, [false]);
+  button(again, "Delete permanently").click();
+  await waitFor(() => assert.deepEqual(calls, [false, true]));
+});
+
+test("delete_dialog_permanent_mode", async () => {
+  const calls: boolean[] = [];
+  const el = render(<DeleteDialog dir="" items={three} mode="permanent" onConfirm={async (p) => void calls.push(p)} onClose={() => {}} />);
+  await flush();
+  assert.match(el.textContent!, /Delete 3 items\?/);
+  assert.match(el.textContent!, /The trash is off on this server\./);
+  button(el, "Delete").click();
+  await waitFor(() => assert.deepEqual(calls, [true]));
+});
+
+test("delete_dialog_grant_mode", async () => {
+  const el = render(<DeleteDialog dir="" items={three} mode="grant" onConfirm={async () => {}} onClose={() => {}} />);
+  await flush();
+  assert.match(el.textContent!, /Move 3 items to the trash\?/);
+  assert.ok(![...el.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Delete permanently"));
 });

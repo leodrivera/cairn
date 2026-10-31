@@ -89,3 +89,9 @@ test("login error parsed", () => {
   assert.deepEqual(parseRoute("/login", "?error=other"), { name: "login", next: null });
   assert.equal(href({ name: "login", next: null, error: "sso" }), "/login");
 });
+
+test("trash route", () => {
+  assert.deepEqual(parseRoute("/trash", ""), { name: "trash" });
+  assert.deepEqual(parseRoute("/trash/", ""), { name: "trash" });
+  assert.equal(href({ name: "trash" }), "/trash");
+});

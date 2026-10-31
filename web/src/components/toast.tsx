@@ -1,7 +1,9 @@
-// One line at the bottom that says what just happened, then fades after 4 s.
+// One line at the bottom that says what just happened, then fades: after 4 s, or 8 s when it offers an action.
 import { useEffect, useState } from "preact/hooks";
 
-let current: { id: number; text: string } | null = null;
+export type ToastAction = { label: string; run(): void };
+
+let current: { id: number; text: string; action?: ToastAction } | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let seq = 0;
 const listeners = new Set<() => void>();
@@ -10,13 +12,16 @@ function changed(): void {
   for (const fn of listeners) fn();
 }
 
-export function showToast(text: string): void {
-  current = { id: ++seq, text };
+function hide(): void {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    current = null;
-    changed();
-  }, 4000);
+  current = null;
+  changed();
+}
+
+export function showToast(text: string, action?: ToastAction): void {
+  current = { id: ++seq, text, action };
+  clearTimeout(timer);
+  timer = setTimeout(hide, action ? 8000 : 4000);
   changed();
 }
 
@@ -29,11 +34,24 @@ export function Toast() {
       listeners.delete(fn);
     };
   }, []);
+  const action = current?.action;
   return (
     <div class="toast-region" role="status">
       {current && (
-        <p key={current.id} class="toast">
-          {current.text}
+        <p key={current.id} class={action ? "toast with-action" : "toast"}>
+          <span>{current.text}</span>
+          {action && (
+            <button
+              type="button"
+              class="button quiet toast-action"
+              onClick={() => {
+                hide();
+                action.run();
+              }}
+            >
+              {action.label}
+            </button>
+          )}
         </p>
       )}
     </div>

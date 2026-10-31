@@ -46,6 +46,24 @@ export type Me = {
   deniedEmail?: string;
   method?: string;
   security?: { captchaDisabled: boolean };
+  /** Whether deletes go to the trash; missing on old servers means no. */
+  trash?: { on: boolean };
+};
+
+/** One item in the trash, as the person who may restore it sees it. */
+export type TrashEntry = {
+  id: string;
+  name: string;
+  rawName?: string;
+  kind: "file" | "folder";
+  size: number;
+  /** The folder it came from, as this person sees it. */
+  from: string;
+  deletedBy: { id: number; name: string } | null;
+  deletedAt: number;
+  expiresAt: number;
+  /** False when it is reached through a grant: restore only. */
+  canDelete: boolean;
 };
 
 /** A share link as its owner, or an admin, sees it. */

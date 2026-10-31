@@ -78,3 +78,17 @@ test("the Settings button in Portuguese", async () => {
     else delete (navigator as { languages?: unknown }).languages;
   }
 });
+
+test("places_in_order", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", [file("a.txt")]) });
+  const el = render(<App />);
+  await waitFor(() => assert.ok(el.querySelector(".sidebar .place")));
+  const places = [...el.querySelectorAll(".sidebar .place")].map((a) => [a.textContent!.trim(), a.getAttribute("href")]);
+  assert.deepEqual(places, [
+    ["My files", "/files/"],
+    ["Shared with me", "/shared"],
+    ["Shared links", "/links"],
+    ["Trash", "/trash"],
+  ]);
+  await flush();
+});

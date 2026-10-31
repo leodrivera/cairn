@@ -93,3 +93,14 @@ test("new_menu_strings_in_pt_br", () => {
   assert.equal(t("explorer.new"), "Novo");
   assert.equal(t("explorer.newTextFile"), "Novo arquivo de texto");
 });
+
+test("trash_strings_in_pt_br", () => {
+  setLang("pt-BR");
+  assert.equal(t("nav.sharedWithMe"), "Compartilhados comigo");
+  assert.equal(t("nav.trash"), "Lixeira");
+  assert.equal(t("dialog.moveToTrash"), "Mover para a lixeira");
+  assert.equal(t("dialog.deleteForever"), "Excluir permanentemente");
+  assert.equal(t("trash.restore"), "Restaurar");
+  assert.equal(t("trash.emptyTrash"), "Esvaziar lixeira");
+  assert.equal(tn("files.trashed", 2), "2 itens foram para a lixeira.");
+});

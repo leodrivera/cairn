@@ -59,7 +59,8 @@ const sentences: Record<string, Key> = {
   "The link password needs 8 to 256 characters.": "invalid.sharePassword",
 };
 
-export function errorText(f: ApiFailure): string {
+/** `vars` fill a translated sentence that names something (`{name}`); without them the server's own sentence is used. */
+export function errorText(f: ApiFailure, vars?: Vars): string {
   if (f.code === "invalid" || f.code === "bad_request") {
     const key = sentences[f.serverMessage];
     if (key) return t(key);
@@ -70,6 +71,9 @@ export function errorText(f: ApiFailure): string {
     return t("error.too_many", { minutes: tn("time.minutes", minutes) });
   }
   const key = `error.${f.code}`;
-  if (key in en) return t(key as Key);
+  if (key in en) {
+    const text = t(key as Key, vars);
+    return /\{\w+\}/.test(text) ? f.serverMessage || text : text;
+  }
   return f.serverMessage || t("error.internal");
 }

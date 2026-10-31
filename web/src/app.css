@@ -2053,3 +2053,36 @@ fieldset.perms {
     display: none;
   }
 }
+
+/* Toast with an action (Undo) */
+.toast.with-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.toast-action {
+  min-height: var(--cairn-target);
+  color: var(--cairn-accent);
+}
+
+/* Trash */
+.trash-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.trash-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.input-narrow {
+  max-width: 12ch;
+}

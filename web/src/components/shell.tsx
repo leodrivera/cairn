@@ -72,7 +72,7 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
-  const place = route.name === "files" || route.name === "view" ? "files" : route.name === "links" ? "links" : "";
+  const place = route.name === "files" || route.name === "view" ? "files" : route.name;
 
   const signOut = async () => {
     const queue = uploads();
@@ -100,7 +100,9 @@ export function Shell({ space, class: cls, onDragOver, onDrop, nav: ownNav, chil
 
   const nav: Place[] = [
     { href: "/files/", label: t("nav.myFiles"), icon: "home", on: place === "files" },
+    { href: "/shared", label: t("nav.sharedWithMe"), icon: "users", on: false },
     { href: "/links", label: t("nav.sharedLinks"), icon: "link", on: place === "links" },
+    { href: "/trash", label: t("nav.trash"), icon: "trash", on: place === "trash" },
   ];
 
   const sidebar = (

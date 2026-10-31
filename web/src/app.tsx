@@ -10,6 +10,7 @@ import { Explorer } from "./screens/explorer";
 import { Viewer } from "./screens/viewer";
 import { Settings } from "./screens/settings";
 import { Links } from "./screens/settings-links";
+import { Trash } from "./screens/trash";
 import { PublicShare } from "./screens/public-share";
 import { StatePanel } from "./components/states";
 import { applyLang, applyTheme, loadSession, SessionContext, type Session } from "./state/session";
@@ -28,6 +29,7 @@ function screenFor(route: Route, user: User): ComponentChildren {
   }
   if (route.name === "view") return <Viewer path={route.path} />;
   if (route.name === "links") return <Links />;
+  if (route.name === "trash") return <Trash />;
   return null;
 }
 

@@ -15,6 +15,8 @@ export type Route =
   | { name: "settings"; page: SettingsPage }
   /** The share links of the signed-in person (every link, for an admin). */
   | { name: "links" }
+  /** What was deleted from places the signed-in person may write to. */
+  | { name: "trash" }
   /** A share link's public page; `path` is beneath the shared folder, `file` when it names a file. */
   | { name: "share"; id: string; path: string; file: boolean }
   | { name: "missing" };
@@ -66,6 +68,7 @@ export function parseRoute(pathname: string, search: string): Route {
   // /settings/links is where the page lived before it left the settings; old bookmarks still open it.
   if (pathname === "/links" || pathname === "/links/" || pathname === "/settings/links" || pathname === "/settings/links/")
     return { name: "links" };
+  if (pathname === "/trash" || pathname === "/trash/") return { name: "trash" };
   const share = /^\/s\/([A-Za-z0-9_-]{22})$/.exec(pathname);
   if (share) {
     const q = new URLSearchParams(search);
@@ -91,6 +94,8 @@ export function href(r: Route): string {
       return `/settings/${r.page}`;
     case "links":
       return "/links";
+    case "trash":
+      return "/trash";
     case "share":
       return r.path === "" ? `/s/${r.id}` : `/s/${r.id}?${r.file ? "file" : "path"}=${encodeURIComponent(r.path)}`;
     case "missing":

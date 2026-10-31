@@ -2,7 +2,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, ApiFailure, offline } from "../lib/api";
 import { formatSize } from "../lib/format";
-import { errorText, t, type Key } from "../i18n/index";
+import { errorText, t, tn, type Key } from "../i18n/index";
 import { StatePanel } from "../components/states";
 import { showToast } from "../components/toast";
 import { useSession } from "../state/session";
@@ -18,6 +18,7 @@ type ServerInfo = {
   threads: number;
   trustedProxies: string[];
   log: string;
+  trash?: { days: number; fromEnv: boolean; size: number; taken: string[] };
 };
 
 const captchaNames = { recaptcha: "reCAPTCHA v2", turnstile: "Turnstile", hcaptcha: "hCaptcha" };
@@ -34,6 +35,9 @@ function rows(s: ServerInfo): [string, string, string][] {
     [t("server.threads"), String(s.threads), "CAIRN_THREADS"],
     [t("server.proxies"), s.trustedProxies.length ? s.trustedProxies.join(", ") : t("server.none"), "CAIRN_TRUSTED_PROXIES"],
     [t("server.log"), s.log, "CAIRN_LOG"],
+    ...(s.trash?.fromEnv
+      ? [[t("server.trash"), tn("server.trashDaysValue", s.trash.days), "CAIRN_TRASH_DAYS"] as [string, string, string]]
+      : []),
   ];
 }
 
@@ -47,17 +51,34 @@ export function ServerSettings() {
   const [form, setForm] = useState(saved);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState("");
+  /** The trash days as typed; sent only when they differ from the server's. */
+  const [days, setDays] = useState("");
 
   useEffect(() => {
-    api<ServerInfo>("GET", "/api/server").then(setInfo, (e) => setError(e instanceof ApiFailure ? e : offline()));
+    api<ServerInfo>("GET", "/api/server").then(
+      (i) => {
+        setInfo(i);
+        if (i.trash) setDays(String(i.trash.days));
+      },
+      (e) => setError(e instanceof ApiFailure ? e : offline()),
+    );
   }, []);
+  const trash = info?.trash;
+  const daysValue = Number(days);
+  const daysOk = /^\d+$/.test(days) && daysValue <= 3650;
 
   const save = async (e: Event) => {
     e.preventDefault();
+    if (trash && !trash.fromEnv && !daysOk) {
+      setSaveError(t("server.trashDaysHint"));
+      return;
+    }
     setBusy(true);
     setSaveError("");
+    const changedDays = trash && !trash.fromEnv && daysValue !== trash.days;
     try {
-      await api("PUT", "/api/settings", form);
+      await api("PUT", "/api/settings", changedDays ? { ...form, trashDays: daysValue } : form);
+      if (changedDays) setInfo({ ...info!, trash: { ...trash!, days: daysValue } });
       await reload();
       showToast(t("server.saved"));
     } catch (err) {
@@ -133,6 +154,36 @@ export function ServerSettings() {
             {t("server.thumbnailsHint")}
           </p>
         </div>
+        {trash && (
+          <>
+            <h2>{t("server.trash")}</h2>
+            {trash.taken.map((folder) => (
+              <p key={folder} class="notice warning" role="note">
+                {t("server.trashTaken", { folder: folder === "/" ? "" : folder })}
+              </p>
+            ))}
+            {!trash.fromEnv && (
+              <div class="field">
+                <label class="field-label" for="server-trash-days">
+                  {t("server.trashDays")}
+                </label>
+                <input
+                  id="server-trash-days"
+                  class="input input-narrow"
+                  inputMode="numeric"
+                  value={days}
+                  aria-describedby="server-trash-days-hint"
+                  aria-invalid={daysOk ? undefined : true}
+                  onInput={(e) => setDays(e.currentTarget.value.trim())}
+                />
+                <p id="server-trash-days-hint" class="hint">
+                  {t("server.trashDaysHint")}
+                </p>
+              </div>
+            )}
+            <p class="muted">{t("server.trashSize", { size: formatSize(trash.size) })}</p>
+          </>
+        )}
         {saveError && (
           <p class="error-line" role="alert">
             {saveError}
@@ -142,7 +193,14 @@ export function ServerSettings() {
           <button type="submit" class="button primary" disabled={busy}>
             {t("settings.save")}
           </button>
-          <button type="button" class="button" onClick={() => setForm(saved)}>
+          <button
+            type="button"
+            class="button"
+            onClick={() => {
+              setForm(saved);
+              if (trash) setDays(String(trash.days));
+            }}
+          >
             {t("settings.discard")}
           </button>
         </div>

@@ -27,13 +27,15 @@ import { StatePanel } from "../components/states";
 import { ContextMenu, entryMenu } from "../components/context-menu";
 import {
   DeleteDialog,
+  type DeleteMode,
   FolderPicker,
   NewFolderDialog,
   NewTextFileDialog,
   RenameDialog,
   folderLabel,
 } from "../components/dialogs";
-import { showToast } from "../components/toast";
+import { showToast, type ToastAction } from "../components/toast";
+import { restore } from "../lib/trash";
 import { ShareDialog } from "../components/share-dialog";
 import { href, navigate } from "../lib/router";
 import { Selection } from "../state/selection";
@@ -46,7 +48,7 @@ type DialogState =
   | { kind: "newFolder" }
   | { kind: "newTextFile" }
   | { kind: "move" | "copy"; items: Entry[] }
-  | { kind: "delete"; items: Entry[] }
+  | { kind: "delete"; items: Entry[]; mode: DeleteMode; reason?: string }
   | { kind: "share"; entry: Entry };
 
 /** The name of the item a batch failure is about, from its path. */
@@ -158,7 +160,7 @@ export function Explorer({ path }: { path: string }) {
       setDialog({ kind: "rename", entry: chosen[0] });
     } else if (e.key === "Delete") {
       e.preventDefault();
-      setDialog({ kind: "delete", items: chosen });
+      askDelete(chosen);
     }
   };
 
@@ -223,11 +225,11 @@ export function Explorer({ path }: { path: string }) {
   const download = () => downloadItems(chosen);
 
   /** After a change: the selection is stale, the listing is reloaded, and a toast says what happened. */
-  const changed = (text: string) => {
+  const changed = (text: string, action?: ToastAction) => {
     selection.clear();
     touch();
     load();
-    showToast(text);
+    showToast(text, action);
   };
 
   const open = (e: Entry) => {
@@ -262,10 +264,52 @@ export function Explorer({ path }: { path: string }) {
     }
   };
 
-  const doDelete = async (items: Entry[]) => {
-    const r = await remove(path, items);
+  const trashOn = session!.me.trash?.on === true;
+  const askDelete = (items: Entry[]) => setDialog({ kind: "delete", items, mode: trashOn ? "trash" : "permanent" });
+  /** A dialog to show once the current one closes (the trash refused some items). */
+  const next = useRef<DialogState | null>(null);
+
+  const undo = (entries: string[]): ToastAction => ({
+    label: t("toast.undo"),
+    run: async () => {
+      try {
+        const r = await restore(entries);
+        changed(tn("trash.restored", r.restored.length));
+      } catch (e) {
+        showToast(errorText(e instanceof ApiFailure ? e : offline()));
+      }
+    },
+  });
+
+  const doDelete = async (items: Entry[], permanent: boolean) => {
+    const r = await remove(path, items, { permanent });
+    // The trash could not take these (another disk, or a folder it may not use): offer a permanent delete.
+    const refused = r.failed.filter((f) => f.error === "other_disk" || f.error === "trash_taken");
+    if (!permanent && refused.length > 0) {
+      const names = new Set(refused.map((f) => f.path));
+      const first = refused[0];
+      next.current = {
+        kind: "delete",
+        items: items.filter((e) => names.has(join(path, segmentOf(e)))),
+        mode: "instead",
+        reason: errorText(failureOfItem(first), { name: failedName(first) }),
+      };
+      if (r.deleted > 0) changed(tn("files.trashed", r.deleted), undo(r.entries));
+      return;
+    }
     if (r.failed.length === 0) {
-      changed(tn("files.deleted", r.deleted));
+      if (permanent) changed(tn("files.deleted", r.deleted));
+      else changed(tn("files.trashed", r.deleted), undo(r.entries));
+    } else if (!permanent) {
+      const f = r.failed[0];
+      changed(
+        tn("files.trashedSome", items.length, {
+          done: r.deleted,
+          name: failedName(f),
+          error: errorText(failureOfItem(f), { name: failedName(f) }),
+        }),
+        r.entries.length ? undo(r.entries) : undefined,
+      );
     } else {
       const f = r.failed[0];
       changed(
@@ -533,7 +577,7 @@ export function Explorer({ path }: { path: string }) {
                 <button
                   type="button"
                   class="button quiet danger-text"
-                  onClick={() => setDialog({ kind: "delete", items: chosen })}
+                  onClick={() => askDelete(chosen)}
                 >
                   {t("explorer.delete")}
                 </button>
@@ -569,7 +613,7 @@ export function Explorer({ path }: { path: string }) {
               <button
                 type="button"
                 class="bar-button danger-text"
-                onClick={() => setDialog({ kind: "delete", items: chosen })}
+                onClick={() => askDelete(chosen)}
               >
                 <Icon name="trash" />
                 <span>{t("explorer.delete")}</span>
@@ -589,7 +633,7 @@ export function Explorer({ path }: { path: string }) {
             rename: () => setDialog({ kind: "rename", entry: itemMenu.entry }),
             move: () => setDialog({ kind: "move", items: targets(itemMenu.entry) }),
             copy: () => setDialog({ kind: "copy", items: targets(itemMenu.entry) }),
-            remove: () => setDialog({ kind: "delete", items: targets(itemMenu.entry) }),
+            remove: () => askDelete(targets(itemMenu.entry)),
           })}
           onClose={closeMenu}
         />
@@ -627,7 +671,18 @@ export function Explorer({ path }: { path: string }) {
         />
       )}
       {dialog?.kind === "delete" && (
-        <DeleteDialog dir={path} items={dialog.items} onConfirm={() => doDelete(dialog.items)} onClose={closeDialog} />
+        <DeleteDialog
+          key={dialog.mode}
+          dir={path}
+          items={dialog.items}
+          mode={dialog.mode}
+          reason={dialog.reason}
+          onConfirm={(permanent) => doDelete(dialog.items, permanent)}
+          onClose={() => {
+            setDialog(next.current);
+            next.current = null;
+          }}
+        />
       )}
     </Shell>
   );

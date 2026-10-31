@@ -428,7 +428,7 @@ test("move the selection reports a partial failure", async () => {
   assert.ok(!el.querySelector(".selection-bar"));
 });
 
-test("delete asks first, then deletes", async () => {
+test("delete_permanent_when_trash_off", async () => {
   const log = startAt("/files/", admin, {
     "GET /api/files": listing("", sample),
     "DELETE /api/files": () => json({ deleted: 1, failed: [] }),
@@ -440,9 +440,10 @@ test("delete asks first, then deletes", async () => {
   click(menuItem(el, "Delete"));
   await waitFor(() => assert.match(el.textContent!, /Delete 1 item\?/));
   assert.ok(!log.some((r) => r.method === "DELETE"));
+  assert.match(el.querySelector('[role="dialog"]')!.textContent!, /The trash is off on this server\./);
   click(el.querySelector<HTMLButtonElement>('[role="dialog"] .button.danger')!);
   await waitFor(() => assert.match(el.textContent!, /Deleted 1 item\./));
-  assert.deepEqual(await log.find((r) => r.method === "DELETE")!.json(), { paths: ["notes.txt"] });
+  assert.deepEqual(await log.find((r) => r.method === "DELETE")!.json(), { paths: ["notes.txt"], permanent: true });
 });
 
 test("new folder from the toolbar", async () => {
@@ -731,4 +732,61 @@ test("new_menu_hidden_without_write", async () => {
   const el = render(<App />);
   await shown(el);
   assert.ok(!el.querySelector('.toolbar button[aria-haspopup="menu"]'));
+});
+
+const withTrash = { "GET /api/me": () => json({ user: admin, trash: { on: true } }) };
+
+test("delete_sends_to_trash_and_undo_restores", async () => {
+  const log = startAt("/files/", admin, {
+    ...withTrash,
+    "GET /api/files": listing("", sample),
+    "DELETE /api/files": () => json({ deleted: 2, failed: [], entries: ["e1", "e2"] }),
+    "POST /api/trash/restore": () => json({ restored: [{ id: "e1" }, { id: "e2" }], failed: [] }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(rows(el)[2].querySelector(".check-button")!);
+  click(rows(el)[3].querySelector(".check-button")!);
+  await waitFor(() => assert.ok(el.querySelector(".selection-bar")));
+  click(button(el, "Delete"));
+  await waitFor(() => assert.match(el.textContent!, /Move 2 items to the trash\?/));
+  click(button(el, "Move to trash"));
+  await waitFor(() => assert.match(el.textContent!, /Moved 2 items to the trash\./));
+  assert.deepEqual(await log.find((r) => r.method === "DELETE")!.json(), { paths: ["trail-ridge.jpg", "notes.txt"] });
+  click(button(el, "Undo"));
+  await waitFor(() => assert.ok(log.some((r) => r.method === "POST" && r.url.endsWith("/api/trash/restore"))));
+  const post = log.find((r) => r.url.endsWith("/api/trash/restore"))!;
+  assert.deepEqual(await post.json(), { ids: ["e1", "e2"] });
+  await waitFor(() => assert.match(el.textContent!, /Restored 2 items\./));
+});
+
+test("other_disk_offers_permanent", async () => {
+  const bodies: unknown[] = [];
+  startAt("/files/", admin, {
+    ...withTrash,
+    "GET /api/files": listing("", sample),
+    "DELETE /api/files": async (req) => {
+      const body = await req.json();
+      bodies.push(body);
+      return body.permanent
+        ? json({ deleted: 1, failed: [], entries: [] })
+        : json({
+            deleted: 0,
+            failed: [{ path: "notes.txt", error: "other_disk", message: "notes.txt is on another disk, so it cannot go to the trash." }],
+            entries: [],
+          });
+    },
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  click(menuItem(el, "Delete"));
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"]')));
+  click(button(el, "Move to trash"));
+  await waitFor(() => assert.match(el.querySelector('[role="dialog"]')?.textContent ?? "", /notes\.txt is on another disk, so it cannot go to the trash\./));
+  click(button(el, "Delete permanently"));
+  await waitFor(() => assert.equal(bodies.length, 2));
+  assert.deepEqual(bodies[1], { paths: ["notes.txt"], permanent: true });
+  await waitFor(() => assert.match(el.textContent!, /Deleted 1 item\./));
 });

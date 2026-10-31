@@ -30,8 +30,18 @@ export function transfer(
   });
 }
 
-export function remove(dir: string, items: Entry[]): Promise<{ deleted: number; failed: Failed[] }> {
-  return api("DELETE", "/api/files", { paths: items.map((e) => join(dir, segmentOf(e))) });
+export type Removed = { deleted: number; failed: Failed[]; entries: string[] };
+
+/** Deletes to the trash, or for good with `permanent`. `entries` are the trash entries made, for Undo. */
+export async function remove(
+  dir: string,
+  items: Entry[],
+  opts: { permanent?: boolean; base?: string } = {},
+): Promise<Removed> {
+  const body: { paths: string[]; permanent?: true } = { paths: items.map((e) => join(dir, segmentOf(e))) };
+  if (opts.permanent) body.permanent = true;
+  const r = await api<Removed>("DELETE", `${opts.base ?? "/api"}/files`, body);
+  return { ...r, entries: r.entries ?? [] };
 }
 
 /** An empty text file, refused with `exists` when the name is taken (`If-None-Match: *`). */

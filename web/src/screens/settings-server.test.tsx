@@ -91,3 +91,49 @@ test("appearance saves with PUT /api/settings; Discard resets", async () => {
   await waitFor(() => assert.deepEqual(bodies, [{ theme: "dark", thumbnails: true }]));
   await waitFor(() => assert.match(el.textContent!, /Saved the server settings\./));
 });
+
+const trash = { days: 30, fromEnv: false, size: 5_242_880, taken: [] as string[] };
+
+test("trash_days_field", async () => {
+  const bodies: unknown[] = [];
+  startAt("/settings/server", admin, {
+    "GET /api/server": () => json({ ...server, trash }),
+    "PUT /api/settings": async (req) => {
+      const body = await req.json();
+      bodies.push(body);
+      return json({ settings: body });
+    },
+  });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /CAIRN_ROOT/));
+  const days = byLabel(el, "Keep deleted items for (days)");
+  assert.equal(days.value, "30");
+  setValue(days, "7");
+  await flush();
+  buttonNamed(el, "Save changes").click();
+  await waitFor(() => assert.equal(bodies.length, 1));
+  assert.deepEqual(bodies[0], { theme: null, thumbnails: false, trashDays: 7 });
+});
+
+test("trash_days_from_env_read_only", async () => {
+  startAt("/settings/server", admin, { "GET /api/server": () => json({ ...server, trash: { ...trash, days: 7, fromEnv: true } }) });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /CAIRN_ROOT/));
+  const rows = [...el.querySelectorAll(".env-row")].map((r) => r.textContent);
+  assert.ok(rows.includes("Trash7 daysCAIRN_TRASH_DAYS"), JSON.stringify(rows));
+  assert.ok(!el.querySelector("#server-trash-days"));
+});
+
+test("trash_folder_taken_notice", async () => {
+  startAt("/settings/server", admin, { "GET /api/server": () => json({ ...server, trash: { ...trash, taken: ["/photos"] } }) });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /CAIRN_ROOT/));
+  assert.match(el.textContent!, /\/photos\/\.cairn-trash was not made by Cairn, so the trash is off there\. Rename that folder\./);
+});
+
+test("trash_size_shown", async () => {
+  startAt("/settings/server", admin, { "GET /api/server": () => json({ ...server, trash }) });
+  const el = render(<App />);
+  await waitFor(() => assert.match(el.textContent!, /CAIRN_ROOT/));
+  assert.match(el.textContent!, /In the trash now: 5 MB/);
+});

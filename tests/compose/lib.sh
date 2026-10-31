@@ -12,6 +12,11 @@ CURRENT=""   # the example whose logs a failed check prints
 PROJECTS=()  # "project|dir|files..." of every project brought up, for the final teardown
 
 # The exact commands the README gives. tests/compose/check-readme.sh fails when one is missing from the README.
+# Sentences the README must carry word for word, because a reader acts on them.
+README_SENTENCES=(
+  "Docker opens published ports in the firewall itself, so ufw or firewalld rules do not close them"
+)
+
 README_COMMANDS=(
   'docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password'
   'sudo chown 10001:10001 files'
@@ -178,12 +183,14 @@ tcurl() {
   curl -s --cacert "$WORK/ca/ca.pem" "${resolve[@]}" "$@"
 }
 
-# The example's Traefik flags, minus Let's Encrypt, plus the test certificate: the only change an override makes.
+# The example's Traefik flags with Let's Encrypt swapped for the test certificate: the resolver flags go, the
+# entrypoint keeps TLS on without a resolver, and the file provider serves the certificate.
 traefik_flags_match() { # example name
   python3 -I - "$WORK/$2.alone.json" "$WORK/$2.test.json" <<'PY'
 import json, sys
 a, b = (json.load(open(p))["services"]["traefik"]["command"] for p in sys.argv[1:3])
-want = [f for f in a if "acme" not in f and "certresolver" not in f] + ["--providers.file.filename=/certs/tls.yml"]
+want = [f.replace(".http.tls.certresolver=le", ".http.tls=true") for f in a if "acme" not in f]
+want += ["--providers.file.filename=/certs/tls.yml"]
 if b != want:
     print("override flags:", b, "want:", want)
     sys.exit(1)

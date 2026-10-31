@@ -1,0 +1,5 @@
+# Keys tests/compose/override/traefik.yml may change.
+services.cairn.image
+services.traefik.command
+services.traefik.ports
+services.traefik.volumes

@@ -1,0 +1,15 @@
+# Fail2ban jail for Cairn. Copy to /etc/fail2ban/jail.d/cairn.local.
+# Cairn answers 429 itself after 5 failures per e-mail or 10 per address in 15 minutes; this bans an address
+# that tries many accounts before that, and leaves a person who mistypes their own password to Cairn.
+[cairn]
+enabled  = true
+filter   = cairn
+# Docker's json-file logs; the filter matches only Cairn's line. With the journald log driver, use
+# backend = systemd and journalmatch = CONTAINER_NAME=cairn instead.
+logpath  = /var/lib/docker/containers/*/*-json.log
+maxretry = 8
+findtime = 15m
+bantime  = 1h
+# Published ports skip the INPUT chain, so the ban goes in DOCKER-USER.
+chain    = DOCKER-USER
+port     = http,https

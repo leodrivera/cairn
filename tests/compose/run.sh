@@ -121,9 +121,15 @@ run_quick() {
   down asuser
 }
 
+# The other examples keep their checks in a file of their own.
+for f in "$TESTS"/*.sh; do
+  [[ $f == */lib.sh || $f == */run.sh || $f == */check-readme.sh ]] || source "$f"
+done
+
 for example in "${examples[@]}"; do
   case "$example" in
     quick) run_quick ;;
+    traefik) run_traefik ;;
     *) say "unknown example $example"; FAILED=$((FAILED + 1)) ;;
   esac
 done

@@ -1,0 +1,18 @@
+# The image under test; Traefik on loopback ports with the test certificate instead of Let's Encrypt.
+services:
+  traefik:
+    command: !override
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --providers.file.filename=/certs/tls.yml
+    ports: !override
+      - 127.0.0.1:18081:80
+      - 127.0.0.1:18443:443
+    volumes:
+      - ${CAIRN_TEST_CA:?}:/certs:ro
+  cairn:
+    image: ${CAIRN_TEST_IMAGE:?}

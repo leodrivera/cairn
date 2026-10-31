@@ -7,6 +7,7 @@ import {
   downloadUrl,
   failureOfItem,
   newFolder,
+  newTextFile,
   remove,
   rename,
   startDownload,
@@ -24,7 +25,14 @@ import { FileGrid } from "../components/file-grid";
 import { Icon } from "../components/icons";
 import { StatePanel } from "../components/states";
 import { ContextMenu, entryMenu } from "../components/context-menu";
-import { DeleteDialog, FolderPicker, NewFolderDialog, RenameDialog, folderLabel } from "../components/dialogs";
+import {
+  DeleteDialog,
+  FolderPicker,
+  NewFolderDialog,
+  NewTextFileDialog,
+  RenameDialog,
+  folderLabel,
+} from "../components/dialogs";
 import { showToast } from "../components/toast";
 import { ShareDialog } from "../components/share-dialog";
 import { href, navigate } from "../lib/router";
@@ -36,6 +44,7 @@ import type { Entry, Listing } from "../lib/types";
 type DialogState =
   | { kind: "rename"; entry: Entry }
   | { kind: "newFolder" }
+  | { kind: "newTextFile" }
   | { kind: "move" | "copy"; items: Entry[] }
   | { kind: "delete"; items: Entry[] }
   | { kind: "share"; entry: Entry };
@@ -60,6 +69,7 @@ export function Explorer({ path }: { path: string }) {
   const [menu, setMenu] = useState(false);
   const [tools, setTools] = useState(false);
   const narrow = useNarrow();
+  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
   const [itemMenu, setItemMenu] = useState<{ entry: Entry; at: { x: number; y: number } } | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const pickFiles = useRef<HTMLInputElement>(null);
@@ -273,7 +283,13 @@ export function Explorer({ path }: { path: string }) {
     changed(t("files.created", { name: entry.name }));
   };
 
+  const doNewTextFile = async (name: string) => {
+    await newTextFile(path, name);
+    navigate(href({ name: "view", path: join(path, name) }));
+  };
+
   const closeMenu = useCallback(() => setItemMenu(null), []);
+  const closeNewMenu = useCallback(() => setNewMenu(null), []);
   const closeDialog = () => setDialog(null);
 
   const openMenu = (entry: Entry, at: { x: number; y: number }) => setItemMenu({ entry, at });
@@ -371,11 +387,16 @@ export function Explorer({ path }: { path: string }) {
               <button
                 type="button"
                 class="button"
-                aria-label={t("explorer.newFolder")}
-                onClick={() => setDialog({ kind: "newFolder" })}
+                aria-haspopup="menu"
+                aria-expanded={!!newMenu}
+                onClick={(ev) => {
+                  const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                  setNewMenu(newMenu ? null : { x: r.left, y: r.bottom + 4 });
+                }}
               >
-                <Icon name="folderPlus" />
-                <span class="label">{t("explorer.newFolder")}</span>
+                <Icon name="plus" />
+                <span class="label">{t("explorer.new")}</span>
+                <Icon name="chevronDown" />
               </button>
             )}
             <div class="menu-anchor">
@@ -439,6 +460,19 @@ export function Explorer({ path }: { path: string }) {
                   >
                     <Icon name="folderPlus" />
                     {t("explorer.newFolder")}
+                  </button>
+                )}
+                {canWrite && (
+                  <button
+                    type="button"
+                    class="menu-item"
+                    onClick={() => {
+                      setTools(false);
+                      setDialog({ kind: "newTextFile" });
+                    }}
+                  >
+                    <Icon name="file" />
+                    {t("explorer.newTextFile")}
                   </button>
                 )}
                 {(["list", "gallery"] as const).map((v) => (
@@ -571,6 +605,18 @@ export function Explorer({ path }: { path: string }) {
         />
       )}
       {dialog?.kind === "newFolder" && <NewFolderDialog onCreate={doNewFolder} onClose={closeDialog} />}
+      {dialog?.kind === "newTextFile" && <NewTextFileDialog onCreate={doNewTextFile} onClose={closeDialog} />}
+      {newMenu && (
+        <ContextMenu
+          at={newMenu}
+          label={t("explorer.new")}
+          onClose={closeNewMenu}
+          items={[
+            { label: t("explorer.newFolder"), run: () => setDialog({ kind: "newFolder" }) },
+            { label: t("explorer.newTextFile"), run: () => setDialog({ kind: "newTextFile" }) },
+          ]}
+        />
+      )}
       {(dialog?.kind === "move" || dialog?.kind === "copy") && (
         <FolderPicker
           op={dialog.kind}

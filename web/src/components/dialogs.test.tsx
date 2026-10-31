@@ -1,7 +1,7 @@
 import "../test/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DeleteDialog, FolderPicker, NewFolderDialog, RenameDialog } from "./dialogs";
+import { DeleteDialog, FolderPicker, NewFolderDialog, NewTextFileDialog, RenameDialog } from "./dialogs";
 import { ContextMenu, entryMenu } from "./context-menu";
 import { flush, render, waitFor } from "../test/dom";
 import { file, folder, listing, startAt, admin } from "../test/fixtures";
@@ -217,4 +217,13 @@ test("minor: the Tab loop counts selects, textareas and tabindex", async () => {
     new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }),
   );
   assert.ok(document.activeElement === last);
+});
+
+test("new_text_file_dialog_selects_base_name", async () => {
+  const el = render(<NewTextFileDialog onCreate={async () => {}} onClose={() => {}} />);
+  await flush();
+  const input = el.querySelector<HTMLInputElement>("input")!;
+  assert.equal(input.value, "untitled.txt");
+  assert.equal(input.selectionStart, 0);
+  assert.equal(input.selectionEnd, 8);
 });

@@ -87,3 +87,9 @@ test("pt-BR says 0 in the plural", () => {
   assert.equal(tn("links.times", 0), "Opened 0 times");
   assert.equal(tn("links.times", 1), "Opened 1 time");
 });
+
+test("new_menu_strings_in_pt_br", () => {
+  setLang("pt-BR");
+  assert.equal(t("explorer.new"), "Novo");
+  assert.equal(t("explorer.newTextFile"), "Novo arquivo de texto");
+});

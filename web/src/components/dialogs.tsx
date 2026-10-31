@@ -192,6 +192,20 @@ export function NewFolderDialog({ onCreate, onClose }: { onCreate(name: string):
   );
 }
 
+export function NewTextFileDialog({ onCreate, onClose }: { onCreate(name: string): Promise<void>; onClose(): void }) {
+  return (
+    <NameDialog
+      title={t("explorer.newTextFile")}
+      label={t("dialog.fileName")}
+      submit={t("dialog.create")}
+      initial="untitled.txt"
+      select={[0, "untitled".length]}
+      onSave={onCreate}
+      onClose={onClose}
+    />
+  );
+}
+
 type PickerProps = {
   op: "move" | "copy";
   dir: string;

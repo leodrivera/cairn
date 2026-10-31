@@ -1,5 +1,5 @@
 // What people do to files, as API calls. Paths use each entry's segment (rawName when the name is not UTF-8).
-import { api, ApiFailure } from "./api";
+import { api, ApiFailure, request } from "./api";
 import { errorText } from "../i18n/index";
 import { showToast } from "../components/toast";
 import { apiUrl, join, segmentOf } from "./paths";
@@ -32,6 +32,15 @@ export function transfer(
 
 export function remove(dir: string, items: Entry[]): Promise<{ deleted: number; failed: Failed[] }> {
   return api("DELETE", "/api/files", { paths: items.map((e) => join(dir, segmentOf(e))) });
+}
+
+/** An empty text file, refused with `exists` when the name is taken (`If-None-Match: *`). */
+export async function newTextFile(dir: string, name: string, base = "/api"): Promise<void> {
+  await request(apiUrl("text", join(dir, name)).replace(/^\/api/, base), {
+    method: "PUT",
+    headers: { "If-None-Match": "*" },
+    body: "",
+  });
 }
 
 export async function newFolder(dir: string, name: string): Promise<Entry> {

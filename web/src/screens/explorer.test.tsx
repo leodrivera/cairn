@@ -112,6 +112,7 @@ test("empty state offers Upload only with write", async () => {
   await waitFor(() => assert.match(el.textContent!, /This folder is empty/));
   assert.ok(!el.querySelector(".state button"));
   assert.ok(!el.querySelector('button[aria-label="New folder"]'));
+  assert.ok(!el.querySelector('.toolbar button[aria-haspopup="menu"]'));
 });
 
 test("filter and clear", async () => {
@@ -316,6 +317,18 @@ function more(el: HTMLElement, name: string): HTMLButtonElement {
   return b!;
 }
 
+/** Opens the toolbar's New menu and picks `item`. */
+async function openNew(el: HTMLElement, item: string) {
+  const b = el.querySelector<HTMLButtonElement>('.toolbar button[aria-haspopup="menu"]');
+  assert.ok(b, "no New button");
+  assert.equal(b!.textContent!.trim(), "New");
+  click(b!);
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  const it = [...el.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((x) => x.textContent!.trim() === item);
+  assert.ok(it, `no menu item ${item}`);
+  click(it!);
+}
+
 function submit(el: HTMLElement) {
   el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
@@ -439,7 +452,7 @@ test("new folder from the toolbar", async () => {
   });
   const el = render(<App />);
   await shown(el);
-  click(el.querySelector('button[aria-label="New folder"]')!);
+  await openNew(el, "New folder");
   await waitFor(() => assert.ok(el.querySelector('[role="dialog"] input')));
   const input = el.querySelector<HTMLInputElement>('[role="dialog"] input')!;
   input.value = "2027";
@@ -514,7 +527,7 @@ test("phone: the toolbar folds New folder and the view into More", async (t) => 
   el.querySelector<HTMLButtonElement>('.toolbar button[aria-label="More"]')!.click();
   await waitFor(() => assert.ok(el.querySelector('.toolbar .menu')));
   const items = [...el.querySelectorAll(".toolbar .menu button")].map((b) => b.textContent!.trim());
-  assert.deepEqual(items, ["New folder", "List view", "Gallery view"]);
+  assert.deepEqual(items, ["New folder", "New text file", "List view", "Gallery view"]);
 });
 
 test("final: a slow listing that lands after moving on is dropped", async () => {
@@ -643,12 +656,79 @@ test("minor: the page behind a dialog is inert while it is open", async () => {
   startAt("/files/", admin, { "GET /api/files": listing("", sample) });
   const el = render(<App />);
   await shown(el);
-  click(el.querySelector('button[aria-label="New folder"]')!);
+  await openNew(el, "New folder");
   await waitFor(() => assert.ok(el.querySelector('[role="dialog"]')));
-  assert.ok(el.querySelector(".sidebar")!.hasAttribute("inert"));
-  assert.ok(el.querySelector(".toolbar")!.hasAttribute("inert"));
+  // The dialog marks the page in an effect, which runs after the next frame.
+  await waitFor(() => assert.ok(el.querySelector(".sidebar")!.hasAttribute("inert"), "sidebar"));
+  assert.ok(el.querySelector(".toolbar")!.hasAttribute("inert"), "toolbar");
   assert.ok(!el.querySelector('[role="dialog"]')!.closest("[inert]"));
   button(el, "Cancel").click();
   await waitFor(() => assert.ok(!el.querySelector('[role="dialog"]')));
-  assert.ok(!el.querySelector("[inert]"));
+  assert.ok(!el.querySelector("[inert]"), "left inert: " + el.querySelector("[inert]")?.className);
+});
+
+test("new_menu_offers_folder_and_text_file", async () => {
+  startAt("/files/", admin, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  const b = el.querySelector<HTMLButtonElement>('.toolbar button[aria-haspopup="menu"]')!;
+  assert.equal(b.textContent!.trim(), "New");
+  click(b);
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  const items = [...el.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent!.trim());
+  assert.deepEqual(items, ["New folder", "New text file"]);
+  assert.equal(document.activeElement, el.querySelector('[role="menuitem"]'));
+  document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+  assert.equal(document.activeElement!.textContent!.trim(), "New text file");
+  document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await waitFor(() => assert.ok(!el.querySelector('[role="menu"]')));
+});
+
+test("new_text_file_creates_and_opens_editor", async () => {
+  const log = startAt("/files/notes", admin, {
+    "GET /api/files/notes": listing("notes", sample),
+    "PUT /api/text/notes/todo.txt": () => json({ etag: '"0-1"' }, 200, { etag: '"0-1"' }),
+    "GET *": () => new Response("", { status: 200 }),
+    "HEAD *": () => new Response("", { status: 200 }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  await openNew(el, "New text file");
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"] input')));
+  const input = el.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+  assert.equal(input.value, "untitled.txt");
+  input.value = "todo.txt";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await flush();
+  submit(el);
+  await waitFor(() => assert.equal(location.pathname, "/view/notes/todo.txt"));
+  const put = log.find((r) => r.method === "PUT")!;
+  assert.equal(put.headers.get("if-none-match"), "*");
+  assert.equal(await put.text(), "");
+});
+
+test("new_text_file_taken_name", async () => {
+  startAt("/files/", admin, {
+    "GET /api/files": listing("", sample),
+    "PUT /api/text/notes.txt": () =>
+      json({ error: "exists", message: "Something with that name is already there. Choose another name, or replace it." }, 409),
+  });
+  const el = render(<App />);
+  await shown(el);
+  await openNew(el, "New text file");
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"] input')));
+  const input = el.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+  input.value = "notes.txt";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await flush();
+  submit(el);
+  await waitFor(() => assert.match(el.querySelector('[role="dialog"]')!.textContent!, /already there/));
+  assert.equal(location.pathname, "/files/");
+});
+
+test("new_menu_hidden_without_write", async () => {
+  startAt("/files/", reader, { "GET /api/files": listing("", sample) });
+  const el = render(<App />);
+  await shown(el);
+  assert.ok(!el.querySelector('.toolbar button[aria-haspopup="menu"]'));
 });

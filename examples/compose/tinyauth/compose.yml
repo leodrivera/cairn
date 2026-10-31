@@ -57,7 +57,7 @@ services:
       traefik.http.middlewares.tinyauth.forwardauth.authResponseHeaders: Remote-Email,Remote-Name
 
   cairn:
-    image: ghcr.io/OWNER/cairn:0.1
+    image: ghcr.io/leodrivera/cairn:0.1
     container_name: cairn
     restart: unless-stopped
     volumes:

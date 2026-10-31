@@ -40,7 +40,7 @@ These keep Cairn small. Each one needs extra modules or state that a light serve
 ## Installation
 
 Cairn ships as a Docker image for x86_64 and aarch64 (64-bit ARM, such as a Raspberry Pi 4 or 5):
-`ghcr.io/OWNER/cairn`. Tags: `0.1.0` for one exact release, `0.1` for the newest `0.1.x` (the examples use this
+`ghcr.io/leodrivera/cairn`. Tags: `0.1.0` for one exact release, `0.1` for the newest `0.1.x` (the examples use this
 one, so `docker compose pull` brings fixes), and `latest`.
 
 The image holds only the binary and a list of certificate authorities. It runs as uid 10001. Mount the folder to
@@ -63,7 +63,7 @@ Plain HTTP on port 8080, password sign-in only. Docker opens published ports in 
 # Before the first start: mkdir files && sudo chown 10001:10001 files
 services:
   cairn:
-    image: ghcr.io/OWNER/cairn:0.1
+    image: ghcr.io/leodrivera/cairn:0.1
     container_name: cairn
     restart: unless-stopped
     ports:
@@ -135,7 +135,7 @@ services:
       - letsencrypt:/letsencrypt
 
   cairn:
-    image: ghcr.io/OWNER/cairn:0.1
+    image: ghcr.io/leodrivera/cairn:0.1
     container_name: cairn
     restart: unless-stopped
     volumes:

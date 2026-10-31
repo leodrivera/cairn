@@ -508,7 +508,7 @@ source, version and revision). `scripts/check-image.sh` checks all of this on a 
 The Rust stage builds for the architecture it runs on. Releases build `linux/amd64` on an x86_64 runner and
 `linux/arm64` on an arm64 runner, never under emulation, check each with `scripts/check-image.sh`, and join them in
 one manifest (`scripts/release-image.sh`, `.github/workflows/release.yml`). A tag `v<version>` must match the
-version in `Cargo.toml`. The image is `ghcr.io/OWNER/cairn` with the tags `<version>`, `<major>.<minor>` and
+version in `Cargo.toml`. The image is `ghcr.io/leodrivera/cairn` with the tags `<version>`, `<major>.<minor>` and
 `latest`; a pre-release gets only its own version.
 
 The image has a `HEALTHCHECK` that runs `/cairn health`, which calls `GET /api/health` on the local address and
@@ -575,7 +575,9 @@ cairn/
 Cairn is meant to be published. The repository holds no personal data:
 
 - Sample data uses `example.com` domains, generic names and placeholder keys.
-- Docs use `ghcr.io/OWNER/cairn`, with `OWNER` standing for the publishing account.
+- The image is published as `ghcr.io/leodrivera/cairn`, and the docs and examples use that name. A fork that
+  publishes its own image changes it in the README, `docs/architecture.md` and `examples/compose/`; the release
+  workflow takes the owner from the repository.
 - No real hostnames, e-mail addresses, IPs or secrets in code, docs, tests or commit messages. `.env` files and
   `secrets/` are in `.gitignore`.
 - Brand files carry no editor metadata (checked: none of the files in `brand/` has author or path metadata).

@@ -35,6 +35,10 @@ for s in "${README_SENTENCES[@]}"; do
   grep -qF -- "$s" <<< "$lines" || fail "sentence missing from the README: $s"
 done
 if grep -n '\[TODO' "$readme" "$arch"; then fail "TODO left"; fi
+# The image name is the real one everywhere a reader copies it from.
+if grep -n 'ghcr\.io/OWNER/' "$readme" "$arch" "$ROOT"/examples/compose/*/compose.yml; then
+  fail "the OWNER placeholder is left in place of the image's owner"
+fi
 if grep -n -i 'nothing \(here\|below\) is implemented' "$readme" "$arch"; then fail "status line says nothing is implemented"; fi
 
 (( failed == 0 )) && echo "readme: ok"

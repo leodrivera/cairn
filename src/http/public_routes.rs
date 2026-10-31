@@ -94,7 +94,7 @@ async fn find(s: &AppState, id: &str) -> Result<Live, ApiError> {
     let (db, root, data_id, fallback, id) = (
         s.db.clone(),
         s.config.root.clone(),
-        s.data_id,
+        s.reserved(),
         s.force_fallback,
         id.to_string(),
     );

@@ -12,6 +12,7 @@ pub mod settings;
 pub mod shares;
 pub mod startup;
 pub mod tls;
+pub mod trash;
 pub mod user_cli;
 pub mod users;
 

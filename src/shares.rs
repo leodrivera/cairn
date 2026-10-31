@@ -211,7 +211,7 @@ pub struct Live {
 pub fn resolve(
     db: &Db,
     root: &Path,
-    data_id: Option<(u64, u64)>,
+    reserved: crate::fs::scope::Reserved,
     fallback: bool,
     id: &str,
     now: i64,
@@ -226,7 +226,7 @@ pub fn resolve(
         return None;
     }
     let rel = split_scope(&row.path, &creator.scope)?;
-    let scope = Scope::new(root, &creator.scope, data_id).ok()?;
+    let scope = Scope::new(root, &creator.scope, reserved).ok()?;
     let scope = if fallback {
         scope.with_fallback()
     } else {

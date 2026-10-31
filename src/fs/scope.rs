@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use rustix::fd::OwnedFd;
 use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, ResolveFlags};
@@ -14,9 +14,36 @@ use super::path::RelPath;
 
 pub struct Scope {
     root: OwnedFd,
-    data_id: Option<(u64, u64)>,
+    reserved: Reserved,
     mode: Resolve,
 }
+
+/// Folders no path from a client may reach, by device and inode, and the server root they are reserved in.
+#[derive(Clone, Default, Debug)]
+pub struct Reserved {
+    /// `CAIRN_DATA`.
+    pub data: Option<(u64, u64)>,
+    /// Every trash folder of ours.
+    pub trash: Arc<[(u64, u64)]>,
+    /// `CAIRN_ROOT` itself, where the trash folder's name is kept free.
+    pub root: Option<(u64, u64)>,
+}
+
+impl Reserved {
+    pub fn data_only(data: Option<(u64, u64)>) -> Reserved {
+        Reserved {
+            data,
+            ..Reserved::default()
+        }
+    }
+
+    pub fn has(&self, id: (u64, u64)) -> bool {
+        self.data == Some(id) || self.trash.contains(&id)
+    }
+}
+
+/// The name of the trash folder at the top of each mount.
+pub const TRASH_NAME: &str = ".cairn-trash";
 
 #[derive(Clone, Copy)]
 enum Resolve {
@@ -57,11 +84,7 @@ fn fd_path(fd: &OwnedFd) -> std::io::Result<PathBuf> {
 
 impl Scope {
     /// `scope` is the user's folder as stored, like `/photos`; it was validated when it was saved.
-    pub fn new(
-        server_root: &Path,
-        scope: &str,
-        data_id: Option<(u64, u64)>,
-    ) -> Result<Scope, FsError> {
+    pub fn new(server_root: &Path, scope: &str, reserved: Reserved) -> Result<Scope, FsError> {
         let path = server_root.join(scope.trim_start_matches('/'));
         let root = rustix::fs::openat(
             CWD,
@@ -76,7 +99,7 @@ impl Scope {
         };
         Ok(Scope {
             root,
-            data_id,
+            reserved,
             mode,
         })
     }
@@ -132,7 +155,7 @@ impl Scope {
                 }
                 Err(e) => return Err(e.into()),
             };
-            if Some(id_of(&rustix::fs::fstat(&next)?)) == self.data_id {
+            if self.reserved.has(id_of(&rustix::fs::fstat(&next)?)) {
                 return Err(FsError::NotFound);
             }
             cur = next;
@@ -153,17 +176,18 @@ impl Scope {
     /// Refuses what was opened when it is the data folder or lies inside it, also when reached through a symlink
     /// or another mount of the same folder. It checks the object actually opened, not the path again.
     fn check_data(&self, fd: &OwnedFd, path: &RelPath) -> Result<(), FsError> {
-        let Some(data) = self.data_id else {
+        let r = &self.reserved;
+        if r.data.is_none() && r.trash.is_empty() {
             return Ok(());
-        };
-        if id_of(&rustix::fs::fstat(fd)?) == data {
+        }
+        if r.has(id_of(&rustix::fs::fstat(fd)?)) {
             return Err(FsError::NotFound);
         }
         let (Ok(real), Ok(base)) = (fd_path(fd), fd_path(&self.root)) else {
             // No /proc: check each folder named on the path instead.
             for n in 0..path.len() {
                 let fd = self.open_raw(&path.prefix(n), OFlags::PATH)?;
-                if id_of(&rustix::fs::fstat(&fd)?) == data {
+                if r.has(id_of(&rustix::fs::fstat(&fd)?)) {
                     return Err(FsError::NotFound);
                 }
             }
@@ -175,7 +199,7 @@ impl Scope {
                 break;
             }
             if let Ok(st) = rustix::fs::stat(dir)
-                && id_of(&st) == data
+                && r.has(id_of(&st))
             {
                 return Err(FsError::NotFound);
             }
@@ -203,7 +227,7 @@ impl Scope {
         let root = self.open_dir(path)?;
         Ok(Scope {
             root,
-            data_id: self.data_id,
+            reserved: self.reserved.clone(),
             mode: self.mode,
         })
     }
@@ -214,10 +238,8 @@ impl Scope {
             return Err(FsError::ScopeRoot);
         };
         let dir = self.open_dir(&parent)?;
-        if let (Some(data), Ok(st)) = (
-            self.data_id,
-            rustix::fs::statat(&dir, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW),
-        ) && id_of(&st) == data
+        if let Ok(st) = rustix::fs::statat(&dir, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW)
+            && self.reserved.has(id_of(&st))
         {
             return Err(FsError::NotFound);
         }
@@ -258,8 +280,35 @@ impl Scope {
         Ok(id_of(&rustix::fs::fstat(&self.root)?))
     }
 
-    pub fn data_id(&self) -> Option<(u64, u64)> {
-        self.data_id
+    /// Whether this device and inode is the data folder or a trash folder.
+    pub fn is_reserved(&self, id: (u64, u64)) -> bool {
+        self.reserved.has(id)
+    }
+
+    /// Refuses a name a new entry in `dir` may not take: upload temporaries anywhere, and the trash folder's name
+    /// in the server root or at the top of a mount inside it.
+    pub fn check_new_name(&self, dir: &OwnedFd, name: &OsStr) -> Result<(), FsError> {
+        let raw = name.as_bytes();
+        if raw.starts_with(super::list::TEMP_PREFIX.as_bytes()) {
+            return Err(FsError::InvalidPath);
+        }
+        if raw != TRASH_NAME.as_bytes() {
+            return Ok(());
+        }
+        if self.reserved.root == Some(id_of(&rustix::fs::fstat(dir)?)) {
+            return Err(FsError::Reserved);
+        }
+        let up = rustix::fs::openat(
+            dir,
+            "..",
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        let (here, above) = (super::mount::mount_id(dir), super::mount::mount_id(&up));
+        if here.is_some() && above.is_some() && here != above {
+            return Err(FsError::Reserved);
+        }
+        Ok(())
     }
 }
 
@@ -296,8 +345,111 @@ mod tests {
     }
 
     fn scopes(t: &Tree) -> [Scope; 2] {
-        let open = || Scope::new(t.dir.path(), "/a", Some(t.data_id)).unwrap();
+        scopes_with(t, Reserved::data_only(Some(t.data_id)))
+    }
+
+    fn scopes_with(t: &Tree, reserved: Reserved) -> [Scope; 2] {
+        let open = || Scope::new(t.dir.path(), "/a", reserved.clone()).unwrap();
         [open(), open().with_fallback()]
+    }
+
+    fn id_of_path(p: &std::path::Path) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::symlink_metadata(p).unwrap();
+        (m.dev(), m.ino())
+    }
+
+    /// The tree with `a/.cairn-trash/e1/old.txt` reserved as a trash folder, `a` standing for the server root.
+    fn with_trash(t: &Tree) -> Reserved {
+        let a = t.dir.path().join("a");
+        std::fs::create_dir_all(a.join(".cairn-trash/e1")).unwrap();
+        std::fs::write(a.join(".cairn-trash/e1/old.txt"), "old").unwrap();
+        symlink(".cairn-trash", a.join("trash-link")).unwrap();
+        Reserved {
+            data: Some(t.data_id),
+            trash: vec![id_of_path(&a.join(".cairn-trash"))].into(),
+            root: Some(id_of_path(&a)),
+        }
+    }
+
+    #[test]
+    fn trash_folder_is_not_found() {
+        let t = tree();
+        let reserved = with_trash(&t);
+        let [modern, old] = scopes_with(&t, reserved);
+        for s in [&modern, &old] {
+            assert!(matches!(
+                s.open_dir(&p(".cairn-trash")),
+                Err(FsError::NotFound)
+            ));
+            assert!(matches!(
+                read(s, ".cairn-trash/e1/old.txt"),
+                Err(FsError::NotFound)
+            ));
+            assert!(matches!(
+                s.parent(&p(".cairn-trash")),
+                Err(FsError::NotFound)
+            ));
+            assert!(matches!(s.stat(&p(".cairn-trash")), Err(FsError::NotFound)));
+            let names: Vec<String> = crate::fs::list::list(s, &p(""))
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            assert!(!names.contains(&".cairn-trash".to_string()), "{names:?}");
+        }
+        assert!(matches!(
+            modern.open_dir(&p("trash-link")),
+            Err(FsError::NotFound)
+        ));
+        assert!(matches!(
+            read(&modern, "trash-link/e1/old.txt"),
+            Err(FsError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn trash_name_refused_at_root_only() {
+        let t = tree();
+        let a = t.dir.path().join("a");
+        std::fs::create_dir_all(a.join("docs")).unwrap();
+        std::fs::create_dir_all(a.join("photos")).unwrap();
+        let reserved = Reserved {
+            data: Some(t.data_id),
+            trash: Vec::new().into(),
+            root: Some(id_of_path(&a)),
+        };
+        // `photos` is its own mount; `docs` is not.
+        crate::fs::mount::fake_mount_id(&a, 7001);
+        crate::fs::mount::fake_mount_id(&a.join("docs"), 7001);
+        crate::fs::mount::fake_mount_id(&a.join("photos"), 7002);
+        crate::fs::mount::fake_mount_id(t.dir.path(), 7000);
+        for s in scopes_with(&t, reserved) {
+            assert!(matches!(
+                crate::fs::edit::mkdir(&s, &p(".cairn-trash")),
+                Err(FsError::Reserved)
+            ));
+            assert!(matches!(
+                crate::fs::edit::mkdir(&s, &p("photos/.cairn-trash")),
+                Err(FsError::Reserved)
+            ));
+            assert!(matches!(
+                crate::fs::ops::apply(
+                    &s,
+                    crate::fs::ops::Op::Rename,
+                    &p("f.txt"),
+                    &p(".cairn-trash")
+                ),
+                Err(FsError::Reserved)
+            ));
+            crate::fs::edit::mkdir(&s, &p("docs/.cairn-trash")).unwrap();
+            rustix::fs::unlinkat(
+                s.open_dir(&p("docs")).unwrap(),
+                ".cairn-trash",
+                AtFlags::REMOVEDIR,
+            )
+            .unwrap();
+        }
     }
 
     fn p(s: &str) -> RelPath {

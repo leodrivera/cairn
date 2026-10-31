@@ -41,6 +41,7 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
     let (src_dir, src) = scope.parent(from)?;
     let src_st = rustix::fs::statat(&src_dir, src.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let (dst_dir, dst) = scope.parent(to)?;
+    scope.check_new_name(&dst_dir, &dst)?;
     if rustix::fs::statat(&dst_dir, dst.as_os_str(), AtFlags::SYMLINK_NOFOLLOW).is_ok() {
         return Err(FsError::Exists);
     }
@@ -158,7 +159,7 @@ fn copy_at(
         return Err(FsError::TooDeep);
     }
     let st = rustix::fs::statat(src_dir, src, AtFlags::SYMLINK_NOFOLLOW)?;
-    if ctx.scope.data_id() == Some(id(&st)) || ctx.created == Some(id(&st)) {
+    if ctx.scope.is_reserved(id(&st)) || ctx.created == Some(id(&st)) {
         return Ok(());
     }
     match FileType::from_raw_mode(st.st_mode) {

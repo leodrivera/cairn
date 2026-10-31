@@ -55,6 +55,7 @@ pub async fn upload(
         return Err(FsError::InvalidPath);
     }
     let (dir, name) = scope.parent(path)?;
+    scope.check_new_name(&dir, &name)?;
     let existing = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW).ok();
     if let Some(st) = &existing {
         if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
@@ -175,7 +176,7 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Scope, Arc<Db>) {
         let dir = tempfile::tempdir().unwrap();
-        let scope = Scope::new(dir.path(), "/", None).unwrap();
+        let scope = Scope::new(dir.path(), "/", Default::default()).unwrap();
         (dir, scope, Arc::new(Db::open_in_memory()))
     }
 

@@ -12,6 +12,9 @@ use crate::users::UserError;
 pub struct Settings {
     pub theme: Option<String>,
     pub thumbnails: bool,
+    /// Days new trash entries are kept; left out of a save, it stays as it was.
+    #[serde(default, rename = "trashDays", skip_serializing_if = "Option::is_none")]
+    pub trash_days: Option<u32>,
 }
 
 fn get(c: &rusqlite::Connection, key: &str) -> rusqlite::Result<Option<String>> {
@@ -26,6 +29,7 @@ pub fn load(db: &Db) -> rusqlite::Result<Settings> {
         Ok(Settings {
             theme: get(c, "default_theme")?,
             thumbnails: get(c, "thumbnails")?.as_deref() == Some("1"),
+            trash_days: get(c, "trash_days")?.and_then(|v| v.parse().ok()),
         })
     })
 }
@@ -36,6 +40,9 @@ pub fn save(db: &Db, s: &Settings) -> Result<(), UserError> {
         && t != "light"
     {
         return Err(UserError::Invalid("Theme must be dark or light."));
+    }
+    if s.trash_days.is_some_and(|d| d > crate::trash::MAX_DAYS) {
+        return Err(UserError::Invalid("Keep trash between 0 and 3650 days."));
     }
     db.with(|c| {
         let tx = c.unchecked_transaction()?;
@@ -52,6 +59,13 @@ pub fn save(db: &Db, s: &Settings) -> Result<(), UserError> {
              ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             params![if s.thumbnails { "1" } else { "0" }],
         )?;
+        if let Some(d) = s.trash_days {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('trash_days', ?1)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![d.to_string()],
+            )?;
+        }
         tx.commit()
     })?;
     Ok(())
@@ -73,6 +87,7 @@ mod tests {
         let s = Settings {
             theme: Some("light".into()),
             thumbnails: true,
+            trash_days: None,
         };
         save(&db, &s).unwrap();
         assert_eq!(load(&db).unwrap(), s);
@@ -86,6 +101,7 @@ mod tests {
         let s = Settings {
             theme: Some("blue".into()),
             thumbnails: false,
+            trash_days: None,
         };
         assert!(matches!(save(&db, &s), Err(UserError::Invalid(_))));
         assert_eq!(load(&db).unwrap(), Settings::default());

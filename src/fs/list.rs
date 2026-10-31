@@ -144,7 +144,7 @@ pub fn list(scope: &Scope, path: &RelPath) -> Result<Vec<Entry>, FsError> {
         let Ok(st) = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW) else {
             continue;
         };
-        if scope.data_id() == Some((st.st_dev, st.st_ino)) {
+        if scope.is_reserved((st.st_dev, st.st_ino)) {
             continue;
         }
         let Ok(child) = path.join_bytes(raw) else {

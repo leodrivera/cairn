@@ -24,6 +24,11 @@ async fn save_settings(
     AdminUser(by): AdminUser,
     StrictJson(b): StrictJson<Settings>,
 ) -> Result<Json<Value>, ApiError> {
+    if b.trash_days.is_some() && s.config.trash_days.is_some() {
+        return Err(ApiError::bad_request(
+            "CAIRN_TRASH_DAYS sets the trash days on this server, so they cannot be changed here.",
+        ));
+    }
     settings::save(&s.db, &b)?;
     tracing::info!(event = "settings.updated", by = by.session.user.id);
     Ok(Json(json!({ "settings": b })))
@@ -58,5 +63,14 @@ async fn server(State(s): State<AppState>, _: AdminUser) -> Json<Value> {
         "threads": c.threads,
         "trustedProxies": proxies,
         "log": log,
+        "trash": trash_info(&s),
     }))
+}
+
+fn trash_info(s: &AppState) -> Value {
+    let (days, from_env) = crate::trash::days(&s.config, &s.db);
+    let size: i64 =
+        s.db.with(|c| c.query_row("SELECT coalesce(sum(size), 0) FROM trash", [], |r| r.get(0)))
+            .unwrap_or(0);
+    json!({ "days": days, "fromEnv": from_env, "size": size, "taken": s.trash.taken() })
 }

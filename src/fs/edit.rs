@@ -16,6 +16,7 @@ pub fn mkdir(scope: &Scope, path: &RelPath) -> Result<(), FsError> {
         return Err(FsError::InvalidPath);
     }
     let (dir, name) = scope.parent(path)?;
+    scope.check_new_name(&dir, &name)?;
     Ok(rustix::fs::mkdirat(
         &dir,
         name.as_os_str(),
@@ -35,7 +36,7 @@ fn remove_at(scope: &Scope, dir: &OwnedFd, name: &OsStr, depth: usize) -> Result
         return Err(FsError::TooDeep);
     }
     let st = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)?;
-    if scope.data_id() == Some((st.st_dev, st.st_ino)) {
+    if scope.is_reserved((st.st_dev, st.st_ino)) {
         return Err(FsError::NotFound);
     }
     if FileType::from_raw_mode(st.st_mode) != FileType::Directory {

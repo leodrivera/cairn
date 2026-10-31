@@ -64,7 +64,14 @@ impl Fx {
     }
 
     fn resolve_at(&self, id: &str, now: i64, data_id: Option<(u64, u64)>) -> Option<Live> {
-        shares::resolve(&self.db, self.dir.path(), data_id, false, id, now)
+        shares::resolve(
+            &self.db,
+            self.dir.path(),
+            cairn::fs::scope::Reserved::data_only(data_id),
+            false,
+            id,
+            now,
+        )
     }
 
     fn resolve(&self, id: &str) -> Option<Live> {

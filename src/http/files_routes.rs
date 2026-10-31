@@ -64,7 +64,7 @@ impl FromRequestParts<AppState> for FileUser {
         let current = CurrentUser::from_request_parts(parts, state).await?;
         let user = current.session.user;
         let scope =
-            Scope::new(&state.config.root, &user.scope, state.data_id).map_err(|e| match e {
+            Scope::new(&state.config.root, &user.scope, state.reserved()).map_err(|e| match e {
                 FsError::NotFound | FsError::NotAFolder => ApiError::new(
                     StatusCode::NOT_FOUND,
                     "scope_missing",

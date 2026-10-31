@@ -47,6 +47,10 @@ pub struct AppState {
     pub force_fallback: bool,
     /// Signs share link unlock cookies. Made at start, so a restart asks for link passwords again.
     pub share_key: [u8; 32],
+    /// Device and inode of `CAIRN_ROOT`.
+    pub root_id: Option<(u64, u64)>,
+    /// The trash folders under the root.
+    pub trash: Arc<crate::trash::folder::Trashes>,
 }
 
 impl AppState {
@@ -59,10 +63,17 @@ impl AppState {
             use std::os::unix::fs::MetadataExt;
             (m.dev(), m.ino())
         });
+        let root_id = std::fs::metadata(&config.root).ok().map(|m| {
+            use std::os::unix::fs::MetadataExt;
+            (m.dev(), m.ino())
+        });
+        let trash = Arc::new(crate::trash::folder::Trashes::open(&config.root, &db));
         let mut share_key = [0u8; 32];
         getrandom::fill(&mut share_key).expect("system random source");
         AppState {
             data_id,
+            root_id,
+            trash,
             share_key,
             force_fallback: false,
             config: Arc::new(config),
@@ -72,6 +83,17 @@ impl AppState {
             captcha,
             broker: config_broker,
             oidc,
+        }
+    }
+}
+
+impl AppState {
+    /// What no client path may reach right now; a trash folder made after start counts from that moment.
+    pub fn reserved(&self) -> crate::fs::scope::Reserved {
+        crate::fs::scope::Reserved {
+            data: self.data_id,
+            trash: self.trash.ids(),
+            root: self.root_id,
         }
     }
 }

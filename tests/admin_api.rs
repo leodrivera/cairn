@@ -148,3 +148,69 @@ async fn server_info_has_no_secrets() {
     assert_eq!(res.json["publicUrl"], json!("https://files.example.com/"));
     assert!(!String::from_utf8_lossy(&res.body).contains("s3cr3t"));
 }
+
+#[tokio::test]
+async fn server_shows_trash() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let res = Req::get("/api/server").cookie(&a).send(&h.app).await;
+    assert_eq!(
+        res.json["trash"],
+        json!({ "days": 30, "fromEnv": false, "size": 0, "taken": [] })
+    );
+    let h = harness(&[("CAIRN_TRASH_DAYS", "7")]);
+    let a = admin(&h).await;
+    let res = Req::get("/api/server").cookie(&a).send(&h.app).await;
+    assert_eq!(res.json["trash"]["days"], json!(7));
+    assert_eq!(res.json["trash"]["fromEnv"], json!(true));
+}
+
+#[tokio::test]
+async fn trash_days_setting_saved() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let res = Req::put("/api/settings")
+        .cookie(&a)
+        .json(json!({ "theme": null, "thumbnails": false, "trashDays": 0 }))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let res = Req::get("/api/server").cookie(&a).send(&h.app).await;
+    assert_eq!(res.json["trash"]["days"], json!(0));
+    let me = Req::get("/api/me").cookie(&a).send(&h.app).await;
+    assert_eq!(me.json["trash"], json!({ "on": false }));
+    // Leaving it out keeps it.
+    Req::put("/api/settings")
+        .cookie(&a)
+        .json(json!({ "theme": null, "thumbnails": true }))
+        .send(&h.app)
+        .await;
+    let res = Req::get("/api/server").cookie(&a).send(&h.app).await;
+    assert_eq!(res.json["trash"]["days"], json!(0));
+}
+
+#[tokio::test]
+async fn trash_days_env_wins() {
+    let h = harness(&[("CAIRN_TRASH_DAYS", "7")]);
+    let a = admin(&h).await;
+    let res = Req::put("/api/settings")
+        .cookie(&a)
+        .json(json!({ "theme": null, "thumbnails": false, "trashDays": 3 }))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.json);
+    let res = Req::get("/api/server").cookie(&a).send(&h.app).await;
+    assert_eq!(res.json["trash"]["days"], json!(7));
+}
+
+#[tokio::test]
+async fn trash_days_range() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let res = Req::put("/api/settings")
+        .cookie(&a)
+        .json(json!({ "theme": null, "thumbnails": false, "trashDays": 3651 }))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.json);
+}

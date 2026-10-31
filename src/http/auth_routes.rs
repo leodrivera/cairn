@@ -224,7 +224,11 @@ async fn me(
             None => Json(json!({ "user": null })).into_response(),
         };
     };
-    let mut body = json!({ "user": c.session.user, "method": c.session.method.as_str() });
+    let mut body = json!({
+        "user": c.session.user,
+        "method": c.session.method.as_str(),
+        "trash": { "on": crate::trash::on(&s) },
+    });
     if c.session.user.perms.admin {
         let off = s.config.auth.password && s.captcha.is_none();
         body["security"] = json!({ "captchaDisabled": off });

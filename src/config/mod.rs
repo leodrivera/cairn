@@ -28,6 +28,8 @@ pub struct Config {
     pub log: LogLevel,
     pub dev_user: Option<String>,
     pub threads: usize,
+    /// `CAIRN_TRASH_DAYS`: when set, it wins over the setting in the database.
+    pub trash_days: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +109,7 @@ const KNOWN: &[&str] = &[
     "CAIRN_LOG",
     "CAIRN_DEV_USER",
     "CAIRN_THREADS",
+    "CAIRN_TRASH_DAYS",
 ];
 
 const OIDC_SUFFIXES: &[&str] = &[
@@ -357,6 +360,16 @@ impl Config {
             |n| (1..=64).contains(&n),
             "must be a whole number from 1 to 64.",
         ) as usize;
+        let trash_days = match r.get("CAIRN_TRASH_DAYS") {
+            None => None,
+            Some(v) => match v.parse::<u32>() {
+                Ok(n) if n <= crate::trash::MAX_DAYS => Some(n),
+                _ => {
+                    r.fail("CAIRN_TRASH_DAYS: must be a whole number from 0 to 3650.".into());
+                    None
+                }
+            },
+        };
 
         let log = match r.get("CAIRN_LOG").unwrap_or("info") {
             "debug" => LogLevel::Debug,
@@ -418,6 +431,7 @@ impl Config {
             log,
             dev_user,
             threads,
+            trash_days,
         })
     }
 }
@@ -515,6 +529,22 @@ mod tests {
     }
 
     const PUBLIC_URL_MSG: &str = "CAIRN_PUBLIC_URL: required when sign-in uses oauth, oidc or a CAPTCHA. Set it to the address people use, like https://files.example.com.";
+
+    #[test]
+    fn trash_days_parsed() {
+        for (v, want) in [("0", 0), ("3650", 3650), ("30", 30)] {
+            let c = Config::from_vars(&vars(&[("CAIRN_TRASH_DAYS", v)])).unwrap();
+            assert_eq!(c.trash_days, Some(want));
+        }
+        assert_eq!(Config::from_vars(&vars(&[])).unwrap().trash_days, None);
+        for v in ["-1", "3651", "x"] {
+            assert_eq!(
+                errors(&[("CAIRN_TRASH_DAYS", v)]),
+                vec!["CAIRN_TRASH_DAYS: must be a whole number from 0 to 3650.".to_string()],
+                "{v}"
+            );
+        }
+    }
 
     #[test]
     fn defaults() {

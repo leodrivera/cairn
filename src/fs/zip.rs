@@ -121,7 +121,7 @@ fn add_folder<W: Write + std::io::Seek>(
             continue;
         };
         let st = rustix::fs::statat(&dir, OsStr::from_bytes(&raw), AtFlags::SYMLINK_NOFOLLOW)?;
-        if scope.data_id() == Some((st.st_dev, st.st_ino)) {
+        if scope.is_reserved((st.st_dev, st.st_ino)) {
             continue;
         }
         let entry = format!("{prefix}{}", String::from_utf8_lossy(&raw));
@@ -185,7 +185,7 @@ mod tests {
             p.push("d");
         }
         std::fs::create_dir_all(&p).unwrap();
-        let scope = Scope::new(dir.path(), "/", None).unwrap();
+        let scope = Scope::new(dir.path(), "/", Default::default()).unwrap();
         let mut stream =
             stream_zip(scope, RelPath::parse("deep").unwrap(), None).into_data_stream();
         let mut failed = false;

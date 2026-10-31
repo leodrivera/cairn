@@ -3,6 +3,7 @@
 pub mod edit;
 pub mod list;
 pub mod mime;
+pub mod mount;
 pub mod ops;
 pub mod path;
 pub mod raw;
@@ -38,6 +39,14 @@ pub enum FsError {
     DiskFull,
     ReadOnly,
     NotEmpty,
+    /// The name of a trash folder, where Cairn keeps it.
+    Reserved,
+    /// The item's mount could not be told apart, so it cannot be renamed into a trash folder.
+    OtherDisk(String),
+    /// The trash is off (0 days); a delete would be permanent.
+    TrashOff,
+    /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
+    TrashTaken(String),
     Io(std::io::Error),
 }
 
@@ -181,6 +190,29 @@ impl From<FsError> for ApiError {
                 S::CONFLICT,
                 "not_empty",
                 "Something inside could not be removed, so the folder stays.".into(),
+            ),
+            FsError::Reserved => (
+                S::BAD_REQUEST,
+                "reserved",
+                "That name is reserved by Cairn. Choose another name.".into(),
+            ),
+            FsError::OtherDisk(name) => (
+                S::CONFLICT,
+                "other_disk",
+                format!("{name} is on another disk, so it cannot go to the trash."),
+            ),
+            FsError::TrashOff => (
+                S::CONFLICT,
+                "trash_off",
+                "The trash is off on this server, so this delete cannot be undone.".into(),
+            ),
+            FsError::TrashTaken(folder) => (
+                S::CONFLICT,
+                "trash_taken",
+                format!(
+                    "The trash for this folder cannot be used: {}/.cairn-trash was not made by Cairn. Ask an admin to rename it.",
+                    folder.trim_end_matches('/')
+                ),
             ),
             FsError::Io(err) => {
                 tracing::error!(event = "file.io_error", error = %err);

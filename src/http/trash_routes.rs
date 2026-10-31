@@ -1,5 +1,7 @@
 //! The trash page's routes: `/api/trash`. Each person sees what was deleted from places they may write to now.
 
+use std::collections::HashMap;
+
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -62,14 +64,27 @@ fn from_json(e: &Entry, via: &Via, viewer: &User) -> String {
     }
 }
 
-/// An entry as `viewer` sees it.
-pub fn entry_json(s: &AppState, e: &Entry, via: &Via, viewer: &User) -> Value {
+/// An entry as `viewer` sees it. `people` keeps who deleted what, so each person is looked up once per list.
+fn entry_json(
+    s: &AppState,
+    e: &Entry,
+    via: &Via,
+    viewer: &User,
+    people: &mut HashMap<i64, Value>,
+) -> Value {
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let from = from_json(e, via, viewer);
-    let by = e
-        .deleted_by
-        .and_then(|id| users::by_id(&s.db, id).ok().flatten())
-        .map(|u| json!({ "id": u.id, "name": u.name }));
+    let by = e.deleted_by.map_or(Value::Null, |id| {
+        people
+            .entry(id)
+            .or_insert_with(|| {
+                users::by_id(&s.db, id)
+                    .ok()
+                    .flatten()
+                    .map_or(Value::Null, |u| json!({ "id": u.id, "name": u.name }))
+            })
+            .clone()
+    });
     let mut v = json!({
         "id": e.id,
         "name": name,
@@ -91,18 +106,21 @@ async fn list(State(s): State<AppState>, fu: FileUser) -> Result<Json<Value>, Ap
     let user = fu.user.clone();
     let st = s.clone();
     let rows = blocking(move || Ok(trash::visible(&st, &user))).await?;
+    let mut people = HashMap::new();
     let entries: Vec<Value> = rows
         .iter()
-        .map(|(e, via)| entry_json(&s, e, via, &fu.user))
+        .map(|(e, via)| entry_json(&s, e, via, &fu.user, &mut people))
         .collect();
     Ok(Json(json!({ "entries": entries })))
 }
 
-/// The visible entry with this id, and how the person reaches it.
-fn find(s: &AppState, user: &User, id: &str) -> Option<(Entry, Via)> {
+/// The entries the person sees, by id, and how they reach each. Read once per request: a large Undo sends
+/// thousands of ids.
+fn visible_by_id(s: &AppState, user: &User) -> HashMap<String, (Entry, Via)> {
     trash::visible(s, user)
         .into_iter()
-        .find(|(e, _)| e.id == id)
+        .map(|(e, via)| (e.id.clone(), (e, via)))
+        .collect()
 }
 
 async fn restore(
@@ -113,8 +131,10 @@ async fn restore(
     check_ids(&b.ids)?;
     let (restored, failed) = blocking(move || {
         let (mut restored, mut failed) = (Vec::new(), Vec::new());
+        let mut seen = visible_by_id(&s, &fu.user);
         for id in &b.ids {
-            let result = find(&s, &fu.user, id)
+            let result = seen
+                .remove(id)
                 .ok_or(FsError::NotFound)
                 .and_then(|(e, via)| match via {
                     Via::Own => trash::ops::restore(&s.trash, &s.db, &fu.scope, &fu.user.scope, &e),
@@ -164,8 +184,9 @@ async fn delete_forever(
     check_ids(&b.ids)?;
     let (deleted, failed) = blocking(move || {
         let (mut deleted, mut failed) = (0, Vec::new());
+        let mut seen = visible_by_id(&s, &fu.user);
         for id in &b.ids {
-            let result = match find(&s, &fu.user, id) {
+            let result = match seen.remove(id) {
                 Some((e, Via::Own)) => trash::ops::remove(&s.trash, &s.db, &e),
                 _ => Err(FsError::NotFound),
             };

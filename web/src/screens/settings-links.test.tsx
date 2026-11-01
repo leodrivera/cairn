@@ -226,3 +226,30 @@ test("admin_sees_all_grants", async () => {
   await waitFor(() => assert.ok(el.querySelector(".grants-list")));
   assert.match(el.querySelector(".grants-list")!.textContent!, /Shared by Ana/);
 });
+
+const options = (s: HTMLSelectElement) => [...s.options].map((o) => [o.parentElement!.tagName === "OPTGROUP" ? (o.parentElement as HTMLOptGroupElement).label : "", o.textContent]);
+
+test("grant_expiry_shows_current_then_changes", async () => {
+  const until = new Date(2027, 2, 14, 12).getTime() / 1000;
+  const { el } = await screen([], admin, {
+    "GET /api/grants": () =>
+      json({ grants: [given, { ...given, id: "ZyXwVuTsRqPoNmLkJiHg-_", expiresAt: until, recipient: { id: 3, name: "Ana", email: "ana@example.com" } }] }),
+  });
+  await waitFor(() => assert.ok(el.querySelector(".grants-list")));
+  const never = el.querySelector<HTMLSelectElement>('select[aria-label="Access for Bob to team ends"]')!;
+  // No "Keep:" prefix, and Never is not offered twice.
+  assert.deepEqual(options(never), [
+    ["", "Never"],
+    ["Change to", "In 24 hours"],
+    ["Change to", "In 7 days"],
+    ["Change to", "In 30 days"],
+  ]);
+  const dated = el.querySelector<HTMLSelectElement>('select[aria-label="Access for Ana to team ends"]')!;
+  assert.deepEqual(options(dated), [
+    ["", "Until Mar 14, 2027"],
+    ["Change to", "In 24 hours"],
+    ["Change to", "In 7 days"],
+    ["Change to", "In 30 days"],
+    ["Change to", "Never"],
+  ]);
+});

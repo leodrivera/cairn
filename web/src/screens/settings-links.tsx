@@ -4,7 +4,7 @@ import { ApiFailure, offline } from "../lib/api";
 import { displayPath } from "../lib/paths";
 import { copyText, deleteShare, expiryText, listShares, shareUrl, type Expiry } from "../lib/shares";
 import { deleteGrant, listGiven, updateGrant } from "../lib/grants";
-import { errorText, t, tn } from "../i18n/index";
+import { errorText, lang, t, tn } from "../i18n/index";
 import { Dialog } from "../components/dialogs";
 import { Icon } from "../components/icons";
 import { useNarrow } from "../components/shell";
@@ -210,6 +210,11 @@ const expiries: { value: string; days: Expiry; label: "share.in1" | "share.in7" 
   { value: "never", days: null, label: "share.never" },
 ];
 
+/** A day with its year, like "Mar 14, 2027": the date a grant ends, told apart from the "In 7 days" choices. */
+function fullDate(sec: number): string {
+  return new Intl.DateTimeFormat(lang(), { day: "numeric", month: "short", year: "numeric" }).format(new Date(sec * 1000));
+}
+
 /** Grants given: who may open what, with access, expiry and Stop sharing. An admin sees everyone's. */
 function Grants() {
   const me = useUser();
@@ -252,7 +257,6 @@ function Grants() {
   if (!grants || grants.length === 0) return null;
 
   const cells = (g: GivenGrant) => {
-    const expiry = expiryText(g.expiresAt);
     const vars = { name: g.recipient.name, item: g.name };
     return {
       item: (
@@ -290,10 +294,14 @@ function Grants() {
             if (pick) change(g, { expiresDays: pick.days });
           }}
         >
-          <option value="">{t("grants.keep", { when: expiry.text })}</option>
-          {expiries.map((x) => (
-            <option value={x.value}>{t(x.label)}</option>
-          ))}
+          <option value="">{g.expiresAt === null ? t("share.never") : t("grants.until", { date: fullDate(g.expiresAt) })}</option>
+          <optgroup label={t("grants.changeTo")}>
+            {expiries
+              .filter((x) => !(x.days === null && g.expiresAt === null))
+              .map((x) => (
+                <option value={x.value}>{t(x.label)}</option>
+              ))}
+          </optgroup>
         </select>
       ),
       actions: (

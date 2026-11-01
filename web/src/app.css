@@ -2136,3 +2136,29 @@ fieldset.perms {
 .grants-head {
   margin-top: 32px;
 }
+
+/* People with access: the two selects sit snug in a row of the list's height, sized to what they hold. */
+.grants-list .users-table td {
+  padding-block: 4px;
+}
+
+.grants-list .users-table td:nth-child(3),
+.grants-list .users-table td:nth-child(4),
+.grants-list .users-table th:nth-child(3),
+.grants-list .users-table th:nth-child(4) {
+  width: 1px;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+
+.grants-list .users-table td:last-child,
+.grants-list .users-table th:last-child {
+  width: 1px;
+  padding-inline: 4px 8px;
+}
+
+.grants-list select.input {
+  width: auto;
+  min-width: 100%;
+  padding: 0 8px 0 12px;
+}

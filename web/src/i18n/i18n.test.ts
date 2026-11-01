@@ -118,3 +118,9 @@ test("holds_mount_in_pt_br", () => {
   const f = new ApiFailure(409, "holds_mount", "media has another disk mounted inside. Unmount it first.");
   assert.equal(errorText(f, { name: "media" }), "media tem outro disco montado dentro. Desmonte-o primeiro.");
 });
+
+test("grant_expiry_strings_in_pt_br", () => {
+  setLang("pt-BR");
+  assert.equal(t("grants.until", { date: "14 de mar. de 2027" }), "Até 14 de mar. de 2027");
+  assert.equal(t("grants.changeTo"), "Mudar para");
+});

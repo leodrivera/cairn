@@ -58,7 +58,9 @@ out=$(CARGO_TOML="$work/Cargo.toml" TAGS="v0.1.0 v0.2.0-rc.1" scripts/release-ve
 want=$(printf 'version=0.2.0-rc.1\nminor=0.2\nprerelease=true\nlatest=false\nminor_latest=false')
 [[ $out == "$want" ]] && ok prerelease || fail prerelease "$out"
 
-# Rehearsal: push by digest and merge, as the workflow does, into a local registry
+# Rehearsal: push by digest and merge, as the workflow does, into a local registry. The push checks the budget,
+# which measures the front-end in web/dist.
+[[ -d web/dist/assets ]] || { echo "FAIL rehearsal: build web/dist first (cd web && npm run build)"; exit 1; }
 rehearsal() {
   local repo=127.0.0.1:15000/cairn digest a b c
   docker run -d --name "$registry" -p 127.0.0.1:15000:5000 \
@@ -115,10 +117,53 @@ if release["jobs"].get("test", {}).get("uses") != "./.github/workflows/ci.yml": 
 needs = release["jobs"]["build"]["needs"]
 if "test" not in (needs if isinstance(needs, list) else [needs]): problems.append("build does not need test")
 if release.get("concurrency", {}).get("cancel-in-progress") is not False: problems.append("no release concurrency group")
+# The release checks its own pushed images, so the called CI skips its image job.
+if (release["jobs"]["test"].get("with") or {}).get("image") is not False: problems.append("release test does not pass image: false")
+if (((ci_on.get("workflow_call") or {}).get("inputs") or {}).get("image") or {}).get("type") != "boolean": problems.append("ci.yml has no boolean image input")
+if "inputs.image != false" not in str(ci["jobs"]["image"].get("if", "")): problems.append("ci image job does not honor the image input")
+# The budget measures web/dist, so the build job builds the front-end.
+if not any("npm run build" in step.get("run", "") for step in release["jobs"]["build"]["steps"]): problems.append("release build does not build web/dist")
 print("; ".join(problems))
 sys.exit(1 if problems else 0)
 PY
 ); then ok release_runs_ci_first; else fail release_runs_ci_first "$msg"; fi
+
+# The pushed image is the one whose budget is checked.
+grep -q 'check-budget.sh" "$repo@$digest"' scripts/release-image.sh && ok release_checks_budget \
+  || fail release_checks_budget "release-image.sh push does not run check-budget.sh on the pushed digest"
+
+# CI runs once per change: pushes to main, pull requests, by hand, or called by the release; never for a tag push.
+if msg=$(python3 -I - .github/workflows/ci.yml <<'PY' 2>&1
+import sys, yaml
+ci = yaml.safe_load(open(sys.argv[1]))
+on = ci.get(True, ci.get("on"))
+problems = []
+push = on.get("push") or {}
+if push.get("branches") != ["main"] or "tags" in push: problems.append(f"push filter is {push!r}, want branches [main]")
+for key in ("pull_request", "workflow_dispatch", "workflow_call"):
+    if key not in on: problems.append(f"no {key}")
+for key in ("paths", "paths-ignore"):
+    if any(key in (on.get(e) or {}) for e in ("push", "pull_request")): problems.append(f"{key} would skip check-readme")
+conc = ci.get("concurrency") or {}
+if "github.ref" not in str(conc.get("group", "")) or "refs/heads/main" not in str(conc.get("cancel-in-progress", "")):
+    problems.append("concurrency must cancel superseded runs everywhere but main")
+for name, job in ci["jobs"].items():
+    if not job.get("timeout-minutes"): problems.append(f"{name} has no timeout")
+if not any("check-readme.sh" in s.get("run", "") for s in ci["jobs"]["test"]["steps"]): problems.append("test does not run check-readme.sh")
+print("; ".join(problems))
+sys.exit(1 if problems else 0)
+PY
+); then ok ci_runs_once; else fail ci_runs_once "$msg"; fi
+
+# Every release job that runs steps has a timeout.
+if msg=$(python3 -I - .github/workflows/release.yml <<'PY' 2>&1
+import sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+bad = [n for n, j in jobs.items() if "uses" not in j and not j.get("timeout-minutes")]
+print("no timeout: " + ", ".join(bad) if bad else "")
+sys.exit(1 if bad else 0)
+PY
+); then ok release_timeouts; else fail release_timeouts "$msg"; fi
 
 # Secrets reach scripts through env:, never pasted into the script text.
 if msg=$(python3 -I - .github/workflows/release.yml .github/workflows/ci.yml <<'PY' 2>&1

@@ -616,8 +616,8 @@ that user. It runs as uid 10001, with `CAIRN_ROOT=/srv`, `CAIRN_DATA=/data` and 
 source, version and revision). `scripts/check-image.sh` checks all of this on a built image.
 
 The Rust stage builds for the architecture it runs on. Releases build `linux/amd64` on an x86_64 runner and
-`linux/arm64` on an arm64 runner, never under emulation, check each with `scripts/check-image.sh`, and join them in
-one manifest (`scripts/release-image.sh`, `.github/workflows/release.yml`). A tag `v<version>` must match the
+`linux/arm64` on an arm64 runner, never under emulation, check each pushed image with `scripts/check-image.sh` and
+`scripts/check-budget.sh`, and join them in one manifest (`scripts/release-image.sh`, `.github/workflows/release.yml`). A tag `v<version>` must match the
 version in `Cargo.toml`. The image is `ghcr.io/leodrivera/cairn` with the tags `<version>`, `<major>.<minor>` and
 `latest`; a pre-release gets only its own version.
 
@@ -665,7 +665,7 @@ cairn/
 ├── examples/compose/    # the Compose files of the install guide
 ├── scripts/             # budget, image, license and release checks
 ├── tests/compose/       # starts each example against an image
-├── .github/workflows/   # CI on every push, the release on a tag
+├── .github/workflows/   # CI on main and pull requests, the release on a tag
 ├── brand/               # logo and icons (favicon files are copied into web/dist)
 ├── docs/
 └── tokens.css

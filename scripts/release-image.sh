@@ -3,7 +3,8 @@
 #
 #   scripts/release-image.sh push <repo> <platform>
 #     Builds the Dockerfile for <platform> on a machine of that architecture, pushes it by digest only (no tag),
-#     pulls it back by that digest, runs check-image.sh on it and prints the digest last. Labels come from
+#     pulls it back by that digest, runs check-image.sh and check-budget.sh (against web/dist, built first) on it
+#     and prints the digest last. Labels come from
 #     SOURCE_URL, VERSION and REVISION.
 #   scripts/release-image.sh merge <repo> <version> <minor> <latest> <minor_latest> <digest>...
 #     Joins the per-platform digests into one manifest tagged <version>, plus <minor> when <minor_latest> is true
@@ -33,6 +34,7 @@ case "$mode" in
     # Check the image that was pushed, pulled back by its digest. A failure leaves only an untagged digest.
     docker pull -q "$repo@$digest" >&2
     "$root/scripts/check-image.sh" "$repo@$digest" >&2
+    "$root/scripts/check-budget.sh" "$repo@$digest" "$root/web/dist" >&2
     echo "checked $repo@$digest" >&2
     echo "$digest"
     rm -f "$metadata"

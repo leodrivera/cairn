@@ -72,6 +72,13 @@ textarea {
   color: inherit;
 }
 
+/* The open list of a select is drawn by the browser from these, not from the select's own (maybe transparent) fill. */
+select option,
+select optgroup {
+  background: var(--cairn-surface);
+  color: var(--cairn-text);
+}
+
 .button {
   display: inline-flex;
   align-items: center;

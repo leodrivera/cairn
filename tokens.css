@@ -26,6 +26,7 @@
 /* Dark is the home theme */
 :root,
 :root[data-theme="dark"] {
+  color-scheme: dark; /* native controls and popups follow the theme */
   --cairn-bg: #141513; /* Basalt */
   --cairn-surface: #1b1c1a; /* Slate */
   --cairn-raised: #252622; /* Granite */
@@ -40,6 +41,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --cairn-bg: #f4f3ee; /* Paper */
   --cairn-surface: #fbfaf6;
   --cairn-raised: #ebeae3;
@@ -56,6 +58,7 @@
 /* Follow the OS when the user has not chosen a theme */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
+    color-scheme: light;
     --cairn-bg: #f4f3ee;
     --cairn-surface: #fbfaf6;
     --cairn-raised: #ebeae3;

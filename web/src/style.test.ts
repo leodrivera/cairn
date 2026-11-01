@@ -96,3 +96,17 @@ test("dialog_buttons_wrap", () => {
   const rule = css.match(/\.dialog-buttons\s*\{([^}]*)\}/)![1];
   assert.match(rule, /flex-wrap:\s*wrap/);
 });
+
+test("native_popups_follow_the_theme", () => {
+  // The open list of a <select> is drawn by the browser: it needs the theme's color scheme and the options' colors,
+  // or a transparent select opens a white list with light text.
+  const tokens = readFileSync("../tokens.css", "utf8");
+  const block = (sel: RegExp) => tokens.match(new RegExp(sel.source + String.raw`\s*\{([^}]*)\}`))![1];
+  assert.match(block(/:root\[data-theme="dark"\]/), /color-scheme:\s*dark/);
+  assert.match(block(/:root\[data-theme="light"\]/), /color-scheme:\s*light/);
+  assert.match(block(/:root:not\(\[data-theme\]\)/), /color-scheme:\s*light/);
+  const css = readFileSync("src/app.css", "utf8");
+  const rule = css.match(/select option,\s*select optgroup\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(rule, /background:\s*var\(--cairn-surface\)/);
+  assert.match(rule, /color:\s*var\(--cairn-text\)/);
+});

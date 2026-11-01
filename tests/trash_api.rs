@@ -714,3 +714,21 @@ async fn trash_folder_appears_whole() {
     assert_eq!(names, vec![".cairn-trash"]);
     assert!(root.join(".cairn-trash/.cairn-trash-marker").exists());
 }
+
+#[tokio::test]
+async fn scope_linked_outside_root_gets_no_trash() {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let elsewhere = dir.path().join("elsewhere");
+    put(&elsewhere, "a.txt", "a");
+    std::os::unix::fs::symlink(&elsewhere, root.join("out")).unwrap();
+    h.add_user_scoped("bob@example.com", PW, "/out", ALL);
+    let c = h.login("bob@example.com", PW).await;
+    let res = delete(&h, &c, &["a.txt"], None).await;
+    // Its mount top would lie outside the server root: no trash there, a permanent delete is offered instead.
+    assert_eq!(res.json["failed"][0]["error"], "other_disk", "{}", res.json);
+    assert!(elsewhere.join("a.txt").exists());
+    assert!(!elsewhere.join(".cairn-trash").exists());
+    assert!(!dir.path().join(".cairn-trash").exists());
+    assert_eq!(rows(&h), 0);
+}

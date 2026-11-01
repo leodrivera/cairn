@@ -113,6 +113,15 @@ pub fn to_trash(
     crate::fs::mount::refuse_mounts_inside(&dir, name.as_os_str())?;
     let st = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let top = mount_top(&open_root(trashes)?, &dir)?;
+    // A scope that is a link to a folder outside the server root has no trash of ours: never make one out there.
+    let inside = std::fs::read_link(format!(
+        "/proc/self/fd/{}",
+        rustix::fd::AsRawFd::as_raw_fd(&top)
+    ))
+    .is_ok_and(|p| p.starts_with(trashes.root()));
+    if !inside {
+        return Err(FsError::OtherDisk(name.to_string_lossy().into_owned()));
+    }
     let (trash, trash_dir) = trashes.for_dir(db, &top)?;
     let size = size_of(&dir, name.as_os_str(), 0);
     let kind = if FileType::from_raw_mode(st.st_mode) == FileType::Directory {

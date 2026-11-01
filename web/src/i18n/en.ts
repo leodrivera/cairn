@@ -127,7 +127,6 @@ export const en = {
   "error.trash_taken": "The trash for this folder cannot be used: a .cairn-trash folder there was not made by Cairn. Ask an admin to rename it.",
   "error.reserved": "That name is reserved by Cairn. Choose another name.",
   "password.show": "Show password",
-  "password.hide": "Hide password",
   "explorer.newTextFile": "New text file",
   "dialog.fileName": "File name",
   "explorer.upload": "Upload",

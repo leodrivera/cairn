@@ -129,7 +129,6 @@ export const ptBR: Table = {
   "error.trash_taken": "A lixeira desta pasta não pode ser usada: uma pasta .cairn-trash ali não foi criada pelo Cairn. Peça a um admin para renomeá-la.",
   "error.reserved": "Esse nome é reservado pelo Cairn. Escolha outro nome.",
   "password.show": "Mostrar senha",
-  "password.hide": "Ocultar senha",
   "explorer.newTextFile": "Novo arquivo de texto",
   "dialog.fileName": "Nome do arquivo",
   "explorer.upload": "Enviar",

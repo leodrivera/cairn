@@ -30,7 +30,8 @@ test("toggle_shows_and_hides", async () => {
   toggle(el).click();
   await flush();
   assert.equal(input(el).type, "text");
-  assert.equal(toggle(el).getAttribute("aria-label"), "Hide password");
+  // A toggle keeps one name; its pressed state says whether the text shows ("Show password, pressed").
+  assert.equal(toggle(el).getAttribute("aria-label"), "Show password");
   assert.equal(toggle(el).getAttribute("aria-pressed"), "true");
   toggle(el).click();
   await flush();
@@ -65,5 +66,6 @@ test("toggle_strings_in_pt_br", async () => {
   assert.equal(toggle(el).getAttribute("aria-label"), "Mostrar senha");
   toggle(el).click();
   await flush();
-  assert.equal(toggle(el).getAttribute("aria-label"), "Ocultar senha");
+  assert.equal(toggle(el).getAttribute("aria-label"), "Mostrar senha");
+  assert.equal(toggle(el).getAttribute("aria-pressed"), "true");
 });

@@ -41,7 +41,8 @@ export function PasswordInput(p: Props) {
       <button
         type="button"
         class="icon-button password-toggle"
-        aria-label={shown ? t("password.hide") : t("password.show")}
+        // One name for both states: the pressed state tells whether the text shows.
+        aria-label={t("password.show")}
         aria-pressed={shown}
         aria-controls={p.id}
         // Keeps focus (and the caret) in the field when the button is pressed with a pointer.

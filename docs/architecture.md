@@ -631,12 +631,12 @@ folder, the uid and both fixes.
 
 ### 12.1 Compose examples
 
-The install guide in the README quotes the files in `examples/compose/`: `quick` (a home network, plain HTTP),
-`traefik` (HTTPS and reCAPTCHA v2), `tinyauth` (the broker) and `oidc` (direct OIDC), plus the add-ons
-`keycloak.yml` and `own-ca.yml` and the Fail2ban filter and jail. `tests/compose/run.sh` starts each one against an
+The install guide (the README and `docs/install.md`) quotes the files in `examples/compose/`: `quick` (a home
+network, plain HTTP), `traefik` (HTTPS and reCAPTCHA v2), `tinyauth` (the broker) and `oidc` (direct OIDC), plus the
+add-ons `keycloak.yml` and `own-ca.yml` and the Fail2ban filter and jail. `tests/compose/run.sh` starts each one against an
 image in a throwaway environment (a local CA for `*.example.com`, Traefik, Keycloak and Tinyauth) and checks what
-the guide promises; `tests/compose/check-readme.sh` checks that the README quotes the files exactly. Every service
-the README's commands name is called `cairn` (`container_name`), so the first admin is always:
+the guide promises; `tests/compose/check-readme.sh` checks that the guide quotes the files exactly. Every service
+the guide's commands name is called `cairn` (`container_name`), so the first admin is always:
 
 ```bash
 docker exec -it cairn /cairn user add "Admin" admin@example.com --admin --password
@@ -688,8 +688,8 @@ Cairn is meant to be published. The repository holds no personal data:
 
 - Sample data uses `example.com` domains, generic names and placeholder keys.
 - The image is published as `ghcr.io/leodrivera/cairn`, and the docs and examples use that name. A fork that
-  publishes its own image changes it in the README, `docs/architecture.md` and `examples/compose/`; the release
-  workflow takes the owner from the repository.
+  publishes its own image changes it in the README, `docs/install.md`, `docs/architecture.md` and
+  `examples/compose/`; the release workflow takes the owner from the repository.
 - No real hostnames, e-mail addresses, IPs or secrets in code, docs, tests or commit messages. `.env` files and
   `secrets/` are in `.gitignore`.
 - Brand files carry no editor metadata (checked: none of the files in `brand/` has author or path metadata).

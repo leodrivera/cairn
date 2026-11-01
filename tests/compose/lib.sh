@@ -12,8 +12,9 @@ CURRENT=""   # the example whose logs a failed check prints
 PROJECTS=()  # "project|files..." of every project brought up, for the final teardown
 ADDONS=()    # add-on files of examples/compose (keycloak.yml, own-ca.yml) that the current example runs with
 
-# The exact commands the README gives. tests/compose/check-readme.sh fails when one is missing from the README.
-# Sentences the README must carry word for word, because a reader acts on them.
+# The exact commands the install guide gives (README and docs/install.md). tests/compose/check-readme.sh fails when
+# one is missing from both.
+# Sentences the install guide must carry word for word, because a reader acts on them.
 README_SENTENCES=(
   "Docker opens published ports in the firewall itself, so ufw or firewalld rules do not close them"
   "If the container keeps restarting, \`docker logs cairn\` says why"

@@ -151,6 +151,12 @@ if "github.ref" not in str(conc.get("group", "")) or "refs/heads/main" not in st
 for name, job in ci["jobs"].items():
     if not job.get("timeout-minutes"): problems.append(f"{name} has no timeout")
 if not any("check-readme.sh" in s.get("run", "") for s in ci["jobs"]["test"]["steps"]): problems.append("test does not run check-readme.sh")
+# The ruleset on main requires the checks test, image (amd64) and image (arm64): their names must not change
+# when the runner image does.
+image = ci["jobs"]["image"]
+archs = sorted(i.get("arch") for i in (image.get("strategy") or {}).get("matrix", {}).get("include", []))
+if image.get("name") != "image (${{ matrix.arch }})" or archs != ["amd64", "arm64"]:
+    problems.append(f"image checks must be named image (amd64) and image (arm64), not by runner: {image.get('name')!r} {archs}")
 print("; ".join(problems))
 sys.exit(1 if problems else 0)
 PY

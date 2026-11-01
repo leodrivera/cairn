@@ -51,6 +51,9 @@ jobs:
         run: tests/compose/check-readme.sh
 
   image:
+    # Named by architecture, not by runner image: the ruleset on main requires image (amd64) and image (arm64),
+    # so a runner bump does not rename a required check.
+    name: image (${{ matrix.arch }})
     needs: test
     # Skipped only when a caller passes image: false. On push and pull_request the input is null, and
     # `null != false` is false (both coerce to 0), so compare the JSON text instead.
@@ -60,7 +63,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, ubuntu-26.04-arm]
+        include:
+          - { arch: amd64, os: ubuntu-26.04 }
+          - { arch: arm64, os: ubuntu-26.04-arm }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

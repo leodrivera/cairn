@@ -578,7 +578,11 @@ async fn grant_returns_after_restore() {
     // While in the trash, Shared with me simply leaves it out (no error), and the link stops.
     let res = get(&w, &w.bob, "/api/grants/received").await;
     assert_eq!(res.status, StatusCode::OK);
-    assert!(res.json["grants"].as_array().unwrap().is_empty(), "{}", res.json);
+    assert!(
+        res.json["grants"].as_array().unwrap().is_empty(),
+        "{}",
+        res.json
+    );
     assert_ne!(link_status(&w).await, StatusCode::OK);
     let res = Req::post("/api/trash/restore")
         .cookie(&w.ana)

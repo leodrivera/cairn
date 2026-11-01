@@ -560,9 +560,26 @@ async fn trash_visibility_follows_access() {
 async fn grant_returns_after_restore() {
     let w = world(&[]).await;
     let id = give(&w, "team", "read").await;
+    let link = Req::post("/api/shares")
+        .cookie(&w.ana)
+        .json(json!({ "path": "team", "expiresDays": 7, "password": null, "download": true }))
+        .send(&w.h.app)
+        .await;
+    let link = link.json["share"]["id"].as_str().unwrap().to_string();
+    let link_status = |w: &World| {
+        let url = format!("/s/{link}/info");
+        let app = w.h.app.clone();
+        async move { Req::get(&url).send(&app).await.status }
+    };
+    assert_eq!(link_status(&w).await, StatusCode::OK);
     let res = del(&w, &w.ana, "/api/files", json!({ "paths": ["team"] })).await;
     let entry = res.json["entries"][0].as_str().unwrap().to_string();
     gone(&w, &id).await;
+    // While in the trash, Shared with me simply leaves it out (no error), and the link stops.
+    let res = get(&w, &w.bob, "/api/grants/received").await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(res.json["grants"].as_array().unwrap().is_empty(), "{}", res.json);
+    assert_ne!(link_status(&w).await, StatusCode::OK);
     let res = Req::post("/api/trash/restore")
         .cookie(&w.ana)
         .json(json!({ "ids": [entry] }))
@@ -570,6 +587,7 @@ async fn grant_returns_after_restore() {
         .await;
     assert_eq!(res.json["restored"][0]["path"], "team", "{}", res.json);
     works(&w, &id).await;
+    assert_eq!(link_status(&w).await, StatusCode::OK);
     assert_eq!(
         get(&w, &w.bob, "/api/grants/received").await.json["grants"]
             .as_array()

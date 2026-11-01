@@ -52,8 +52,9 @@ jobs:
 
   image:
     needs: test
-    # Not set on push or pull_request, so null, which is not false.
-    if: ${{ inputs.image != false }}
+    # Skipped only when a caller passes image: false. On push and pull_request the input is null, and
+    # `null != false` is false (both coerce to 0), so compare the JSON text instead.
+    if: ${{ toJSON(inputs.image) != 'false' }}
     timeout-minutes: 20
     # arm64 is built and checked only here, on a native runner.
     strategy:

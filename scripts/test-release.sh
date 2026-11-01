@@ -120,7 +120,8 @@ if release.get("concurrency", {}).get("cancel-in-progress") is not False: proble
 # The release checks its own pushed images, so the called CI skips its image job.
 if (release["jobs"]["test"].get("with") or {}).get("image") is not False: problems.append("release test does not pass image: false")
 if (((ci_on.get("workflow_call") or {}).get("inputs") or {}).get("image") or {}).get("type") != "boolean": problems.append("ci.yml has no boolean image input")
-if "inputs.image != false" not in str(ci["jobs"]["image"].get("if", "")): problems.append("ci image job does not honor the image input")
+# `inputs.image != false` would skip the job on push and pull_request too: null and false both coerce to 0.
+if "toJSON(inputs.image) != 'false'" not in str(ci["jobs"]["image"].get("if", "")): problems.append("ci image job does not honor the image input")
 # The budget measures web/dist, so the build job builds the front-end.
 if not any("npm run build" in step.get("run", "") for step in release["jobs"]["build"]["steps"]): problems.append("release build does not build web/dist")
 print("; ".join(problems))

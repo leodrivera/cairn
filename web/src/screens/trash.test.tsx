@@ -103,3 +103,14 @@ test("empty_state", async () => {
   assert.match(el.textContent!, /The trash is empty/);
   await flush();
 });
+
+test("long_trash_is_windowed", async () => {
+  const many = Array.from({ length: 3000 }, (_, i) => entry(`e${i}`, `item-${i}.txt`));
+  const { el } = open(many);
+  await ready(el);
+  const rows = el.querySelectorAll(".trash-list tbody tr:not([aria-hidden])").length;
+  assert.ok(rows > 0 && rows < 100, `rendered ${rows} rows`);
+  assert.match(el.querySelector(".trash-list")!.textContent!, /item-0\.txt/);
+  // The empty-trash count still covers every entry.
+  assert.ok(buttonNamed(el, "Empty trash"));
+});

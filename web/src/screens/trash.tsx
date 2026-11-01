@@ -9,9 +9,15 @@ import { Dialog } from "../components/dialogs";
 import { FileIcon } from "../components/file-icon";
 import { Icon } from "../components/icons";
 import { useNarrow } from "../components/shell";
+import { useWindowInPage } from "../lib/windowing";
 import { StatePanel } from "../components/states";
 import { showToast } from "../components/toast";
 import type { TrashEntry } from "../lib/types";
+import type { Ref } from "preact";
+
+/** Fixed row heights (app.css `.trash-list`), so long trashes can be windowed. */
+const ROW = 53;
+const STACK_ROW = 97;
 
 type Asking = { kind: "one"; entry: TrashEntry } | { kind: "empty"; count: number };
 
@@ -52,6 +58,10 @@ export function Trash() {
   };
 
   const deletable = entries?.filter((e) => e.canDelete) ?? [];
+  const rows = useRef<HTMLElement>(null);
+  const all = entries ?? [];
+  const { start, end, padTop, padBottom } = useWindowInPage(rows, all.length, narrow ? STACK_ROW : ROW);
+  const shown = all.slice(start, end);
 
   const cells = (e: TrashEntry) => ({
     name: (
@@ -107,8 +117,9 @@ export function Trash() {
       {entries && entries.length > 0 && (
         <div class="table-wrap trash-list">
           {narrow ? (
-            <ul class="links-stack">
-              {entries.map((e) => {
+            <ul class="links-stack" ref={rows as Ref<HTMLUListElement>}>
+              <li class="window-pad" style={{ height: `${padTop}px` }} aria-hidden="true" />
+              {shown.map((e) => {
                 const c = cells(e);
                 return (
                   <li key={e.id}>
@@ -125,6 +136,7 @@ export function Trash() {
                   </li>
                 );
               })}
+              <li class="window-pad" style={{ height: `${padBottom}px` }} aria-hidden="true" />
             </ul>
           ) : (
             <table class="users-table">
@@ -140,8 +152,11 @@ export function Trash() {
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                {entries.map((e) => {
+              <tbody ref={rows as Ref<HTMLTableSectionElement>}>
+                <tr class="window-pad" style={{ height: `${padTop}px` }} aria-hidden="true">
+                  <td colSpan={6} />
+                </tr>
+                {shown.map((e) => {
                   const c = cells(e);
                   return (
                     <tr key={e.id}>
@@ -154,6 +169,9 @@ export function Trash() {
                     </tr>
                   );
                 })}
+                <tr class="window-pad" style={{ height: `${padBottom}px` }} aria-hidden="true">
+                  <td colSpan={6} />
+                </tr>
               </tbody>
             </table>
           )}

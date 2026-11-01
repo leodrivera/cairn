@@ -2077,6 +2077,45 @@ fieldset.perms {
   flex-wrap: wrap;
 }
 
+/* Trash rows have fixed heights so a long trash is windowed; names and folders cut with an ellipsis. */
+.trash-list .users-table td {
+  height: 52px;
+  padding-block: 4px;
+  white-space: nowrap;
+}
+
+.trash-list .users-table td:first-child,
+.trash-list .users-table td:nth-child(2) {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trash-list .row-actions {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.trash-list .links-stack li {
+  height: 97px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.trash-list .links-stack-meta {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.trash-list .window-pad,
+.trash-list .window-pad td {
+  height: 0;
+  padding: 0;
+  border: 0;
+}
+
 .trash-name {
   display: flex;
   align-items: center;

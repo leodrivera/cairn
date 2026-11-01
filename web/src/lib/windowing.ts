@@ -59,3 +59,39 @@ export function useWindow(ref: RefObject<HTMLElement | null>, count: number, row
   const { start, end } = visibleRange(top, height, rowHeight, count);
   return { start, end, padTop: start * rowHeight, padBottom: (count - end) * rowHeight };
 }
+
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if (o === "auto" || o === "scroll") return p;
+  }
+  return null;
+}
+
+/**
+ * A window over a list that scrolls with its page (or the nearest scrolling box) rather than in a box of its own.
+ * `ref` is the element holding the rows; every row is `rowHeight` pixels.
+ */
+export function useWindowInPage(ref: RefObject<HTMLElement | null>, count: number, rowHeight: number) {
+  const [box, setBox] = useState({ top: 0, height: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const scroller = scrollParent(el);
+    const update = () => {
+      const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+      const height = (scroller ? scroller.clientHeight : window.innerHeight) || window.innerHeight;
+      setBox({ top: viewTop - el.getBoundingClientRect().top, height });
+    };
+    update();
+    const target: HTMLElement | Window = scroller ?? window;
+    target.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      target.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [ref.current, count]);
+  const { start, end } = visibleRange(box.top, box.height, rowHeight, count);
+  return { start, end, padTop: start * rowHeight, padBottom: (count - end) * rowHeight };
+}

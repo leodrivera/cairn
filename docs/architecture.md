@@ -488,8 +488,8 @@ docker exec -it cairn /cairn user delete guest@example.com
 - An entry is shown to every person who may now write to the place it came from: through their own scope (restore
   and delete permanently) or through a write grant on a folder holding it (restore only). Restore puts it back at
   its path, recreating missing folders; when the name is taken it comes back as `name (restored).ext`, then
-  `name (restored 2).ext` (folders: `name (restored)`). If its folder is now on another disk, the restore is refused (`409 restore_other_disk`). The toast after a
-  delete offers Undo, which restores.
+  `name (restored 2).ext` (folders: `name (restored)`). If its folder is now on another disk, the restore is
+  refused (`409 restore_other_disk`). The toast after a delete offers Undo, which restores.
 - Server settings shows the days (or `CAIRN_TRASH_DAYS`), the total size of the entries and any trash folder that
   is not Cairn's.
 

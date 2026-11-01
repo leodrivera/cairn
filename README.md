@@ -1,11 +1,6 @@
 <h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/cairn-logo-on-dark.svg">
-    <img src="brand/cairn-logo-on-light.svg" height="48" alt="cairn">
-  </picture>
+  <img src="brand/cairn-banner.svg" width="100%" alt="cairn: Your files. One small binary.">
 </h1>
-
-<p align="center"><strong>Your files. One small binary.</strong></p>
 
 Cairn is a self-hosted web file browser written in Rust. Point it at a folder on your server and browse, upload, edit and share its contents from any device. It is built to stay out of the way: small enough to run comfortably on an old PC.
 

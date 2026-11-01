@@ -441,4 +441,7 @@ export const en = {
   "invalid.shareExpiry": "Expiry must be 1, 7 or 30 days, or never.",
   "invalid.sharePassword": "The link password needs 8 to 256 characters.",
   "invalid.zipItems": "Choose between 1 and 1000 items in one folder.",
+  "invalid.grantEmails": "Name between 1 and 20 e-mail addresses.",
+  "invalid.trashIds": "Send between 1 and 10000 items.",
+  "invalid.trashDays": "Keep trash between 0 and 3650 days.",
 } as const;

@@ -124,3 +124,11 @@ test("grant_expiry_strings_in_pt_br", () => {
   assert.equal(t("grants.until", { date: "14 de mar. de 2027" }), "Até 14 de mar. de 2027");
   assert.equal(t("grants.changeTo"), "Mudar para");
 });
+
+test("trash_and_grant_sentences_in_pt_br", () => {
+  setLang("pt-BR");
+  const say = (m: string) => errorText(new ApiFailure(400, "invalid", m));
+  assert.equal(say("Name between 1 and 20 e-mail addresses."), "Informe entre 1 e 20 endereços de e-mail.");
+  assert.equal(say("Send between 1 and 10000 items."), "Envie entre 1 e 10000 itens.");
+  assert.equal(say("Keep trash between 0 and 3650 days."), "Mantenha a lixeira entre 0 e 3650 dias.");
+});

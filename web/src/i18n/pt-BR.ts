@@ -443,4 +443,7 @@ export const ptBR: Table = {
   "invalid.shareExpiry": "A validade deve ser 1, 7 ou 30 dias, ou nunca.",
   "invalid.sharePassword": "A senha do link precisa ter de 8 a 256 caracteres.",
   "invalid.zipItems": "Escolha entre 1 e 1000 itens de uma pasta.",
+  "invalid.grantEmails": "Informe entre 1 e 20 endereços de e-mail.",
+  "invalid.trashIds": "Envie entre 1 e 10000 itens.",
+  "invalid.trashDays": "Mantenha a lixeira entre 0 e 3650 dias.",
 };

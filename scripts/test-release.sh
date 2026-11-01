@@ -156,6 +156,24 @@ sys.exit(1 if problems else 0)
 PY
 ); then ok ci_runs_once; else fail ci_runs_once "$msg"; fi
 
+# Every job runs on a pinned runner image, the same in both workflows; never a moving ubuntu-latest.
+if msg=$(python3 -I - .github/workflows/ci.yml .github/workflows/release.yml <<'PY' 2>&1
+import sys, yaml
+allowed = {"ubuntu-26.04", "ubuntu-26.04-arm"}
+bad = []
+for path in sys.argv[1:]:
+    for name, job in yaml.safe_load(open(path))["jobs"].items():
+        if "uses" in job: continue
+        matrix = (job.get("strategy") or {}).get("matrix") or {}
+        labels = list(matrix.get("os", [])) + [i["os"] for i in matrix.get("include", []) if "os" in i]
+        runs_on = job["runs-on"]
+        if "matrix.os" not in runs_on: labels.append(runs_on)
+        bad += [f"{path}: {name}: {l}" for l in labels if l not in allowed]
+print("; ".join(bad))
+sys.exit(1 if bad else 0)
+PY
+); then ok runners_pinned; else fail runners_pinned "$msg"; fi
+
 # Every release job that runs steps has a timeout.
 if msg=$(python3 -I - .github/workflows/release.yml <<'PY' 2>&1
 import sys, yaml

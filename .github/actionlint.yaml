@@ -1,0 +1,7 @@
+# actionlint 1.7.12 predates GitHub's Ubuntu 26.04 runners (generally available on 2026-09-17), so it does not
+# know their labels yet. They are GitHub-hosted, not self-hosted; this list only teaches the linter the names.
+# Remove it once a pinned actionlint release knows them.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

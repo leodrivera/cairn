@@ -28,7 +28,7 @@ captcha_refuses_without_token() {
   [[ $status == 400 ]] || { echo "status $status"; return 1; }
 }
 
-no_forwarded_ignored() { ! docker logs cairn 2>&1 | grep -q '"event":"http.forwarded_ignored"'; }
+no_forwarded_ignored() { ! docker logs cairn 2>&1 | grep '"event":"http.forwarded_ignored"' >/dev/null; }
 
 forwarded_ignored_once() {
   [[ $(docker logs cairn 2>&1 | grep -c '"event":"http.forwarded_ignored"') == 1 ]]

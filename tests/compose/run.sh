@@ -121,7 +121,7 @@ data_not_writable_in_compose() {
   (cd "$WORK/rootdata2" && compose_cmd up -d >/dev/null 2>&1) || return 1
   restarted() { (( $(docker inspect -f '{{.RestartCount}}' cairn) >= 1 )); }
   wait_for 30 restarted || { echo "no restart"; return 1; }
-  docker logs cairn 2>&1 | grep -q '/data is not writable by this user (uid 10001 in the image)' \
+  docker logs cairn 2>&1 | grep '/data is not writable by this user (uid 10001 in the image)' >/dev/null \
     || { docker logs cairn 2>&1 | tail -3; return 1; }
 }
 

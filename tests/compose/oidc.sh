@@ -4,7 +4,7 @@
 # crazymax/fail2ban:1.1.0, for fail2ban-regex only.
 FAIL2BAN=crazymax/fail2ban@sha256:2bc26b68f373ce6e52bbd181de2937a6694f72b74ddf15bbd1b25e90553dcda3
 
-log_has() { docker logs cairn 2>&1 | grep -q "\"event\":\"$1\""; }
+log_has() { docker logs cairn 2>&1 | grep "\"event\":\"$1\"" >/dev/null; }
 
 no_provider() { tcurl "$FILES/api/config" | jq -e '.providers == []'; }
 

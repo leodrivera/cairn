@@ -125,6 +125,7 @@ export const ptBR: Table = {
   "server.trashTaken": "{folder}/.cairn-trash não foi criada pelo Cairn, então a lixeira fica desligada ali. Renomeie essa pasta.",
   "error.other_disk": "{name} está em outro disco, então não pode ir para a lixeira.",
   "error.holds_mount": "{name} tem outro disco montado dentro. Desmonte-o primeiro.",
+  "error.restore_other_disk": "{name} não pode ser restaurado: a pasta dele agora está em outro disco.",
   "error.trash_off": "A lixeira está desligada neste servidor, então esta exclusão não pode ser desfeita.",
   "error.trash_taken": "A lixeira desta pasta não pode ser usada: uma pasta .cairn-trash ali não foi criada pelo Cairn. Peça a um admin para renomeá-la.",
   "error.reserved": "Esse nome é reservado pelo Cairn. Escolha outro nome.",

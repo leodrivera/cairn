@@ -150,9 +150,9 @@ upgrade_pulls_new_image() {
 # not cross them. A delete in /srv/photos must land in photos/.cairn-trash and come back on restore.
 trash_per_mount() {
   prepare quick permount
-  mkdir -p "$WORK/permount/photos"
-  as_root "$WORK/permount" 'chown 10001:10001 /w/photos'
-  printf 'services:\n  cairn:\n    volumes: !override\n      - ./files:/srv\n      - ./photos:/srv/photos\n      - cairn-data:/data\n' \
+  mkdir -p "$WORK/permount/photos" "$WORK/permount/camera"
+  as_root "$WORK/permount" 'chown 10001:10001 /w/photos /w/camera && echo cat > /w/camera/cat.jpg && chown 10001:10001 /w/camera/cat.jpg'
+  printf 'services:\n  cairn:\n    volumes: !override\n      - ./files:/srv\n      - ./photos:/srv/photos\n      - ./camera:/srv/media/camera\n      - cairn-data:/data\n' \
     > "$WORK/permount/mounts.yml"
   up quick permount "$WORK/permount/mounts.yml" || return 1
   admin >/dev/null || return 1
@@ -173,6 +173,19 @@ trash_per_mount() {
     --data "$(jq -cn --arg id "$id" '{ids: [$id]}')" "$QUICK/api/trash/restore")
   jq -e '.restored[0].path == "photos/a.txt"' <<< "$res" >/dev/null || { echo "restore answered $res"; return 1; }
   as_root "$WORK/permount" 'test "$(cat /w/photos/a.txt)" = trail' || { echo "not back in place"; return 1; }
+}
+
+# A folder holding a real mount point (./camera at /srv/media/camera) is refused by the trash and by a permanent
+# delete, so the other disk is never carried into the trash or emptied. Runs on trash_per_mount's containers.
+trash_refuses_mount_inside() {
+  local jar=$WORK/permount.jar res
+  for permanent in false true; do
+    res=$(curl -s -b "$jar" -H 'X-Cairn: 1' -H 'Content-Type: application/json' -X DELETE \
+      --data "$(jq -cn --argjson p "$permanent" '{paths: ["media"], permanent: $p}')" "$QUICK/api/files")
+    jq -e '.deleted == 0 and .failed[0].error == "holds_mount"' <<< "$res" >/dev/null \
+      || { echo "delete (permanent $permanent) answered $res"; return 1; }
+  done
+  as_root "$WORK/permount" 'test "$(cat /w/camera/cat.jpg)" = cat' || { echo "the mounted disk lost its file"; return 1; }
 }
 
 run_quick() {
@@ -196,6 +209,7 @@ run_quick() {
   check upgrade_pulls_new_image upgrade_pulls_new_image
   down upgrade
   check trash_per_mount trash_per_mount
+  check trash_refuses_mount_inside trash_refuses_mount_inside
   down permount
   docker rm -f "$REGISTRY" >/dev/null 2>&1
   docker image rm 127.0.0.1:15001/cairn:0.1 >/dev/null 2>&1

@@ -132,3 +132,9 @@ test("trash_and_grant_sentences_in_pt_br", () => {
   assert.equal(say("Send between 1 and 10000 items."), "Envie entre 1 e 10000 itens.");
   assert.equal(say("Keep trash between 0 and 3650 days."), "Mantenha a lixeira entre 0 e 3650 dias.");
 });
+
+test("restore_other_disk_in_pt_br", () => {
+  setLang("pt-BR");
+  const f = new ApiFailure(409, "restore_other_disk", "a.txt cannot be restored: its folder is now on another disk.");
+  assert.equal(errorText(f, { name: "a.txt" }), "a.txt não pode ser restaurado: a pasta dele agora está em outro disco.");
+});

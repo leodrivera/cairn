@@ -651,3 +651,24 @@ async fn folder_holding_mount_refused() {
     let res = delete(&h, &c, &["media/notes.txt"], None).await;
     assert_eq!(res.json["deleted"], 1, "{}", res.json);
 }
+
+#[tokio::test]
+async fn restore_other_disk_says_restore() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "usb/a.txt", "a");
+    let id = ids(&delete(&h, &c, &["usb/a.txt"], None).await)[0].clone();
+    // Its folder is now another mount: the rename back fails with EXDEV.
+    cairn::trash::ops::fail_rename_for(&root.join("usb"));
+    let res = restore(&h, &c, &[&id]).await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "restore_other_disk",
+        "{}",
+        res.json
+    );
+    assert_eq!(
+        res.json["failed"][0]["message"],
+        "a.txt cannot be restored: its folder is now on another disk."
+    );
+    assert_eq!(trash_list(&h, &c).await.len(), 1);
+}

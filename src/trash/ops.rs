@@ -45,6 +45,17 @@ fn refused(dir: &OwnedFd, name: &OsStr) -> bool {
         .is_ok_and(|d| set.contains(&d.join(name)))
 }
 
+/// Tests only: the folder `dir` itself is in the refused set, so a restore into it fails with `EXDEV`.
+fn refused_into(dir: &OwnedFd) -> bool {
+    let set = renames_refused().lock().expect("set");
+    !set.is_empty()
+        && std::fs::read_link(format!(
+            "/proc/self/fd/{}",
+            rustix::fd::AsRawFd::as_raw_fd(dir)
+        ))
+        .is_ok_and(|d| set.contains(&d))
+}
+
 fn db_err(e: rusqlite::Error) -> FsError {
     FsError::Io(std::io::Error::other(e))
 }
@@ -210,7 +221,12 @@ pub fn restore(
         };
         let cand = OsStr::from_bytes(&candidate);
         scope.check_new_name(&dst, cand)?;
-        match rustix::fs::renameat_with(&holder, name, &dst, cand, RenameFlags::NOREPLACE) {
+        let moved = if refused_into(&dst) {
+            Err(Errno::XDEV)
+        } else {
+            rustix::fs::renameat_with(&holder, name, &dst, cand, RenameFlags::NOREPLACE)
+        };
+        match moved {
             Ok(()) => {
                 let _ = rustix::fs::unlinkat(
                     &holder_scope.open_dir(&RelPath::parse("")?)?,
@@ -223,7 +239,9 @@ pub fn restore(
             }
             Err(Errno::EXIST) => continue,
             Err(Errno::XDEV) => {
-                return Err(FsError::OtherDisk(name.to_string_lossy().into_owned()));
+                return Err(FsError::RestoreOtherDisk(
+                    name.to_string_lossy().into_owned(),
+                ));
             }
             Err(e) => return Err(e.into()),
         }

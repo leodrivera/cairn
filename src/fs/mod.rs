@@ -45,6 +45,8 @@ pub enum FsError {
     OtherDisk(String),
     /// The item is a mount point or holds one (named): neither the trash nor a permanent delete may take it.
     HoldsMount(String),
+    /// A trash entry (named) cannot go back: its folder is now on another mount.
+    RestoreOtherDisk(String),
     /// The trash is off (0 days); a delete would be permanent.
     TrashOff,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
@@ -207,6 +209,11 @@ impl From<FsError> for ApiError {
                 S::CONFLICT,
                 "holds_mount",
                 format!("{name} has another disk mounted inside. Unmount it first."),
+            ),
+            FsError::RestoreOtherDisk(name) => (
+                S::CONFLICT,
+                "restore_other_disk",
+                format!("{name} cannot be restored: its folder is now on another disk."),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

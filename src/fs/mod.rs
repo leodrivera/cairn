@@ -47,6 +47,8 @@ pub enum FsError {
     HoldsMount(String),
     /// A trash entry (named) cannot go back: its folder is now on another mount.
     RestoreOtherDisk(String),
+    /// Cairn may not make the trash folder at the top of this mount (named, like `/photos`).
+    TrashDenied(String),
     /// The trash is off (0 days); a delete would be permanent.
     TrashOff,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
@@ -214,6 +216,13 @@ impl From<FsError> for ApiError {
                 S::CONFLICT,
                 "restore_other_disk",
                 format!("{name} cannot be restored: its folder is now on another disk."),
+            ),
+            FsError::TrashDenied(top) => (
+                S::CONFLICT,
+                "trash_denied",
+                format!(
+                    "The trash cannot be made here: Cairn may not write to {top}. Ask an admin, or delete permanently."
+                ),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

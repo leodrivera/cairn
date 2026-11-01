@@ -359,7 +359,7 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
   `412`, and the editor says "This file changed on the server since you opened it."
 - Delete moves items to the trash (section 7.2) and needs a confirmation in the UI; "Delete permanently" is a second,
   separate choice. The API takes the list in the body, never a wildcard. A delete that cannot go to the trash is
-  refused for that item (`trash_off`, `trash_taken`, `other_disk` or `holds_mount`), never silently made permanent.
+  refused for that item (`trash_off`, `trash_taken`, `trash_denied`, `other_disk` or `holds_mount`), never silently made permanent.
 - Overwriting a file (an upload with `?replace=1`, or a text save) is not a delete and does not go to the trash.
 - Thumbnails, when the setting is on, are the original image served by `/api/raw` with `loading="lazy"`. No
   resizing and no cache on the server.
@@ -469,7 +469,9 @@ docker exec -it cairn /cairn user delete guest@example.com
 - An item that is a mount point, or holds one, is refused by both the trash and a permanent delete with "{name} has
   another disk mounted inside. Unmount it first." (`409 holds_mount`): the rename would carry the other disk into
   the trash, and the purge would later empty it.
-- A trash folder is created on first use, mode `0700`, with a marker file naming this database. A `.cairn-trash`
+- A trash folder is created on first use, mode `0700`, with a marker file naming this database: made beside under a
+  temporary name, given its marker, then renamed into place, so it never exists without the marker. When Cairn may
+  not write to the top of the mount, the delete is refused with `409 trash_denied` and offered a permanent delete. A `.cairn-trash`
   without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
   trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says
   to rename it.
@@ -486,7 +488,8 @@ docker exec -it cairn /cairn user delete guest@example.com
 - An entry is shown to every person who may now write to the place it came from: through their own scope (restore
   and delete permanently) or through a write grant on a folder holding it (restore only). Restore puts it back at
   its path, recreating missing folders; when the name is taken it comes back as `name (restored).ext`, then
-  `name (restored 2).ext` (folders: `name (restored)`). The toast after a delete offers Undo, which restores.
+  `name (restored 2).ext` (folders: `name (restored)`). If its folder is now on another disk, the restore is refused (`409 restore_other_disk`). The toast after a
+  delete offers Undo, which restores.
 - Server settings shows the days (or `CAIRN_TRASH_DAYS`), the total size of the entries and any trash folder that
   is not Cairn's.
 

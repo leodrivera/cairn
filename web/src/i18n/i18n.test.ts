@@ -138,3 +138,9 @@ test("restore_other_disk_in_pt_br", () => {
   const f = new ApiFailure(409, "restore_other_disk", "a.txt cannot be restored: its folder is now on another disk.");
   assert.equal(errorText(f, { name: "a.txt" }), "a.txt não pode ser restaurado: a pasta dele agora está em outro disco.");
 });
+
+test("trash_denied_in_pt_br", () => {
+  setLang("pt-BR");
+  const f = new ApiFailure(409, "trash_denied", "The trash cannot be made here: Cairn may not write to /photos. Ask an admin, or delete permanently.");
+  assert.equal(errorText(f), "A lixeira não pode ser criada aqui: o Cairn não tem permissão de escrita na pasta do topo. Fale com um admin ou exclua permanentemente.");
+});

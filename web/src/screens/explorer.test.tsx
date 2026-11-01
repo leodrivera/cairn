@@ -858,3 +858,25 @@ test("grant_gone_state", async () => {
   await waitFor(() => assert.match(el.textContent!, /This shared item is no longer available\./));
   assert.ok(el.querySelector('.state a[href="/shared"]'));
 });
+
+test("trash_denied_offers_permanent", async () => {
+  startAt("/files/", admin, {
+    ...withTrash,
+    "GET /api/files": listing("", sample),
+    "DELETE /api/files": () =>
+      json({
+        deleted: 0,
+        failed: [{ path: "notes.txt", error: "trash_denied", message: "The trash cannot be made here: Cairn may not write to /. Ask an admin, or delete permanently." }],
+        entries: [],
+      }),
+  });
+  const el = render(<App />);
+  await shown(el);
+  click(more(el, "notes.txt"));
+  await waitFor(() => assert.ok(el.querySelector('[role="menu"]')));
+  click(menuItem(el, "Delete"));
+  await waitFor(() => assert.ok(el.querySelector('[role="dialog"]')));
+  click(button(el, "Move to trash"));
+  await waitFor(() => assert.match(el.querySelector('[role="dialog"]')?.textContent ?? "", /The trash cannot be made here/));
+  assert.match(el.querySelector('[role="dialog"]')!.textContent!, /Delete notes\.txt permanently instead\?/);
+});

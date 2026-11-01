@@ -123,6 +123,7 @@ export const en = {
   "server.trashTaken": "{folder}/.cairn-trash was not made by Cairn, so the trash is off there. Rename that folder.",
   "error.other_disk": "{name} is on another disk, so it cannot go to the trash.",
   "error.holds_mount": "{name} has another disk mounted inside. Unmount it first.",
+  "error.trash_denied": "The trash cannot be made here: Cairn may not write to the top of this disk. Ask an admin, or delete permanently.",
   "error.restore_other_disk": "{name} cannot be restored: its folder is now on another disk.",
   "error.trash_off": "The trash is off on this server, so this delete cannot be undone.",
   "error.trash_taken": "The trash for this folder cannot be used: a .cairn-trash folder there was not made by Cairn. Ask an admin to rename it.",

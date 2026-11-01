@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use rustix::fd::OwnedFd;
-use rustix::fs::{Mode, OFlags};
+use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
 
 use crate::db::Db;
@@ -91,6 +91,44 @@ struct Inner {
     ids: Arc<[(u64, u64)]>,
     /// Mount tops whose `.cairn-trash` is not ours (`/`, `/photos`).
     taken: Vec<String>,
+}
+
+/// Makes `.cairn-trash` in `top` whole: a folder beside it under a temporary name gets its marker first and is then
+/// renamed in, so no one ever sees a trash folder without its marker. One made by another request a moment ago is
+/// left as it is (the caller looks again).
+fn make(top: &OwnedFd, token: &str) -> Result<(), Errno> {
+    let mut raw = [0u8; 8];
+    getrandom::fill(&mut raw).expect("system random source");
+    let temp = format!(
+        "{}trash-{:016x}",
+        crate::fs::list::TEMP_PREFIX,
+        u64::from_le_bytes(raw)
+    );
+    rustix::fs::mkdirat(top, temp.as_str(), Mode::from_raw_mode(0o700))?;
+    let filled = (|| {
+        let fd = rustix::fs::openat(top, temp.as_str(), DIR, Mode::empty())?;
+        rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o700))?;
+        let marker = rustix::fs::openat(
+            &fd,
+            MARKER,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )?;
+        std::fs::File::from(marker)
+            .write_all(format!("cairn-trash {token}\n").as_bytes())
+            .map_err(|e| Errno::from_io_error(&e).unwrap_or(Errno::IO))?;
+        rustix::fs::renameat_with(top, temp.as_str(), top, TRASH_NAME, RenameFlags::NOREPLACE)
+    })();
+    match filled {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if let Ok(fd) = rustix::fs::openat(top, temp.as_str(), DIR, Mode::empty()) {
+                let _ = rustix::fs::unlinkat(&fd, MARKER, AtFlags::empty());
+            }
+            let _ = rustix::fs::unlinkat(top, temp.as_str(), AtFlags::REMOVEDIR);
+            if e == Errno::EXIST { Ok(()) } else { Err(e) }
+        }
+    }
 }
 
 /// Every trash folder Cairn knows of under the server root.
@@ -235,25 +273,13 @@ impl Trashes {
                     self.mark_taken(&stored);
                     return Err(FsError::TrashTaken(stored));
                 }
-                Found::Missing => {
-                    match rustix::fs::mkdirat(top, TRASH_NAME, Mode::from_raw_mode(0o700)) {
-                        Ok(()) => {
-                            let fd = rustix::fs::openat(top, TRASH_NAME, DIR, Mode::empty())?;
-                            rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o700))?;
-                            let marker = rustix::fs::openat(
-                                &fd,
-                                MARKER,
-                                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-                                Mode::from_raw_mode(0o600),
-                            )?;
-                            std::fs::File::from(marker)
-                                .write_all(format!("cairn-trash {token}\n").as_bytes())?;
-                        }
-                        // Made by another request a moment ago: look again.
-                        Err(Errno::EXIST) => {}
-                        Err(e) => return Err(e.into()),
+                Found::Missing => match make(top, &token) {
+                    Ok(()) => {}
+                    Err(Errno::ACCESS | Errno::PERM | Errno::ROFS) => {
+                        return Err(FsError::TrashDenied(stored));
                     }
-                }
+                    Err(e) => return Err(e.into()),
+                },
             }
         }
         Err(FsError::TrashTaken(stored))

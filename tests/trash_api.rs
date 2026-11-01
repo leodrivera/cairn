@@ -672,3 +672,45 @@ async fn restore_other_disk_says_restore() {
     );
     assert_eq!(trash_list(&h, &c).await.len(), 1);
 }
+
+#[tokio::test]
+async fn trash_folder_not_writable_offers_permanent() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if std::fs::metadata("/proc/self").unwrap().uid() == 0 {
+        return; // root writes everywhere
+    }
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "docs/a.txt", "a");
+    // The mount top (the root) is read-only to Cairn; the folder holding the item is not.
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let res = delete(&h, &c, &["docs/a.txt"], None).await;
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_denied",
+        "{}",
+        res.json
+    );
+    assert_eq!(
+        res.json["failed"][0]["message"],
+        "The trash cannot be made here: Cairn may not write to /. Ask an admin, or delete permanently."
+    );
+    assert!(root.join("docs/a.txt").exists());
+    assert_eq!(rows(&h), 0);
+}
+
+#[tokio::test]
+async fn trash_folder_appears_whole() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "a.txt", "a");
+    delete(&h, &c, &["a.txt"], None).await;
+    // Made beside under a temporary name and renamed in with its marker: nothing else is left at the top.
+    let mut names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec![".cairn-trash"]);
+    assert!(root.join(".cairn-trash/.cairn-trash-marker").exists());
+}

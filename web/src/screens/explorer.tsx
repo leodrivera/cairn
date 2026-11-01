@@ -298,8 +298,8 @@ function Folder({ path, where }: { path: string; where: Where }) {
 
   const doDelete = async (items: Entry[], permanent: boolean) => {
     const r = await remove(path, items, { permanent, base });
-    // The trash could not take these (another disk, or a folder it may not use): offer a permanent delete.
-    const refused = r.failed.filter((f) => f.error === "other_disk" || f.error === "trash_taken");
+    // The trash could not take these (another disk, a folder it may not use, or one it may not make): offer a permanent delete.
+    const refused = r.failed.filter((f) => f.error === "other_disk" || f.error === "trash_taken" || f.error === "trash_denied");
     if (!permanent && !grant && refused.length > 0) {
       const names = new Set(refused.map((f) => f.path));
       const first = refused[0];

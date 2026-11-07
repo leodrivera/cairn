@@ -103,7 +103,8 @@ async fn create(
     if let Some(p) = &b.password {
         check_password(p)?;
     }
-    let scope = fu.scope;
+    // Stored paths pass no link.
+    let scope = fu.scope.no_links();
     let check = rel.clone();
     blocking(move || scope.open(&check, rustix::fs::OFlags::PATH).map(|_| ())).await?;
     let password_hash = match b.password {

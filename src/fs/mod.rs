@@ -51,6 +51,8 @@ pub enum FsError {
     TrashDenied(String),
     /// The trash is off (0 days); a delete would be permanent.
     TrashOff,
+    /// A text save or a replacing upload met a link.
+    IsALink,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
     TrashTaken(String),
     Io(std::io::Error),
@@ -225,6 +227,11 @@ impl From<FsError> for ApiError {
                 format!(
                     "The trash cannot be made here: Cairn may not write to {top}. Ask an admin, or delete permanently."
                 ),
+            ),
+            FsError::IsALink => (
+                S::BAD_REQUEST,
+                "is_link",
+                "This name is a link. Use the file it points to.".into(),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

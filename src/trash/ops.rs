@@ -113,7 +113,7 @@ pub fn to_trash(
     crate::fs::mount::refuse_mounts_inside(&dir, name.as_os_str())?;
     let st = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let top = mount_top(&open_root(trashes)?, &dir)?;
-    // A scope that is a link to a folder outside the server root has no trash of ours: never make one out there.
+    // Never make a trash folder outside the server root.
     let inside = std::fs::read_link(format!(
         "/proc/self/fd/{}",
         rustix::fd::AsRawFd::as_raw_fd(&top)
@@ -122,6 +122,9 @@ pub fn to_trash(
     if !inside {
         return Err(FsError::OtherDisk(name.to_string_lossy().into_owned()));
     }
+    // Where the item really lies, not the path the client sent: a link on the way must not put the entry, and with it
+    // who may see and restore it, under another folder.
+    let real = scope.real_path(&dir)?.join_bytes(name.as_bytes())?;
     let (trash, trash_dir) = trashes.for_dir(db, &top)?;
     let size = size_of(&dir, name.as_os_str(), 0);
     let kind = if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
@@ -132,7 +135,7 @@ pub fn to_trash(
     let entry = Entry {
         id: crate::shares::new_id(),
         trash_dir,
-        path: crate::shares::root_path(base, rel),
+        path: crate::shares::root_path(base, &real),
         name: name.as_bytes().to_vec(),
         kind: kind.into(),
         size: size as i64,

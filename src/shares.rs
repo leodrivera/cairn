@@ -193,8 +193,8 @@ pub fn hit(db: &Db, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// What a live link opens. A file is reached through the creator's scope; a folder is a scope of its own, so links
-/// inside it cannot lead to its siblings.
+/// What a live link opens. A file is reached through the creator's scope, passing no link, also when `serve_file` opens
+/// it again; a folder is a scope of its own, so links inside it cannot lead to its siblings.
 pub enum Target {
     File { scope: Scope, path: RelPath },
     Folder { scope: Scope },
@@ -231,13 +231,14 @@ pub fn resolve(
         scope.with_fallback()
     } else {
         scope
-    };
+    }
+    .no_links();
     let fd = scope.open(&rel, rustix::fs::OFlags::PATH).ok()?;
     let st = rustix::fs::fstat(&fd).ok()?;
     let target =
         if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory {
             Target::Folder {
-                scope: scope.sub(&rel).ok()?,
+                scope: scope.sub(&rel).ok()?.follow_links(),
             }
         } else {
             Target::File { scope, path: rel }

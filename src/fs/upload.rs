@@ -64,6 +64,11 @@ pub async fn upload(
         if !replace {
             return Err(FsError::Exists);
         }
+        // Replacing would swap the link for a file, with the link's own 0777 mode; as in `save_text`, links are
+        // written through their target's own path.
+        if FileType::from_raw_mode(st.st_mode) == FileType::Symlink {
+            return Err(FsError::IsALink);
+        }
     }
 
     let mut random = [0u8; 8];

@@ -784,3 +784,16 @@ async fn zip_past_the_limit_answers_429_in_plain_text() {
     drop(held);
     assert_eq!(f.get(&format!("/s/{id}/zip")).await.status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn a_link_cannot_be_made_on_a_symlink() {
+    let f = fx().await;
+    let srv = f.dir.path().join("srv");
+    std::os::unix::fs::symlink("photos/notes.txt", srv.join("via")).unwrap();
+    let res = Req::post("/api/shares")
+        .cookie(&f.admin)
+        .json(json!({ "path": "via", "download": true }))
+        .send(&f.h.app)
+        .await;
+    assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
+}

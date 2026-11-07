@@ -295,7 +295,9 @@ an internal URL.
 Every path from a client is relative to the user's scope. The server resolves it in one place, `resolve(scope, path)`:
 
 1. Reject NUL bytes, empty segments, `.` and `..` segments, and names longer than 255 bytes.
-2. Join to the scope folder, which is itself inside `CAIRN_ROOT`.
+2. Join to the scope folder, which is itself inside `CAIRN_ROOT`. It must be a real folder: a stored scope is opened
+   from the root without following any symlink, on any part of its path, and if one is there the user gets
+   `scope_missing`. To give someone a folder from elsewhere, use a bind mount.
 3. Open with `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` on Linux, so a symlink cannot lead out of the
    scope even if it is created between the check and the use. Where `openat2` is missing (kernel before 5.6),
    canonicalize and check the prefix, and refuse to follow symlinks at all.
@@ -312,7 +314,9 @@ accepts it, so these files can be opened, downloaded, renamed to a readable name
 contain NUL, so this never collides with one.
 
 Symlinks inside the scope that point inside the scope work. Symlinks that point outside are listed with a "link
-outside your folder" marker and cannot be opened.
+outside your folder" marker and cannot be opened. A relative link means something else in another folder, so moving
+or copying one to where it would lead outside the scope is refused; a folder is moved as it is, with its links. A
+replacing upload and a text save refuse a link (`400 is_link`): write to its target's own path.
 
 Trash folders (section 7.2) are reserved the same way as the data folder: every one of Cairn's `.cairn-trash`
 folders is refused by device and inode, so no listing shows it and no route reaches into it, through a link or
@@ -428,6 +432,8 @@ docker exec -it cairn /cairn user delete guest@example.com
   makes the link work again.
 - A shared folder is opened as a scope of its own, so a symlink inside it reaches only what is beneath that folder,
   never its siblings in the creator's scope.
+- The path of a share link passes no symlink, on any part of it: a share link cannot be made on one, and one whose
+  path becomes one stops working.
 - `hits` counts openings of the public page (each answer of `info`); downloads are not counted.
 - Expired shares are removed lazily, on the next write to the shares table. Deleting a user deletes their shares.
 - Share ids are bearer secrets: they are never logged.
@@ -449,7 +455,7 @@ docker exec -it cairn /cairn user delete guest@example.com
   item itself cannot be renamed, moved or deleted by the recipient; a write grant on a single file changes its
   contents only (text save, upload with replace). A granted folder is opened as a scope of its own, so nothing
   outside it is reachable, symlinks included; a granted file is reached through its folder, limited to that one
-  name.
+  name. As with a share link, the granted path passes no symlink.
 - Deletes inside a grant always go to the trash. The recipient never deletes permanently: the API refuses
   `permanent: true` through a grant, and when the item cannot go to the trash the delete is refused with the
   reason.
@@ -481,7 +487,8 @@ docker exec -it cairn /cairn user delete guest@example.com
   without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
   trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says
   to rename it.
-- Each entry is a row in `trash`: id, its trash folder, its original path, name, kind, size, who deleted it, when,
+- Each entry is a row in `trash`: id, its trash folder, its original path (where it really lay, even when the delete
+  came through a symlink, so who may see and restore it follows the real folder), name, kind, size, who deleted it, when,
   and when it goes. The row is written before the rename, so a crash leaves at most a row without a file, which
   reconciliation drops; files in a trash folder that no row names are counted, logged and left alone. Cairn
   never removes anything it did not put in the trash.

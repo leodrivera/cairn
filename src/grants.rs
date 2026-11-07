@@ -217,13 +217,14 @@ pub fn live(
         scope.with_fallback()
     } else {
         scope
-    };
+    }
+    .no_links();
     let fd = scope.open(&rel, rustix::fs::OFlags::PATH).ok()?;
     let st = rustix::fs::fstat(&fd).ok()?;
     let folder = rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory;
     let target = if folder {
         GrantTarget::Folder {
-            scope: scope.sub(&rel).ok()?,
+            scope: scope.sub(&rel).ok()?.follow_links(),
             base: row.path.clone(),
         }
     } else {

@@ -131,7 +131,7 @@ impl FromRequestParts<AppState> for FileUser {
         }
         let scope =
             Scope::new(&state.config.root, &user.scope, state.reserved()).map_err(|e| match e {
-                FsError::NotFound | FsError::NotAFolder => ApiError::new(
+                FsError::NotFound | FsError::NotAFolder | FsError::Outside => ApiError::new(
                     StatusCode::NOT_FOUND,
                     "scope_missing",
                     "Your folder does not exist on the server. Ask an admin to check your scope.",

@@ -716,7 +716,7 @@ async fn trash_folder_appears_whole() {
 }
 
 #[tokio::test]
-async fn scope_linked_outside_root_gets_no_trash() {
+async fn scope_that_is_a_link_is_missing() {
     let (h, dir) = harness_with_root(&[]);
     let root = dir.path().join("srv");
     let elsewhere = dir.path().join("elsewhere");
@@ -725,10 +725,59 @@ async fn scope_linked_outside_root_gets_no_trash() {
     h.add_user_scoped("bob@example.com", PW, "/out", ALL);
     let c = h.login("bob@example.com", PW).await;
     let res = delete(&h, &c, &["a.txt"], None).await;
-    // Its mount top would lie outside the server root: no trash there, a permanent delete is offered instead.
-    assert_eq!(res.json["failed"][0]["error"], "other_disk", "{}", res.json);
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::NOT_FOUND, "scope_missing")
+    );
     assert!(elsewhere.join("a.txt").exists());
-    assert!(!elsewhere.join(".cairn-trash").exists());
-    assert!(!dir.path().join(".cairn-trash").exists());
     assert_eq!(rows(&h), 0);
+}
+
+/// Ana (scope `/`) deletes through a link in Bo's folder; the file itself lies outside Bo's reach.
+async fn deleted_through_a_link(h: &Harness, root: &std::path::Path) -> (String, String, String) {
+    put(root, "team/hr/pay.txt", "pay");
+    put(root, "team/bo/own.txt", "own");
+    std::os::unix::fs::symlink("../hr", root.join("team/bo/link")).unwrap();
+    h.add_user_scoped("ana@example.com", PW, "/", ALL);
+    h.add_user_scoped("bo@example.com", PW, "/team/bo", ALL);
+    let ana = h.login("ana@example.com", PW).await;
+    let bo = h.login("bo@example.com", PW).await;
+    let res = delete(h, &ana, &["team/bo/link/pay.txt"], None).await;
+    assert_eq!(rows(h), 1, "{}", res.json);
+    let id = trash_list(h, &ana).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (ana, bo, id)
+}
+
+#[tokio::test]
+async fn entry_belongs_to_the_folder_the_file_was_in() {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let (ana, bo, id) = deleted_through_a_link(&h, &root).await;
+    assert!(trash_list(&h, &bo).await.is_empty());
+    let res = restore(&h, &bo, &[&id]).await;
+    assert_eq!(res.json["restored"], json!([]), "{}", res.json);
+    assert_eq!(rows(&h), 1);
+    let res = restore(&h, &ana, &[&id]).await;
+    assert_eq!(rows(&h), 0, "{}", res.json);
+    assert_eq!(
+        std::fs::read_to_string(root.join("team/hr/pay.txt")).unwrap(),
+        "pay"
+    );
+}
+
+#[tokio::test]
+async fn entry_of_another_folder_cannot_be_deleted_for_good() {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let (_, bo, id) = deleted_through_a_link(&h, &root).await;
+    let res = Req::delete("/api/trash")
+        .cookie(&bo)
+        .json(json!({ "ids": [id] }))
+        .send(&h.app)
+        .await;
+    assert_ne!(res.json["deleted"], 1, "{}", res.json);
+    assert_eq!(rows(&h), 1);
 }

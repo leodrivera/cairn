@@ -49,11 +49,14 @@ pub const TRASH_NAME: &str = ".cairn-trash";
 enum Resolve {
     /// Linux 5.6 and later: `openat2` keeps every lookup beneath the scope, even through symlinks.
     Openat2,
+    /// `openat2` that refuses every link, for a path someone else may change: see `Scope::no_links`.
+    NoLinks,
     /// Older kernels: walk one folder at a time with `O_NOFOLLOW`, refusing every symlink.
     Fallback,
 }
 
 const RESOLVE: ResolveFlags = ResolveFlags::BENEATH.union(ResolveFlags::NO_MAGICLINKS);
+const NO_LINKS: ResolveFlags = RESOLVE.union(ResolveFlags::NO_SYMLINKS);
 
 fn openat2_available(fd: &OwnedFd) -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
@@ -82,21 +85,45 @@ fn fd_path(fd: &OwnedFd) -> std::io::Result<PathBuf> {
     ))
 }
 
+const FOLDER: OFlags = OFlags::DIRECTORY
+    .union(OFlags::RDONLY)
+    .union(OFlags::CLOEXEC);
+
+/// The folder a stored path names, reached from `base` through real folders only.
+fn open_stored(
+    base: OwnedFd,
+    rel: &RelPath,
+    reserved: Reserved,
+    mode: Resolve,
+) -> Result<OwnedFd, FsError> {
+    match mode {
+        Resolve::Fallback => Scope {
+            root: base,
+            reserved,
+            mode,
+        }
+        .open_walk(rel, FOLDER, Mode::empty()),
+        Resolve::Openat2 | Resolve::NoLinks => Ok(rustix::fs::openat2(
+            &base,
+            rel.to_os(),
+            FOLDER,
+            Mode::empty(),
+            NO_LINKS,
+        )?),
+    }
+}
+
 impl Scope {
     /// `scope` is the user's folder as stored, like `/photos`; it was validated when it was saved.
     pub fn new(server_root: &Path, scope: &str, reserved: Reserved) -> Result<Scope, FsError> {
-        let path = server_root.join(scope.trim_start_matches('/'));
-        let root = rustix::fs::openat(
-            CWD,
-            &path,
-            OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )?;
-        let mode = if openat2_available(&root) {
+        let base = rustix::fs::openat(CWD, server_root, FOLDER, Mode::empty())?;
+        let rel = RelPath::parse(scope)?;
+        let mode = if openat2_available(&base) {
             Resolve::Openat2
         } else {
             Resolve::Fallback
         };
+        let root = open_stored(base, &rel, reserved.clone(), mode)?;
         Ok(Scope {
             root,
             reserved,
@@ -110,6 +137,24 @@ impl Scope {
             mode: Resolve::Fallback,
             ..self
         }
+    }
+
+    /// The same folder, where no path may pass a link at all. For the stored path of a share link or a grant.
+    pub fn no_links(self) -> Scope {
+        let mode = match self.mode {
+            Resolve::Fallback => Resolve::Fallback,
+            Resolve::Openat2 | Resolve::NoLinks => Resolve::NoLinks,
+        };
+        Scope { mode, ..self }
+    }
+
+    /// Links inside the folder work again, always beneath it.
+    pub fn follow_links(self) -> Scope {
+        let mode = match self.mode {
+            Resolve::Fallback => Resolve::Fallback,
+            Resolve::Openat2 | Resolve::NoLinks => Resolve::Openat2,
+        };
+        Scope { mode, ..self }
     }
 
     fn open_raw(&self, path: &RelPath, flags: OFlags) -> Result<OwnedFd, FsError> {
@@ -127,6 +172,13 @@ impl Scope {
                 flags,
                 mode,
                 RESOLVE,
+            )?),
+            Resolve::NoLinks => Ok(rustix::fs::openat2(
+                &self.root,
+                path.to_os(),
+                flags,
+                mode,
+                NO_LINKS,
             )?),
             Resolve::Fallback => self.open_walk(path, flags, mode),
         }
@@ -232,6 +284,15 @@ impl Scope {
         })
     }
 
+    /// Where an opened folder really lies beneath this scope, whatever links led to it.
+    pub fn real_path(&self, dir: &OwnedFd) -> Result<RelPath, FsError> {
+        let (dir, base) = (fd_path(dir)?, fd_path(&self.root)?);
+        let rel = dir.strip_prefix(&base).map_err(|_| FsError::Outside)?;
+        rel.iter().try_fold(RelPath::parse("")?, |path, seg| {
+            path.join_bytes(seg.as_bytes())
+        })
+    }
+
     /// The parent folder and the final name, for `*at` calls that act on the name itself (never its link target).
     pub fn parent(&self, path: &RelPath) -> Result<(OwnedFd, OsString), FsError> {
         let (Some(parent), Some(name)) = (path.parent(), path.name_bytes()) else {
@@ -262,6 +323,13 @@ impl Scope {
     /// Whether `path`, a symlink, resolves to something inside the scope.
     pub fn link_inside(&self, path: &RelPath) -> bool {
         self.open(path, OFlags::PATH).is_ok()
+    }
+
+    /// Whether the link at `path` resolves outside the scope. A link that leads nowhere does not, a loop of links
+    /// counts as leaving, and where links are not followed at all none can lead anywhere.
+    pub fn link_leaves(&self, path: &RelPath) -> bool {
+        matches!(self.mode, Resolve::Openat2)
+            && matches!(self.open(path, OFlags::PATH), Err(FsError::Outside))
     }
 
     /// Used and total bytes of the filesystem holding the scope.
@@ -361,6 +429,101 @@ mod tests {
     fn scopes_with(t: &Tree, reserved: Reserved) -> [Scope; 2] {
         let open = || Scope::new(t.dir.path(), "/a", reserved.clone()).unwrap();
         [open(), open().with_fallback()]
+    }
+
+    #[test]
+    fn stored_scope_never_passes_a_link() {
+        let t = tree();
+        let root = t.dir.path();
+        symlink("a", root.join("to-a")).unwrap();
+        std::fs::create_dir_all(root.join("via")).unwrap();
+        symlink("../a", root.join("via/link")).unwrap();
+        for stored in ["/to-a", "/via/link", "/via/link/sub", "/a/up"] {
+            assert!(
+                Scope::new(root, stored, Reserved::default()).is_err(),
+                "{stored}"
+            );
+        }
+        assert!(Scope::new(root, "/a/sub", Reserved::default()).is_ok());
+        assert!(Scope::new(root, "/", Reserved::default()).is_ok());
+    }
+
+    #[test]
+    fn the_server_root_itself_may_be_a_link() {
+        let t = tree();
+        let holder = tempfile::tempdir().unwrap();
+        let root = holder.path().join("root");
+        symlink(t.dir.path(), &root).unwrap();
+        assert!(Scope::new(&root, "/", Reserved::default()).is_ok());
+        assert!(Scope::new(&root, "/a/sub", Reserved::default()).is_ok());
+    }
+
+    #[test]
+    fn stored_scope_never_passes_a_link_on_older_kernels() {
+        let t = tree();
+        let root = t.dir.path();
+        symlink("a", root.join("to-a")).unwrap();
+        let open = |stored: &str| {
+            let rel = RelPath::parse(stored).unwrap();
+            let base = rustix::fs::openat(CWD, root, FOLDER, Mode::empty()).unwrap();
+            open_stored(base, &rel, Reserved::default(), Resolve::Fallback)
+        };
+        assert!(matches!(open("/to-a"), Err(FsError::NotAFolder)));
+        assert!(matches!(open("/to-a/sub"), Err(FsError::Outside)));
+        assert!(open("/a/sub").is_ok());
+        assert!(open("/").is_ok());
+    }
+
+    #[test]
+    fn strict_scope_follows_no_link_and_a_scope_below_it_does() {
+        let t = tree();
+        let a = t.dir.path().join("a");
+        symlink("sub", a.join("dir")).unwrap();
+        for s in scopes(&t) {
+            let strict = s.no_links();
+            assert!(matches!(
+                strict.open(&p("in"), OFlags::RDONLY),
+                Err(FsError::Outside)
+            ));
+            assert!(matches!(
+                strict.open(&p("dir/g.txt"), OFlags::RDONLY),
+                Err(FsError::Outside)
+            ));
+            assert!(strict.open(&p("sub/g.txt"), OFlags::RDONLY).is_ok());
+            assert!(strict.sub(&p("dir")).is_err());
+        }
+        std::fs::write(a.join("sub/h.txt"), "h").unwrap();
+        symlink("h.txt", a.join("sub/to-h")).unwrap();
+        let [modern, _] = scopes(&t);
+        let inner = modern.no_links().sub(&p("sub")).unwrap().follow_links();
+        assert!(inner.open(&p("to-h"), OFlags::RDONLY).is_ok());
+    }
+
+    #[test]
+    fn a_link_leaves_only_when_it_resolves_outside() {
+        let t = tree();
+        let a = t.dir.path().join("a");
+        symlink("missing", a.join("dangling")).unwrap();
+        let [modern, old] = scopes(&t);
+        assert!(modern.link_leaves(&p("up")));
+        assert!(modern.link_leaves(&p("abs")));
+        assert!(!modern.link_leaves(&p("in")));
+        assert!(!modern.link_leaves(&p("dangling")));
+        // Without openat2 no link is ever followed, so none can lead anywhere.
+        assert!(!old.link_leaves(&p("up")));
+    }
+
+    #[test]
+    fn real_path_is_where_a_folder_lies_beneath_the_scope() {
+        let t = tree();
+        let [modern, _] = scopes(&t);
+        symlink("sub", t.dir.path().join("a/dir")).unwrap();
+        for path in ["sub", "dir"] {
+            let dir = modern.open_dir(&p(path)).unwrap();
+            assert_eq!(modern.real_path(&dir).unwrap().to_string(), "sub");
+        }
+        let root = modern.open_dir(&p("")).unwrap();
+        assert!(modern.real_path(&root).unwrap().is_root());
     }
 
     fn id_of_path(p: &std::path::Path) -> (u64, u64) {

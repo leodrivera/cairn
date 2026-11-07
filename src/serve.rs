@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -10,6 +11,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 
 use crate::config::{CaptchaConfig, CaptchaVendor, Config};
 use crate::http::{AppState, router};
@@ -121,7 +123,12 @@ async fn serve(config: Config, db: crate::db::Db) -> ExitCode {
     }
     state.oidc.spawn_retry();
     let app = router(state);
-    serve_on(listener, app, Limits::DEFAULT, stop_signal()).await;
+    let open_files = rustix::process::getrlimit(rustix::process::Resource::Nofile).current;
+    let limits = Limits {
+        max_connections: connection_cap(open_files.unwrap_or(u64::MAX)),
+        ..Limits::DEFAULT
+    };
+    serve_on(listener, app, limits, stop_signal()).await;
     tracing::info!(event = "shutdown");
     ExitCode::SUCCESS
 }
@@ -133,6 +140,8 @@ pub struct Limits {
     pub header_read: Duration,
     /// After the stop signal, open requests get this long to finish; then Cairn exits anyway.
     pub grace: Duration,
+    /// Connections served at once. Past this they wait in the listen queue until one closes.
+    pub max_connections: usize,
 }
 
 impl Limits {
@@ -140,7 +149,15 @@ impl Limits {
     pub const DEFAULT: Limits = Limits {
         header_read: Duration::from_secs(10),
         grace: Duration::from_secs(3),
+        max_connections: 512,
     };
+}
+
+/// `Limits::DEFAULT`'s cap, or a third of what the process may have open: a download holds its socket and its file,
+/// and the database and logs need some too.
+pub fn connection_cap(open_files: u64) -> usize {
+    let third = usize::try_from(open_files / 3).unwrap_or(usize::MAX);
+    third.clamp(1, Limits::DEFAULT.max_connections)
 }
 
 /// The router, with the connection's peer address on every request.
@@ -171,8 +188,13 @@ pub async fn serve_on(
     stop: impl Future<Output = ()>,
 ) {
     let graceful = GracefulShutdown::new();
+    let places = Arc::new(Semaphore::new(limits.max_connections));
     let mut stop = std::pin::pin!(stop);
     loop {
+        let place = tokio::select! {
+            place = places.clone().acquire_owned() => place.expect("the semaphore is never closed"),
+            () = &mut stop => break,
+        };
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, peer) = match accepted {
@@ -191,6 +213,7 @@ pub async fn serve_on(
                 let conn = graceful.watch(conn);
                 tokio::spawn(async move {
                     let _ = conn.await;
+                    drop(place);
                 });
             }
             () = &mut stop => break,
@@ -258,7 +281,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let limits = Limits {
             header_read: Duration::from_millis(200),
-            grace: Duration::from_secs(3),
+            ..Limits::DEFAULT
         };
         tokio::spawn(serve_on(
             listener,
@@ -277,6 +300,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_cap_follows_the_open_file_limit() {
+        assert_eq!(connection_cap(1_048_576), 512);
+        assert_eq!(connection_cap(1024), 341);
+        assert_eq!(connection_cap(64), 21);
+        assert_eq!(connection_cap(1), 1);
+    }
+
+    #[tokio::test]
+    async fn past_the_cap_a_connection_waits_for_a_free_place() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let limits = Limits {
+            header_read: Duration::from_secs(30),
+            max_connections: 2,
+            ..Limits::DEFAULT
+        };
+        tokio::spawn(serve_on(
+            listener,
+            axum::Router::new(),
+            limits,
+            std::future::pending(),
+        ));
+
+        let first = half_sent_request(addr).await;
+        let _second = half_sent_request(addr).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut third = TcpStream::connect(addr).await.unwrap();
+        third
+            .write_all(b"GET / HTTP/1.0\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reply = [0u8; 16];
+        let wait = Duration::from_millis(300);
+        let early = tokio::time::timeout(wait, third.read(&mut reply)).await;
+        assert!(early.is_err(), "answered past the cap");
+
+        drop(first);
+        let late = tokio::time::timeout(Duration::from_secs(2), third.read(&mut reply)).await;
+        assert!(late.is_ok(), "no answer after a place came free");
+    }
+
+    #[tokio::test]
+    async fn an_idle_connection_gives_its_place_back() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let limits = Limits {
+            header_read: Duration::from_millis(200),
+            ..Limits::DEFAULT
+        };
+        tokio::spawn(serve_on(
+            listener,
+            axum::Router::new(),
+            limits,
+            std::future::pending(),
+        ));
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        let closed =
+            tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut buf)).await;
+        assert!(closed.is_ok(), "kept open 2 s after a 200 ms limit");
+    }
+
     #[tokio::test]
     async fn shutdown_has_a_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -284,6 +375,7 @@ mod tests {
         let limits = Limits {
             header_read: Duration::from_secs(30),
             grace: Duration::from_millis(200),
+            ..Limits::DEFAULT
         };
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(serve_on(listener, axum::Router::new(), limits, async {

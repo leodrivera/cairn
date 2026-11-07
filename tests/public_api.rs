@@ -797,3 +797,16 @@ async fn a_link_cannot_be_made_on_a_symlink() {
         .await;
     assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
 }
+
+#[tokio::test]
+async fn link_password_body_has_its_own_small_limit() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let sized = |n: usize| {
+        Req::post(&format!("/s/{id}/unlock"))
+            .json(json!({ "password": "x".repeat(n) }))
+            .send(&f.h.app)
+    };
+    assert_eq!(sized(70 * 1024).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(sized(60 * 1024).await.status, StatusCode::FORBIDDEN);
+}

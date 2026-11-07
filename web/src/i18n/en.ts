@@ -125,6 +125,7 @@ export const en = {
   "error.holds_mount": "{name} has another disk mounted inside. Unmount it first.",
   "error.trash_denied": "The trash cannot be made here: Cairn may not write to the top of this disk. Ask an admin, or delete permanently.",
   "error.restore_other_disk": "{name} cannot be restored: its folder is now on another disk.",
+  "error.body_timeout": "The request took too long to arrive. Try again.",
   "error.is_link": "This name is a link. Use the file it points to.",
   "error.trash_absent": "This item's disk is not connected, so it cannot be deleted now. Connect the disk, then try again.",
   "error.trash_off": "The trash is off on this server, so this delete cannot be undone.",

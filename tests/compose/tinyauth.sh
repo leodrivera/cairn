@@ -5,6 +5,10 @@ provider_listed() { # name
   tcurl "$FILES/api/config" | jq -e --arg n "$1" 'any(.providers[]; .name == $n)'
 }
 
+keycloak_ready() {
+  tcurl -f -o /dev/null https://id.example.com/realms/cairn/.well-known/openid-configuration
+}
+
 # Follows a sign-in button through the provider's login form as <email>; prints the last URL.
 sso_flow() { # start-path email jar
   local start=$1 email=$2 jar=$3 page action last
@@ -66,6 +70,26 @@ broker_sign_out() {
     | jq -e '.next == "https://auth.example.com/logout"'
 }
 
+# Tinyauth passes on the address the provider reports, verified or not, so the install guide makes that the
+# operator's job. If this check starts failing, Tinyauth changed: review that line of the guide.
+broker_passes_on_an_unverified_address() {
+  local jar=$WORK/unverified.jar last
+  docker exec cairn /cairn user add "Unverified" unverified@example.com || return 1
+  last=$(sso_flow /auth/oauth/keycloak unverified@example.com "$jar") || return 1
+  [[ $last == "$FILES/" ]] || { echo "ended at $last"; return 1; }
+  tcurl -b "$jar" "$FILES/api/me" | jq -e '.user.email == "unverified@example.com"'
+}
+
+# A signed-in Tinyauth user who adds their own Remote-Email stays who they are: the proxy replaces the header.
+client_remote_email_is_replaced() {
+  local jar=$WORK/own.jar last
+  docker exec cairn /cairn user add "Stranger" stranger@example.com || return 1
+  last=$(sso_flow /auth/oauth/keycloak stranger@example.com "$jar") || return 1
+  [[ $last == "$FILES/" ]] || { echo "ended at $last"; return 1; }
+  tcurl -c "$jar" -b "$jar" -o /dev/null -H 'Remote-Email: admin@example.com' "$FILES/auth/sso"
+  tcurl -b "$jar" "$FILES/api/me" | jq -e '.user.email == "stranger@example.com"'
+}
+
 run_tinyauth() {
   ca || { check ca false; return; }
   export CAIRN_TEST_CA=$WORK/ca CAIRN_TEST_REALM=$TESTS/keycloak/realm.json
@@ -80,11 +104,14 @@ run_tinyauth() {
   # The broker may have been unreachable at the first fetch; its buttons come back 20 s later.
   check broker_button wait_for 25 provider_listed Keycloak
   check readme_admin_command admin_created
+  check keycloak_ready wait_for 60 keycloak_ready
   check broker_sign_in broker_sign_in
   check no_account no_account /auth/oauth/keycloak
   check forged_remote_email_refused forged_remote_email_refused
   check sso_path_variant_not_behind_broker sso_path_variant_not_behind_broker
   check broker_sign_out broker_sign_out
+  check broker_passes_on_an_unverified_address broker_passes_on_an_unverified_address
+  check client_remote_email_is_replaced client_remote_email_is_replaced
   down tinyauth
   ADDONS=()
 }

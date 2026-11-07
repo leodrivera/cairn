@@ -1,6 +1,6 @@
 //! Sign-in and profile: `/api/config`, `/api/auth/login`, `/api/auth/logout`, `/api/me`, `/api/me/password`.
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -14,14 +14,17 @@ use crate::auth::session::{self, Method};
 use crate::http::client::Client;
 use crate::http::current_user::{CurrentUser, MaybeUser, clear_cookie, set_cookie};
 use crate::http::error::ApiError;
-use crate::http::json::{StrictJson, some};
+use crate::http::json::{ANONYMOUS_BODY, StrictJson, some};
 use crate::http::{AppState, sso_routes};
 use crate::users::{self, UserPatch};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/config", get(config))
-        .route("/auth/login", post(login))
+        .route(
+            "/auth/login",
+            post(login).layer(DefaultBodyLimit::max(ANONYMOUS_BODY)),
+        )
         .route("/auth/logout", post(logout))
         .route("/me", get(me).patch(patch_me))
         .route("/me/password", put(change_password))
@@ -114,18 +117,20 @@ async fn login(
         return Err(ApiError::too_many(wait));
     }
     if let Some(captcha) = &s.captcha {
-        // An answer costs a call to the vendor, so it counts before that call; an accepted one is given back.
+        // An answer costs a call to the vendor, so it counts before that call. One accepted, or one the vendor never
+        // judged because it could not be reached, is given back.
         let answered = b.captcha_token.as_deref().is_some_and(|t| !t.is_empty());
         if answered && let Some(wait) = s.limiters.captcha.try_count(client.ip, "", now) {
             tracing::warn!(event = "http.rate_limited", route = "captcha", ip = %client.ip, email = %typed);
             return Err(ApiError::too_many(wait));
         }
-        if let Err(f) = captcha.verify(b.captcha_token.as_deref(), client.ip).await {
+        let verdict = captcha.verify(b.captcha_token.as_deref(), client.ip).await;
+        if answered && matches!(verdict, Ok(()) | Err(CaptchaFailure::Unreachable)) {
+            s.limiters.captcha.undo(client.ip, "");
+        }
+        if let Err(f) = verdict {
             tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
             return Err(captcha_error(f));
-        }
-        if answered {
-            s.limiters.captcha.undo(client.ip, "");
         }
     }
     let found = match &email {

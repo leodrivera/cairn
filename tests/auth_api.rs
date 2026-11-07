@@ -706,3 +706,32 @@ async fn accepted_captcha_answers_do_not_count() {
         assert_eq!(res.status, StatusCode::OK, "{}", res.json);
     }
 }
+
+#[tokio::test]
+async fn sign_in_body_has_its_own_small_limit() {
+    let h = harness(&[]);
+    let sized = |n: usize| {
+        let body = json!({ "email": "ana@example.com", "password": "x".repeat(n), "keep": false });
+        Req::post("/api/auth/login").json(body).send(&h.app)
+    };
+    assert_eq!(sized(70 * 1024).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(sized(60 * 1024).await.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vendor_outage_does_not_count_against_anyone() {
+    // Bound and closed at once: nothing answers on this port.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let h = harness(CAPTCHA_ON).with_captcha_url(format!("http://127.0.0.1:{port}/verify"));
+    for n in 0..31 {
+        let body = json!({
+            "email": format!("user{n}@example.com"), "password": PW, "keep": false, "captchaToken": "tok"
+        });
+        let res = Req::post("/api/auth/login").json(body).send(&h.app).await;
+        assert_ne!(res.status, StatusCode::TOO_MANY_REQUESTS, "try {n}");
+    }
+}

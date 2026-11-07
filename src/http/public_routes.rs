@@ -21,7 +21,7 @@ use crate::http::client::Client;
 use crate::http::csrf;
 use crate::http::error::ApiError;
 use crate::http::files_routes::{blocking, serve_file, serve_zip};
-use crate::http::json::StrictJson;
+use crate::http::json::{ANONYMOUS_BODY, StrictJson};
 use crate::http::sso_routes::not_found;
 use crate::shares::{self, Live, Target};
 
@@ -31,7 +31,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
     // The one state change here: like every POST under /api it needs X-Cairn, and a small body.
     let unlock_route = post(unlock)
         .route_layer(middleware::from_fn_with_state(state, csrf::require_header))
-        .route_layer(DefaultBodyLimit::max(1 << 20));
+        .route_layer(DefaultBodyLimit::max(ANONYMOUS_BODY));
     Router::new()
         .route("/s/{id}", page(get(app_page)))
         .route("/s/{id}/info", page(get(info)))

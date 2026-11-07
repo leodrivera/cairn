@@ -244,7 +244,7 @@ store is needed; a restart clears them, which is acceptable.
 | --- | --- |
 | Failed sign-ins per IP | 10 per 15 min |
 | Failed sign-ins per e-mail | 5 per 15 min; a success clears it |
-| Refused CAPTCHA answers per IP | 30 per 15 min; an accepted one does not count, and neither does an empty one |
+| Refused CAPTCHA answers per IP | 30 per 15 min; an accepted or empty one does not count, nor one the vendor never answered |
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
@@ -256,6 +256,11 @@ Over a limit Cairn does not check the password at all: it answers `429` with `Re
 same step as the limit check, so tries sent at the same moment cannot all slip past; a right password gives its try
 back, so only failures count. On the OAuth and OIDC starts and on ZIP downloads, which are page navigations, the
 `429` body is a plain-text sentence. The limits are fixed; there is no switch to turn them off.
+
+Cairn serves at most 512 connections at once, or a third of what the process may have open if that is less; past that a
+connection waits in the listen queue. A JSON body must arrive in full within 30 s, or the request ends with
+`408 body_timeout`. Uploads and text saves have no such time limit. A body is at most 1 MiB, and 64 KiB on the routes
+open to anyone (sign-in and link passwords); past that the answer is `413 too_large`.
 
 They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to
 the proxy's network. Without it every request seems to come from the proxy: one person mistyping blocks sign-in

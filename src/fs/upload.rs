@@ -102,6 +102,8 @@ pub async fn upload(
         }
         file.write_all(&chunk).await?;
     }
+    // Writes run in the background: only this reports a failed last write, and `into_std` would drop that error.
+    file.flush().await?;
     let file = file.into_std().await;
     if let Some(old) = &existing {
         keep_owner_and_mode(&file, old)?;
@@ -223,6 +225,43 @@ mod tests {
         let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert!(left.is_empty(), "{left:?}");
         assert_eq!(rows(&db), 0);
+    }
+
+    /// Runs only inside `failed_last_write_keeps_the_original`, under its file size limit.
+    #[tokio::test]
+    #[ignore = "started by failed_last_write_keeps_the_original"]
+    async fn replace_past_the_file_size_limit() {
+        let (dir, scope, db) = setup();
+        let target = dir.path().join("note.txt");
+        std::fs::write(&target, "old").unwrap();
+        let body = axum::body::Body::from(vec![b'x'; 64 * 1024]);
+        let path = RelPath::parse("note.txt").unwrap();
+        let result = upload(&scope, db.clone(), &path, body, None, true, 0).await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(rows(&db), 0);
+    }
+
+    /// The size limit makes the last write fail for real, on any filesystem and with no privileges. The ignored
+    /// SIGXFSZ survives `exec`, so that write answers EFBIG instead of ending the process.
+    #[test]
+    fn failed_last_write_keeps_the_original() {
+        let test = std::env::current_exe().unwrap();
+        let out = std::process::Command::new("sh")
+            .args(["-c", "trap '' XFSZ; ulimit -f 8; exec \"$0\" \"$@\""])
+            .arg(test)
+            .args([
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "fs::upload::tests::replace_past_the_file_size_limit",
+            ])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let errors = String::from_utf8_lossy(&out.stderr);
+        assert!(text.contains("1 passed"), "{text}{errors}");
     }
 
     #[test]

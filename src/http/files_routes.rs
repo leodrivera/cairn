@@ -284,7 +284,7 @@ pub(crate) async fn serve_file(
     use rustix::fs::{FileType, OFlags};
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-    use crate::fs::raw::{ByteRange, encode_filename, etag, parse_range};
+    use crate::fs::raw::{ByteRange, encode_filename, etag, http_date, parse_range};
 
     let name = path
         .name_lossy()
@@ -301,12 +301,10 @@ pub(crate) async fn serve_file(
     .await?;
     let size = st.st_size as u64;
     let tag = etag(&st);
-    let modified =
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(st.st_mtime.max(0) as u64);
     let disposition = if attachment { "attachment" } else { "inline" };
     let common = [
         (header::ETAG, tag.clone()),
-        (header::LAST_MODIFIED, httpdate::fmt_http_date(modified)),
+        (header::LAST_MODIFIED, http_date(st.st_mtime)),
         (header::ACCEPT_RANGES, "bytes".to_string()),
         (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
         (

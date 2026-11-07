@@ -102,12 +102,17 @@ different setups:
   GitHub, are reachable only through the broker.
 
 Both may be on at the same time; the sign-in page then shows one button per provider from both lists. Whatever the
-route, the outcome is the same: a verified e-mail address, matched to an existing user.
+route, the outcome is the same: a verified e-mail address, matched to an existing user. Cairn checks that itself on
+the OIDC route (`email_verified`). On the broker route it cannot: the broker's providers must report verified
+addresses only, and the proxy must set `Remote-Email` and `Remote-Name` from the broker alone, dropping any copy a
+client sent. A request with more than one `Remote-Email` is refused.
 
 ### 4.1 Identity
 
 - The **e-mail** is the account. It is what a person types in the password form and what the broker or OIDC
-  provider reports. Unique, trimmed and compared lower-cased. A user also has a display **name**, shown in the UI.
+  provider reports. Unique, trimmed and compared lower-cased. An address from an OIDC provider must match as it came,
+  apart from ASCII case and spaces around it: one that matches only through Unicode folding is refused. A user also
+  has a display **name**, shown in the UI.
 - A password is optional. A user without one signs in only through `oauth` or `oidc`. With neither of those
   enabled, a user without a password cannot sign in, so the Users screen and `cairn user add` require one.
 - Nobody changes their own e-mail. An admin changing someone's e-mail hands the account (shares, preferences) to
@@ -239,6 +244,7 @@ store is needed; a restart clears them, which is acceptable.
 | --- | --- |
 | Failed sign-ins per IP | 10 per 15 min |
 | Failed sign-ins per e-mail | 5 per 15 min; a success clears it |
+| Refused CAPTCHA answers per IP | 30 per 15 min; an accepted one does not count, and neither does an empty one |
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |

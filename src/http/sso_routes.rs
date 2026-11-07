@@ -223,7 +223,10 @@ pub(crate) async fn finish(
     method: Method,
     provider: Option<&str>,
 ) -> Response {
-    let Some(email) = users::normalize_email(email) else {
+    // A provider vouches for the address as it sent it, so nothing but ASCII case and spaces may change on the way to
+    // an account. The broker's header is ASCII already.
+    let exact = method != Method::Oidc || users::normalizes_plainly(email);
+    let Some(email) = users::normalize_email(email).filter(|_| exact) else {
         match method {
             Method::Oidc => {
                 tracing::warn!(event = "auth.oidc_failed", provider = provider.unwrap_or(""), ip = %client.ip, reason = "email_invalid")
@@ -295,6 +298,10 @@ async fn sso(
     let sent = headers.get("x-auth-secret");
     if !sent.is_some_and(|v| broker.secret.matches(v.as_bytes())) {
         tracing::warn!(event = "auth.proxy_secret_mismatch", ip = %client.ip, secret_sent = sent.is_some());
+        return failed(&s, client, previous);
+    }
+    if headers.get_all("remote-email").iter().count() > 1 {
+        tracing::warn!(event = "auth.sso_failed", ip = %client.ip, reason = "several_emails");
         return failed(&s, client, previous);
     }
     let text = |name: &str| {

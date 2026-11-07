@@ -585,3 +585,35 @@ async fn two_tabs() {
     let res = callback(&h, &param(&first, "state"), &format!("{a}; {b}")).await;
     assert_eq!(res.header("location"), "/");
 }
+
+#[tokio::test]
+async fn address_that_only_folds_into_an_account_is_refused() {
+    let idp = FakeIdp::start(ISSUER).await;
+    let h = ready(&idp, &[]).await;
+    h.add_user("kate@example.com", None, false);
+    h.add_user("kate@kernel.example", None, false);
+    h.add_user("\u{e5}sa@example.com", None, false);
+    for email in [
+        "\u{212A}ate@example.com",
+        "kate@\u{212A}ernel.example",
+        "kate@example.com\u{A0}",
+        "\u{A0}kate@example.com",
+        "\u{212B}sa@example.com",
+    ] {
+        idp.set_claims(json!({ "email": email }));
+        no_session(&sign_in(&h, &idp).await);
+    }
+}
+
+#[tokio::test]
+async fn ascii_case_and_spaces_still_match() {
+    let idp = FakeIdp::start(ISSUER).await;
+    let h = ready(&idp, &[]).await;
+    h.add_user("ana@example.com", None, false);
+    for email in ["ANA@Example.COM", " ana@example.com "] {
+        idp.set_claims(json!({ "email": email }));
+        let res = sign_in(&h, &idp).await;
+        let set = cookie_named(&res, "cairn_session").unwrap_or_default();
+        assert!(!set.is_empty() && !set.contains("Max-Age=0"), "{email}");
+    }
+}

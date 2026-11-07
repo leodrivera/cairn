@@ -118,6 +118,11 @@ pub fn normalize_email(raw: &str) -> Option<String> {
     ok.then_some(email)
 }
 
+/// Whether `normalize_email` changes `raw` only by trimming ASCII spaces and lower-casing ASCII letters.
+pub fn normalizes_plainly(raw: &str) -> bool {
+    normalize_email(raw).is_some_and(|email| email == raw.trim_ascii().to_ascii_lowercase())
+}
+
 fn clean_name(raw: &str) -> Result<String, UserError> {
     let name = raw.trim();
     if name.is_empty() || name.chars().count() > 200 {

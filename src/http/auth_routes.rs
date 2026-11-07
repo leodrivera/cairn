@@ -113,11 +113,20 @@ async fn login(
         tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %typed);
         return Err(ApiError::too_many(wait));
     }
-    if let Some(captcha) = &s.captcha
-        && let Err(f) = captcha.verify(b.captcha_token.as_deref(), client.ip).await
-    {
-        tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
-        return Err(captcha_error(f));
+    if let Some(captcha) = &s.captcha {
+        // An answer costs a call to the vendor, so it counts before that call; an accepted one is given back.
+        let answered = b.captcha_token.as_deref().is_some_and(|t| !t.is_empty());
+        if answered && let Some(wait) = s.limiters.captcha.try_count(client.ip, "", now) {
+            tracing::warn!(event = "http.rate_limited", route = "captcha", ip = %client.ip, email = %typed);
+            return Err(ApiError::too_many(wait));
+        }
+        if let Err(f) = captcha.verify(b.captcha_token.as_deref(), client.ip).await {
+            tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
+            return Err(captcha_error(f));
+        }
+        if answered {
+            s.limiters.captcha.undo(client.ip, "");
+        }
     }
     let found = match &email {
         Some(e) => users::by_email(&s.db, e)?,

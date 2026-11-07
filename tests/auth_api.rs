@@ -676,3 +676,33 @@ async fn password_change_yields_to_a_removal_that_landed_first() {
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.json);
     assert_eq!(stored_hash(&h, "ana@example.com"), None);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_captcha_answers_are_limited_per_address() {
+    let url = fake_vendor(r#"{"success":false}"#).await;
+    let h = harness(CAPTCHA_ON).with_captcha_url(url);
+    let attempt = |n: u32| {
+        let body = json!({
+            "email": format!("user{n}@example.com"), "password": PW, "keep": false, "captchaToken": "tok"
+        });
+        Req::post("/api/auth/login").json(body).send(&h.app)
+    };
+    for n in 0..30 {
+        assert_eq!(attempt(n).await.status, StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(attempt(30).await.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accepted_captcha_answers_do_not_count() {
+    let url = fake_vendor(r#"{"success":true,"hostname":"files.example.com"}"#).await;
+    let h = harness(CAPTCHA_ON).with_captcha_url(url);
+    h.add_user("ana@example.com", Some(PW), false);
+    for _ in 0..31 {
+        let body = json!({
+            "email": "ana@example.com", "password": PW, "keep": false, "captchaToken": "tok"
+        });
+        let res = Req::post("/api/auth/login").json(body).send(&h.app).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    }
+}

@@ -109,6 +109,9 @@ Connect, such as GitHub.
   `CAIRN_OAUTH_SECRET` both come from `CAIRN_SSO_SECRET` in `.env`, at least 32 characters.
 - At your OAuth provider, the redirect URL is `https://auth.example.com/api/oauth/callback/<id>`, where `<id>` is the
   provider's name in Tinyauth's variables (`keycloak` in the example).
+- Cairn trusts the address Tinyauth passes on, so configure only providers that report verified addresses.
+- With another proxy, set `Remote-Email` and `Remote-Name` on `/auth/sso` from the broker's answer alone and drop any
+  copy the client sent. Cairn refuses a request with more than one `Remote-Email`.
 - Tinyauth never creates Cairn users. Someone the provider vouches for without an account sees "No account for
   ... Ask the person who runs this server to add you." Add them on the Users screen first, with or without a
   password.
@@ -123,7 +126,8 @@ reads `CAIRN_OIDC_X_ISSUER`, `CAIRN_OIDC_X_CLIENT_ID`, `CAIRN_OIDC_X_CLIENT_SECR
 - Register `https://files.example.com/auth/oidc/<id>/callback` as the redirect URI at the provider
   (`<id>` is `google` in the example).
 - The issuer must be `https`.
-- The provider must report a verified e-mail address; Cairn refuses an unverified one.
+- The provider must report a verified e-mail address; Cairn refuses an unverified one. The address must match the
+  user's as it comes, apart from ASCII case.
 
 Cairn reads both secret files as uid 10001:
 

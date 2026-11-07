@@ -1467,3 +1467,38 @@ async fn zip_form_cross_site_fetch_metadata_refused() {
     assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(res.code(), "csrf");
 }
+
+#[tokio::test]
+async fn pipe_answers_at_once() {
+    let (h, dir) = harness_with_root(&[]);
+    let pipe = dir.path().join("srv/pipe");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &pipe,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o644),
+        0,
+    )
+    .unwrap();
+    h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let read = Req::get("/api/raw/pipe").cookie(&c).send(&h.app);
+    let res = tokio::time::timeout(std::time::Duration::from_secs(5), read).await;
+    // Opened by a writer, a stuck reader lets go, so a failure here cannot hang the test's runtime.
+    let _writer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&pipe)
+        .unwrap();
+    assert_eq!(res.expect("no answer").status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn socket_answers_404() {
+    let (h, dir) = harness_with_root(&[]);
+    let _socket = std::os::unix::net::UnixListener::bind(dir.path().join("srv/sock")).unwrap();
+    h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let res = Req::get("/api/raw/sock").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}

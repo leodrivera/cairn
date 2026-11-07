@@ -266,7 +266,12 @@ async fn raw(
     ))
 }
 
-async fn zip(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<Response, ApiError> {
+async fn zip(
+    State(s): State<AppState>,
+    client: Client,
+    at: At,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     let live = live(&s, &at.id, &headers).await?;
     if !live.row.download {
         return Err(ApiError::new(
@@ -280,5 +285,7 @@ async fn zip(State(s): State<AppState>, at: At, headers: HeaderMap) -> Result<Re
     };
     let path = RelPath::parse(&at.path)?;
     let name = link_name(&live.row.path).unwrap_or_else(|| "files".into());
-    Ok(private(serve_zip(scope, path, None, &name).await?))
+    Ok(private(
+        serve_zip(&s.zips, client, scope, path, None, &name).await?,
+    ))
 }

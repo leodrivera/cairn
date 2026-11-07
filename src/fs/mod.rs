@@ -64,6 +64,8 @@ impl From<std::io::Error> for FsError {
         match e.raw_os_error() {
             Some(code) if code == rustix::io::Errno::NOENT.raw_os_error() => FsError::NotFound,
             Some(code) if code == rustix::io::Errno::EXIST.raw_os_error() => FsError::Exists,
+            // Opening a socket: it is in the folder, but it is nothing a client can read.
+            Some(code) if code == rustix::io::Errno::NXIO.raw_os_error() => FsError::NotFound,
             Some(code) if code == rustix::io::Errno::NOTDIR.raw_os_error() => FsError::NotAFolder,
             Some(code) if code == rustix::io::Errno::ISDIR.raw_os_error() => FsError::IsAFolder,
             // From openat2 with RESOLVE_BENEATH: the path left the scope.

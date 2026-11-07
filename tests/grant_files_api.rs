@@ -723,3 +723,26 @@ async fn trash_from_hides_owner_path() {
     owner.sort();
     assert_eq!(owner, vec!["/team/sub", "/team/sub/deep"]);
 }
+
+#[tokio::test]
+async fn zip_through_a_grant_counts_the_real_client() {
+    let w = world(&[]).await;
+    let id = give(&w, "team", "read").await;
+    let peer = "203.0.113.9".parse().unwrap();
+    let _held: Vec<_> = (0..cairn::fs::zip::MAX_ZIPS_PER_CLIENT)
+        .map(|_| w.h.state.zips.take(peer).unwrap())
+        .collect();
+    let url = format!("/api/g/{id}/zip");
+    let res = Req::get(&url)
+        .cookie(&w.bob)
+        .peer("203.0.113.9:4000")
+        .send(&w.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    let res = Req::get(&url)
+        .cookie(&w.bob)
+        .peer("198.51.100.7:4000")
+        .send(&w.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+}

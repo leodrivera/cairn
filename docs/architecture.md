@@ -242,17 +242,20 @@ store is needed; a restart clears them, which is acceptable.
 | Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 | E-mails without an account asked for when sharing with people | 20 per 15 min per user; the whole request is refused and nothing from it is saved |
+| ZIP downloads running at once | 16 on the server, 4 per IP (an IPv6 address counts by its /64) |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
 `http.rate_limited`. A sign-in, link-password or current-password try counts before the password is checked, in the
 same step as the limit check, so tries sent at the same moment cannot all slip past; a right password gives its try
-back, so only failures count. On the OAuth and OIDC starts, which are page navigations, the `429` body is a
-plain-text sentence. The limits are fixed; there is no switch to turn them off.
+back, so only failures count. On the OAuth and OIDC starts and on ZIP downloads, which are page navigations, the
+`429` body is a plain-text sentence. The limits are fixed; there is no switch to turn them off.
 
 They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to
 the proxy's network. Without it every request seems to come from the proxy: one person mistyping blocks sign-in
 for everyone for 15 minutes, Fail2ban would ban the proxy, and the session cookie loses `Secure`. Cairn logs
-`http.forwarded_ignored` once when it sees `X-Forwarded-For` from a proxy it does not trust.
+`http.forwarded_ignored` once when it sees `X-Forwarded-For` from a proxy it does not trust. Several
+`X-Forwarded-For` lines count as one list, and Cairn reads it from the right, so what a trusted proxy added is always
+seen.
 
 **Fail2ban.** Count only `401` on `POST /api/auth/login` (the `auth.login_failed` log line) and keep Cairn out of
 generic 401/403 jails. Use `maxretry` between 6 and 10 and a `findtime` of at least 15 minutes. A person mistyping
@@ -321,7 +324,7 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
 | Action | Route | Permission |
 | --- | --- | --- |
 | List folder | `GET /api/files/{path}` | read |
-| Download file | `GET /api/raw/{path}` (supports `Range`, `If-None-Match`) | read |
+| Download file | `GET /api/raw/{path}` (supports `Range`, `If-None-Match`; a pipe, socket or device answers `404`) | read |
 | Download folder | `GET /api/zip/{path}` (streamed ZIP, store only, no compression) | read |
 | Download chosen items | `POST /api/zip/{path}` with a form body `item=<name>&item=<name>` (1 to 1000 names inside that folder) | read |
 | Upload | `PUT /api/upload/{path}` | write |
@@ -343,6 +346,9 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
   extension only (no file sniffing). For admins the listing also carries `space`, the used and total bytes of the
   disk that holds the scope.
 - Search is a filter of the open folder's listing, in the browser. There is no search index and no server search.
+- A ZIP is written as it is read. If the client takes nothing for 60 s, the download ends with an error, and the
+  same happens at any failure once it has started, so a short archive never looks complete. A paused ZIP download
+  cannot resume. Past the limits of section 4.6 the answer is `429`.
 - Several chosen items download as one ZIP. The list travels in a form body, not the URL, so a long selection never
   hits a proxy's URL length limit. The form is a plain HTML form, so the browser saves the archive as it streams.
 - Uploads stream to a temporary file next to the target (`.cairn-upload-<random>`), then rename into place.

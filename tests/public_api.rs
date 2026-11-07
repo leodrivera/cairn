@@ -765,3 +765,22 @@ async fn parallel_tries_cannot_pass_the_limit() {
         .count();
     assert_eq!((checked, limited), (10, 5));
 }
+
+#[tokio::test]
+async fn zip_past_the_limit_answers_429_in_plain_text() {
+    let f = fx().await;
+    let id = f
+        .share(json!({ "path": "/photos", "download": true }))
+        .await;
+    let me = "127.0.0.1".parse().unwrap();
+    let held: Vec<_> = (0..cairn::fs::zip::MAX_ZIPS_PER_CLIENT)
+        .map(|_| f.h.state.zips.take(me).unwrap())
+        .collect();
+    let res = f.get(&format!("/s/{id}/zip")).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(res.header("retry-after"), "60");
+    assert!(res.header("content-type").starts_with("text/plain"));
+    assert_eq!(f.get(&format!("/s/{id}/info")).await.status, StatusCode::OK);
+    drop(held);
+    assert_eq!(f.get(&format!("/s/{id}/zip")).await.status, StatusCode::OK);
+}

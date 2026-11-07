@@ -53,6 +53,8 @@ pub enum FsError {
     TrashOff,
     /// A text save or a replacing upload met a link.
     IsALink,
+    /// The trash folder holding an entry cannot be reached now, as when its disk is not connected.
+    TrashAbsent,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
     TrashTaken(String),
     Io(std::io::Error),
@@ -232,6 +234,12 @@ impl From<FsError> for ApiError {
                 S::BAD_REQUEST,
                 "is_link",
                 "This name is a link. Use the file it points to.".into(),
+            ),
+            FsError::TrashAbsent => (
+                S::CONFLICT,
+                "trash_absent",
+                "This item's disk is not connected, so it cannot be deleted now. Connect the disk, then try again."
+                    .into(),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

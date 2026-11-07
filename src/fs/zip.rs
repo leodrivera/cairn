@@ -1,6 +1,6 @@
 //! Folders as ZIP: store only (no compression, so the low-end PC does not spend CPU), streamed as it is written.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::net::IpAddr;
@@ -156,11 +156,15 @@ pub fn stream_zip(
         });
         let added = match &items {
             None => add_folder(&mut zip, &scope, &path, "", 0),
-            Some(items) => items.iter().try_for_each(|item| {
-                let st = scope.stat(item)?;
-                let entry = item.name_lossy().unwrap_or_default().into_owned();
-                add_child(&mut zip, &scope, item, &st, &entry, 0)
-            }),
+            Some(items) => {
+                let mut used = HashSet::new();
+                items.iter().try_for_each(|item| {
+                    let st = scope.stat(item)?;
+                    let raw = item.name_bytes().unwrap_or_default();
+                    let entry = entry_name(raw, &st, &mut used);
+                    add_child(&mut zip, &scope, item, &st, &entry, 0)
+                })
+            }
         };
         let result = added.and_then(|()| {
             let mut out = zip.finish().map_err(zip_err)?;
@@ -197,6 +201,27 @@ fn chunks(
     })
 }
 
+/// The name of an entry in its folder. Names on disk are bytes and may hold what a ZIP path should not, and two can read
+/// the same once made readable, which a ZIP refuses. Each one gets a readable, unique name; `used` is that folder's.
+fn entry_name(raw: &[u8], st: &rustix::fs::Stat, used: &mut HashSet<String>) -> String {
+    let name: String = String::from_utf8_lossy(raw)
+        .chars()
+        .map(|c| if c == '\\' || c.is_control() { '_' } else { c })
+        .collect();
+    if used.insert(name.clone()) {
+        return name;
+    }
+    let folder = FileType::from_raw_mode(st.st_mode) == FileType::Directory;
+    let (stem, extension) = match name.rfind('.') {
+        Some(dot) if dot > 0 && !folder => name.split_at(dot),
+        _ => (name.as_str(), ""),
+    };
+    (2..)
+        .map(|n| format!("{stem} ({n}){extension}"))
+        .find(|candidate| used.insert(candidate.clone()))
+        .expect("the numbers do not run out")
+}
+
 fn add_folder<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
     scope: &Scope,
@@ -216,6 +241,7 @@ fn add_folder<W: Write + std::io::Seek>(
         }
     }
     names.sort();
+    let mut used = HashSet::new();
     for raw in names {
         let Ok(child) = rel.join_bytes(&raw) else {
             continue;
@@ -224,7 +250,7 @@ fn add_folder<W: Write + std::io::Seek>(
         if scope.is_reserved((st.st_dev, st.st_ino)) {
             continue;
         }
-        let entry = format!("{prefix}{}", String::from_utf8_lossy(&raw));
+        let entry = format!("{prefix}{}", entry_name(&raw, &st, &mut used));
         add_child(zip, scope, &child, &st, &entry, depth)?;
     }
     Ok(())

@@ -128,6 +128,7 @@ export const ptBR: Table = {
   "error.trash_denied": "A lixeira não pode ser criada aqui: o Cairn não tem permissão de escrita na pasta do topo. Fale com um admin ou exclua permanentemente.",
   "error.restore_other_disk": "{name} não pode ser restaurado: a pasta dele agora está em outro disco.",
   "error.is_link": "Este nome é um link. Use o arquivo para o qual ele aponta.",
+  "error.trash_absent": "O disco deste item não está conectado, então ele não pode ser excluído agora. Conecte o disco e tente de novo.",
   "error.trash_off": "A lixeira está desligada neste servidor, então esta exclusão não pode ser desfeita.",
   "error.trash_taken": "A lixeira desta pasta não pode ser usada: uma pasta .cairn-trash ali não foi criada pelo Cairn. Peça a um admin para renomeá-la.",
   "error.reserved": "Esse nome é reservado pelo Cairn. Escolha outro nome.",

@@ -86,7 +86,11 @@ export function parseRoute(pathname: string, search: string): Route {
   if (share) {
     const q = new URLSearchParams(search);
     const file = q.get("file");
-    return { name: "share", id: share[1], path: file ?? q.get("path") ?? "", file: file !== null };
+    const path = (file ?? q.get("path") ?? "").replace(/\/$/, "");
+    if (path !== "" && path.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
+      return { name: "missing" };
+    }
+    return { name: "share", id: share[1], path, file: file !== null };
   }
   if (pathname.startsWith("/settings/")) {
     const page = pathname.slice(10).replace(/\/$/, "") as SettingsPage;

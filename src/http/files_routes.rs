@@ -270,7 +270,13 @@ async fn raw_at(
 ) -> Result<axum::response::Response, ApiError> {
     fu.need(true, false)?;
     let path = fu.rel(&raw_path)?;
-    serve_file(fu.scope, path, &headers, q.download.is_some()).await
+    let mut res = serve_file(fu.scope, path, &headers, q.download.is_some()).await?;
+    // One URL answers each user from their own folder, so the browser must ask again before it reuses a copy.
+    res.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(res)
 }
 
 /// One file as a download: `Range`, `If-None-Match`, the strict CSP, inline or as an attachment.

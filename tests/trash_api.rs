@@ -781,3 +781,97 @@ async fn entry_of_another_folder_cannot_be_deleted_for_good() {
     assert_ne!(res.json["deleted"], 1, "{}", res.json);
     assert_eq!(rows(&h), 1);
 }
+
+/// `srv/vol` stands for a disk mounted inside the root, with `file.txt` in its trash.
+async fn disk_with_an_entry(mnt: u64) -> (Harness, tempfile::TempDir, String, String) {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    put(&root, "vol/file.txt", "f");
+    cairn::fs::mount::fake_mount_id(dir.path(), mnt);
+    cairn::fs::mount::fake_mount_id(&root, mnt + 1);
+    cairn::fs::mount::fake_mount_id(&root.join("vol"), mnt + 2);
+    let (c, _) = root_user(&h, &dir).await;
+    delete(&h, &c, &["vol/file.txt"], None).await;
+    let id = trash_list(&h, &c).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(root.join("vol/.cairn-trash").exists());
+    (h, dir, c, id)
+}
+
+async fn delete_for_good(h: &Harness, c: &str, id: &str) -> common::Res {
+    Req::delete("/api/trash")
+        .cookie(c)
+        .json(json!({ "ids": [id] }))
+        .send(&h.app)
+        .await
+}
+
+#[tokio::test]
+async fn entry_stays_while_its_disk_is_absent() {
+    let (h, dir, c, id) = disk_with_an_entry(9100).await;
+    let (vol, offline) = (dir.path().join("srv/vol"), dir.path().join("offline"));
+    // Unplugged: an empty folder on the root's own mount is left at the mount point.
+    std::fs::rename(&vol, &offline).unwrap();
+    std::fs::create_dir(&vol).unwrap();
+    cairn::fs::mount::fake_mount_id(&vol, 9101);
+
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(res.json["deleted"], 0, "{}", res.json);
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_absent",
+        "{}",
+        res.json
+    );
+    assert_eq!(rows(&h), 1);
+    let later = cairn::now() + 365 * 86_400;
+    assert_eq!(
+        cairn::trash::ops::purge(&h.state.trash, &h.state.db, later),
+        0
+    );
+    assert_eq!(rows(&h), 1);
+
+    std::fs::remove_dir(&vol).unwrap();
+    std::fs::rename(&offline, &vol).unwrap();
+    cairn::fs::mount::fake_mount_id(&vol, 9102);
+    assert_eq!(
+        cairn::trash::ops::purge(&h.state.trash, &h.state.db, later),
+        1
+    );
+    assert_eq!(rows(&h), 0);
+    assert_eq!(
+        std::fs::read_dir(vol.join(".cairn-trash")).unwrap().count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn entry_stays_when_another_disk_takes_the_place_of_its_own() {
+    let (h, dir, c, id) = disk_with_an_entry(9200).await;
+    // Mounted at the same place, with no trash folder: the entry's item is still on the disk that left.
+    std::fs::remove_dir_all(dir.path().join("srv/vol/.cairn-trash")).unwrap();
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_absent",
+        "{}",
+        res.json
+    );
+    assert_eq!(rows(&h), 1);
+}
+
+#[tokio::test]
+async fn trash_folder_removed_from_the_root_ends_its_entries() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "a.txt", "a");
+    delete(&h, &c, &["a.txt"], None).await;
+    let id = trash_list(&h, &c).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::fs::remove_dir_all(root.join(".cairn-trash")).unwrap();
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(res.json["deleted"], 1, "{}", res.json);
+    assert_eq!(rows(&h), 0);
+}

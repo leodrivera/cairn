@@ -6,6 +6,8 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use axum::http::StatusCode;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cairn::users::Perms;
 use common::{Harness, Req, enc, harness_with_root};
 use serde_json::{Value, json};
@@ -1655,6 +1657,81 @@ async fn replacing_upload_refuses_a_link() {
         std::fs::read_to_string(s.join("target.txt")).unwrap(),
         "old"
     );
+}
+
+#[tokio::test]
+async fn raw_answers_are_checked_with_the_server_before_reuse() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "alpha");
+    let res = Req::get("/api/raw/a.txt").cookie(&c).send(&h.app).await;
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+    let tag = res.header("etag").to_string();
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("if-none-match", &tag)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("range", "bytes=0-1")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+}
+
+fn raw_name(dir: &Path, bytes: &[u8]) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    dir.join(std::ffi::OsStr::from_bytes(bytes))
+}
+
+fn contains(body: &[u8], name: &str) -> bool {
+    body.windows(name.len()).any(|w| w == name.as_bytes())
+}
+
+#[tokio::test]
+async fn zip_keeps_names_that_read_the_same() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&raw_name(&s, b"a\xff.txt"), "one");
+    touch(&raw_name(&s, b"a\xfe.txt"), "two");
+    touch(&s.join("a\u{FFFD}.txt"), "three");
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    for name in ["a\u{FFFD}.txt", "a\u{FFFD} (2).txt", "a\u{FFFD} (3).txt"] {
+        assert!(contains(&res.body, name), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn zip_names_never_carry_a_backslash() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("..\\..\\up.txt"), "one");
+    touch(&s.join("a\\b.txt"), "two");
+    touch(&s.join("a_b.txt"), "three");
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(!res.body.contains(&b'\\'));
+    assert!(contains(&res.body, ".._.._up.txt"));
+    assert!(contains(&res.body, "a_b.txt"));
+    assert!(contains(&res.body, "a_b (2).txt"));
+}
+
+#[tokio::test]
+async fn zip_of_chosen_items_keeps_names_that_read_the_same() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&raw_name(&s, b"a\xff"), "one");
+    touch(&raw_name(&s, b"a\xfe"), "two");
+    let segment = |raw: &[u8]| enc(&format!("\0{}", URL_SAFE_NO_PAD.encode(raw)));
+    let form = format!("item={}&item={}", segment(b"a\xff"), segment(b"a\xfe"));
+    let res = zip_form("/api/zip", &form, &c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert!(contains(&res.body, "a\u{FFFD} (2)"));
 }
 
 #[tokio::test]

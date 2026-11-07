@@ -184,6 +184,16 @@ fn trash_scope(trashes: &Trashes, entry: &Entry) -> Result<Scope, FsError> {
     Scope::new(trashes.root(), &entry.trash_dir, Reserved::default())
 }
 
+/// Whether `entry`'s trash folder was removed from the server root, and the item with it. A mount says less: a folder
+/// missing there may mean another disk now sits at that place, with the item still on the one that left.
+fn trash_removed(trashes: &Trashes, entry: &Entry) -> bool {
+    entry.trash_dir == format!("/{}", crate::fs::scope::TRASH_NAME)
+        && matches!(
+            Scope::new(trashes.root(), &entry.trash_dir, Reserved::default()),
+            Err(FsError::NotFound)
+        )
+}
+
 /// `name (restored).ext` for files, `name (restored)` for folders; `n` above 1 adds the number.
 fn restored_name(name: &[u8], folder: bool, n: usize) -> Vec<u8> {
     let tag = if n == 1 {
@@ -268,10 +278,15 @@ pub fn remove(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> 
 }
 
 fn remove_held(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> {
-    match trash_scope(trashes, entry)
-        .and_then(|s| crate::fs::edit::remove(&s, &RelPath::parse(&entry.id)?))
-    {
-        Ok(()) | Err(FsError::NotFound) => {}
+    // Only inside a trash folder that can be reached does "not found" mean the item is gone. An absent folder, like an
+    // unplugged disk, still holds it: the row stays, so the deletion happens when the folder is back.
+    match trash_scope(trashes, entry) {
+        Ok(holder) => match crate::fs::edit::remove(&holder, &RelPath::parse(&entry.id)?) {
+            Ok(()) | Err(FsError::NotFound) => {}
+            Err(e) => return Err(e),
+        },
+        Err(FsError::NotFound) if trash_removed(trashes, entry) => {}
+        Err(FsError::NotFound) => return Err(FsError::TrashAbsent),
         Err(e) => return Err(e),
     }
     super::delete_row(db, &entry.id).map_err(db_err)?;

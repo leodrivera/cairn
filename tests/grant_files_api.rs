@@ -791,3 +791,11 @@ async fn links_inside_a_granted_folder_keep_working() {
     let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/in")).await;
     assert_eq!(res.body, b"alpha");
 }
+
+#[tokio::test]
+async fn raw_through_a_grant_is_checked_before_reuse() {
+    let w = world(&[]).await;
+    let id = give(&w, "team", "read").await;
+    let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/a.txt")).await;
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+}

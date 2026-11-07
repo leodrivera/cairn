@@ -353,6 +353,8 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
   extension only (no file sniffing). For admins the listing also carries `space`, the used and total bytes of the
   disk that holds the scope.
 - Search is a filter of the open folder's listing, in the browser. There is no search index and no server search.
+- Names inside a ZIP are readable and unique per folder: a backslash or control character becomes `_`, and names that
+  would read the same get ` (2)`, ` (3)` and so on.
 - A ZIP is written as it is read. If the client takes nothing for 60 s, the download ends with an error, and the
   same happens at any failure once it has started, so a short archive never looks complete. A paused ZIP download
   cannot resume. Past the limits of section 4.6 the answer is `429`.
@@ -498,6 +500,11 @@ docker exec -it cairn /cairn user delete guest@example.com
 - An entry whose date has come is gone from every list and cannot be restored, even before the hourly purge
   removes it. Reconciliation and the purge wait for moves in flight, so they never drop a row whose item is on its
   way into the trash.
+- While an entry's trash folder cannot be reached, as when its disk is not connected, a permanent delete answers
+  `409 trash_absent` and the purge logs `trash.purge_failed` each hour. The entry stays, and the item is removed once
+  the folder is back. A disk retired for good keeps logging each hour. Only a trash folder removed from the server
+  root's own mount ends its entries, at their next removal: on another mount Cairn cannot tell a removed folder from
+  a different disk at that place, so the entry stays.
 - Each entry keeps the removal date set when it was deleted: changing the days, or setting them to 0, affects later
   deletes only. With 0 nothing new enters; what is there stays until its date. Reconciliation and the purge run at
   start and every hour (`trash.purged` with a count).
@@ -593,8 +600,9 @@ backup) while it runs.
   adds the vendor's hosts to `script-src` and a `frame-src` (section 4.5).
 - Files served from `/api/raw` and `/s/` carry `X-Content-Type-Options: nosniff` and their own strict CSP
   (`default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox`), so an uploaded HTML or SVG file cannot
-  run script in Cairn's origin. Files and ZIPs from `/s/` also carry `Cache-Control: private, no-cache`, so a shared
-  cache never hands a password-protected file to someone without the cookie.
+  run script in Cairn's origin. Files from `/api/raw` and files and ZIPs from `/s/` also carry
+  `Cache-Control: private, no-cache`: one `/api/raw` URL answers each user from their own folder, and a shared cache
+  must never hand a password-protected file to someone without the cookie.
 - `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`. HSTS is left to the reverse proxy.
 - Request bodies other than uploads are capped at 1 MiB. JSON is parsed into fixed types; unknown fields are
   refused.

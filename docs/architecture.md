@@ -125,7 +125,8 @@ route, the outcome is the same: a verified e-mail address, matched to an existin
 3. Look up the user by e-mail. If there is no user or no password hash, verify against a fixed dummy hash anyway,
    so a wrong e-mail costs the same time as a wrong password.
 4. Wrong: `401` with "Wrong e-mail or password." The answer never says which one.
-5. Right: new session, cookie set, `200` with the public user.
+5. Right: new session, cookie set, `200` with the public user. The session is made only if the account still has
+   that address and that password hash, so a change that lands during the slow check wins and the answer is the `401`.
 
 Passwords: 8 to 256 characters, with at least one lowercase letter, one uppercase letter and one character that is
 not a letter or digit. The error says the whole rule: "The password needs at least 8 characters, with an uppercase
@@ -282,6 +283,8 @@ an internal URL.
 - "Keep me signed in" gives 30 days, sliding: the expiry moves forward when less than half is left. Without it the
   cookie has no `Max-Age` and the server row expires after 12 hours.
 - Changing a password, removing a permission, changing a scope or deleting a user ends that user's other sessions.
+  A change of your own password that meets a reset or removal by an admin yields to it and answers
+  `409 password_changed`.
 - Every state-changing request needs the `X-Cairn` header (any value). Browsers do not send custom headers
   cross-site without a CORS preflight, which Cairn never allows, so this plus `SameSite=Lax` stops CSRF without a
   token dance. The one `POST` that comes from a plain form, the ZIP of chosen items, changes nothing and needs proof

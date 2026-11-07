@@ -143,24 +143,30 @@ async fn login(
         tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason);
         return Err(wrong_credentials());
     };
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let session = session::create_verified(
+        &s.db,
+        user.id,
+        &user.email,
+        hash.as_deref().unwrap_or_default(),
+        b.keep,
+        &session::label_from_user_agent(ua),
+        now,
+    )?;
+    let Some(token) = session else {
+        // The password that matched was replaced or removed during the check: it is no longer right.
+        tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason = "bad_password");
+        return Err(wrong_credentials());
+    };
     s.limiters.login.undo(client.ip, &key);
     s.limiters.login.succeeded(&key);
     // The browser gets a new session; whatever it held before ends here.
     if let Some(old) = previous {
         session::delete(&s.db, &old.token)?;
     }
-    let ua = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let token = session::create(
-        &s.db,
-        user.id,
-        Method::Password,
-        b.keep,
-        &session::label_from_user_agent(ua),
-        now,
-    )?;
     tracing::info!(event = "auth.login", user = user.id, email = %user.email, ip = %client.ip, method = "password");
     Ok((
         [(header::SET_COOKIE, set_cookie(&token, b.keep, client.https))],
@@ -294,7 +300,7 @@ async fn change_password(
         tracing::warn!(event = "http.rate_limited", route = "me_password", user = user.id, ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
-    if b.current.chars().count() > 256 || !s.hasher.verify(b.current, Some(stored)).await {
+    if b.current.chars().count() > 256 || !s.hasher.verify(b.current, Some(stored.clone())).await {
         // 400, not 401: a slip inside the app must not feed Fail2ban.
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -312,7 +318,12 @@ async fn change_password(
     }
     limiter.succeeded(&key);
     let hash = s.hasher.hash(b.next).await;
-    users::set_password(&s.db, user.id, Some(hash))?;
+    if !users::replace_password(&s.db, user.id, &stored, &hash)? {
+        return Err(ApiError::conflict(
+            "password_changed",
+            "Your password was changed while this was saving. Sign in again.",
+        ));
+    }
     session::delete_for_user(&s.db, user.id, Some(&current.token))?;
     tracing::info!(event = "auth.password_changed", user = user.id);
     Ok(Json(json!({ "ok": true })))

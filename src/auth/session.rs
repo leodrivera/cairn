@@ -61,9 +61,7 @@ pub fn create(
     label: &str,
     now: i64,
 ) -> rusqlite::Result<String> {
-    let mut raw = [0u8; 32];
-    getrandom::fill(&mut raw).expect("system random source");
-    let token = URL_SAFE_NO_PAD.encode(raw);
+    let token = new_token();
     let expires = now + if keep { KEEP_SECS } else { SHORT_SECS };
     db.with(|c| {
         c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [now])?;
@@ -73,6 +71,48 @@ pub fn create(
         )
     })?;
     Ok(token)
+}
+
+fn new_token() -> String {
+    let mut raw = [0u8; 32];
+    getrandom::fill(&mut raw).expect("system random source");
+    URL_SAFE_NO_PAD.encode(raw)
+}
+
+/// Starts a password session, but only while the account still has the address and the hash the password was checked
+/// against: the check is slow, and the account can change meanwhile. One statement, so a change either comes first
+/// and nothing is made, or comes after and its purge of the user's sessions removes this one. `None` when nothing was
+/// made.
+pub fn create_verified(
+    db: &Db,
+    user_id: i64,
+    email: &str,
+    hash: &str,
+    keep: bool,
+    label: &str,
+    now: i64,
+) -> rusqlite::Result<Option<String>> {
+    let token = new_token();
+    let expires = now + if keep { KEEP_SECS } else { SHORT_SECS };
+    let made = db.with(|c| {
+        c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [now])?;
+        c.execute(
+            "INSERT INTO sessions (id, user_id, method, keep, label, created_at, expires_at)
+             SELECT ?1, id, ?2, ?3, ?4, ?5, ?6 FROM users WHERE id = ?7 AND email = ?8 AND password_hash = ?9",
+            params![
+                digest(&token),
+                Method::Password.as_str(),
+                keep,
+                label,
+                now,
+                expires,
+                user_id,
+                email,
+                hash
+            ],
+        )
+    })?;
+    Ok((made == 1).then_some(token))
 }
 
 pub fn lookup(db: &Db, token: &str, now: i64) -> rusqlite::Result<Option<Session>> {

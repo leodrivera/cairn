@@ -436,6 +436,7 @@ export const ptBR: Table = {
     "A senha precisa de pelo menos 8 caracteres, com uma letra maiúscula, uma minúscula e um caractere especial.",
   "error.wrong_credentials": "E-mail ou senha errados.",
   "error.wrong_password": "A senha atual está errada.",
+  "error.password_changed": "Sua senha foi alterada enquanto isto era salvo. Entre novamente.",
 
   "invalid.email": "Digite um e-mail válido.",
   "invalid.name": "O nome é obrigatório.",

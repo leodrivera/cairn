@@ -310,6 +310,18 @@ pub fn set_password(db: &Db, id: i64, hash: Option<String>) -> Result<(), UserEr
     }
 }
 
+/// Sets the password only if `verified` is still the stored hash, in one statement. `false` when it no longer is: a
+/// reset or a removal landed during the slow check, and it stands.
+pub fn replace_password(db: &Db, id: i64, verified: &str, hash: &str) -> Result<bool, UserError> {
+    let n = db.with(|c| {
+        c.execute(
+            "UPDATE users SET password_hash = ?3 WHERE id = ?1 AND password_hash = ?2",
+            params![id, verified, hash],
+        )
+    })?;
+    Ok(n == 1)
+}
+
 pub fn delete(db: &Db, id: i64) -> Result<(), UserError> {
     let outcome = db.with(|c| {
         immediate(c, || {

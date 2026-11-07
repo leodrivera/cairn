@@ -5,6 +5,8 @@ mod common;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use cairn::auth::session;
+use cairn::users;
 use common::{Req, harness};
 use serde_json::json;
 
@@ -560,4 +562,117 @@ async fn right_current_password_is_not_counted() {
         put("Nope123!").send(&h.app).await.status,
         StatusCode::TOO_MANY_REQUESTS
     );
+}
+
+/// What the owner or an admin does while a password check is on its way: the slow hash gives it time to land.
+async fn sign_in_during(h: &common::Harness, email: &str, write: impl FnOnce()) -> common::Res {
+    let login = Req::post("/api/auth/login")
+        .json(json!({ "email": email, "password": PW }))
+        .send(&h.app);
+    let change = async {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        write();
+    };
+    tokio::join!(login, change).0
+}
+
+async fn alive(h: &common::Harness, res: &common::Res) -> bool {
+    let Some(cookie) = res.cookie() else {
+        return false;
+    };
+    let me = Req::get("/api/me").cookie(&cookie).send(&h.app).await;
+    me.json["user"].is_object()
+}
+
+#[tokio::test]
+async fn sign_in_checked_against_an_old_password_gets_no_session() {
+    let h = harness(&[]);
+    let user = h.add_user("ana@example.com", Some(PW), false);
+    let res = sign_in_during(&h, "ana@example.com", || {
+        users::set_password(&h.state.db, user.id, Some("new hash".into())).unwrap();
+        session::delete_for_user(&h.state.db, user.id, None).unwrap();
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert!(!alive(&h, &res).await);
+}
+
+#[tokio::test]
+async fn sign_in_checked_against_a_removed_password_gets_no_session() {
+    let h = harness(&[]);
+    let user = h.add_user("ana@example.com", Some(PW), false);
+    let res = sign_in_during(&h, "ana@example.com", || {
+        users::set_password(&h.state.db, user.id, None).unwrap();
+        session::delete_for_user(&h.state.db, user.id, None).unwrap();
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert!(!alive(&h, &res).await);
+}
+
+#[tokio::test]
+async fn sign_in_checked_before_an_address_change_gets_no_session() {
+    let h = harness(&[]);
+    let user = h.add_user("ana@example.com", Some(PW), false);
+    let res = sign_in_during(&h, "ana@example.com", || {
+        let patch = users::UserPatch {
+            email: Some("bo@example.com".into()),
+            ..users::UserPatch::default()
+        };
+        users::update(&h.state.db, user.id, patch).unwrap();
+        session::delete_for_user(&h.state.db, user.id, None).unwrap();
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+}
+
+/// `write` lands while the change is hashing; the password it set must stay.
+async fn change_during(h: &common::Harness, cookie: &str, write: impl FnOnce()) -> common::Res {
+    let change = Req::put("/api/me/password")
+        .cookie(cookie)
+        .json(json!({ "current": PW, "next": "Newpass1!" }))
+        .send(&h.app);
+    let reset = async {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        write();
+    };
+    tokio::join!(change, reset).0
+}
+
+fn stored_hash(h: &common::Harness, email: &str) -> Option<String> {
+    users::by_email(&h.state.db, email).unwrap().unwrap().1
+}
+
+#[tokio::test]
+async fn password_change_yields_to_a_reset_that_landed_first() {
+    let h = harness(&[]);
+    let user = h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let res = change_during(&h, &c, || {
+        users::set_password(&h.state.db, user.id, Some("admin hash".into())).unwrap();
+    })
+    .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::CONFLICT, "password_changed"),
+        "{}",
+        res.json
+    );
+    assert_eq!(
+        stored_hash(&h, "ana@example.com").as_deref(),
+        Some("admin hash")
+    );
+}
+
+#[tokio::test]
+async fn password_change_yields_to_a_removal_that_landed_first() {
+    let h = harness(&[]);
+    let user = h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let res = change_during(&h, &c, || {
+        users::set_password(&h.state.db, user.id, None).unwrap();
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.json);
+    assert_eq!(stored_hash(&h, "ana@example.com"), None);
 }

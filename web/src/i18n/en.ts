@@ -434,6 +434,7 @@ export const en = {
     "The password needs at least 8 characters, with an uppercase letter, a lowercase letter and a special character.",
   "error.wrong_credentials": "Wrong e-mail or password.",
   "error.wrong_password": "The current password is wrong.",
+  "error.password_changed": "Your password was changed while this was saving. Sign in again.",
 
   "invalid.email": "Enter a valid e-mail address.",
   "invalid.name": "Name is required.",

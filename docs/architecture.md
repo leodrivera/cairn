@@ -102,12 +102,17 @@ different setups:
   GitHub, are reachable only through the broker.
 
 Both may be on at the same time; the sign-in page then shows one button per provider from both lists. Whatever the
-route, the outcome is the same: a verified e-mail address, matched to an existing user.
+route, the outcome is the same: a verified e-mail address, matched to an existing user. Cairn checks that itself on
+the OIDC route (`email_verified`). On the broker route it cannot: the broker's providers must report verified
+addresses only, and the proxy must set `Remote-Email` and `Remote-Name` from the broker alone, dropping any copy a
+client sent. A request with more than one `Remote-Email` is refused.
 
 ### 4.1 Identity
 
 - The **e-mail** is the account. It is what a person types in the password form and what the broker or OIDC
-  provider reports. Unique, trimmed and compared lower-cased. A user also has a display **name**, shown in the UI.
+  provider reports. Unique, trimmed and compared lower-cased. An address from an OIDC provider must match as it came,
+  apart from ASCII case and spaces around it: one that matches only through Unicode folding is refused. A user also
+  has a display **name**, shown in the UI.
 - A password is optional. A user without one signs in only through `oauth` or `oidc`. With neither of those
   enabled, a user without a password cannot sign in, so the Users screen and `cairn user add` require one.
 - Nobody changes their own e-mail. An admin changing someone's e-mail hands the account (shares, preferences) to
@@ -125,7 +130,8 @@ route, the outcome is the same: a verified e-mail address, matched to an existin
 3. Look up the user by e-mail. If there is no user or no password hash, verify against a fixed dummy hash anyway,
    so a wrong e-mail costs the same time as a wrong password.
 4. Wrong: `401` with "Wrong e-mail or password." The answer never says which one.
-5. Right: new session, cookie set, `200` with the public user.
+5. Right: new session, cookie set, `200` with the public user. The session is made only if the account still has
+   that address and that password hash, so a change that lands during the slow check wins and the answer is the `401`.
 
 Passwords: 8 to 256 characters, with at least one lowercase letter, one uppercase letter and one character that is
 not a letter or digit. The error says the whole rule: "The password needs at least 8 characters, with an uppercase
@@ -238,21 +244,30 @@ store is needed; a restart clears them, which is acceptable.
 | --- | --- |
 | Failed sign-ins per IP | 10 per 15 min |
 | Failed sign-ins per e-mail | 5 per 15 min; a success clears it |
+| Refused CAPTCHA answers per IP | 30 per 15 min; an accepted or empty one does not count, nor one the vendor never answered |
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password, per share and IP together | 10 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 | E-mails without an account asked for when sharing with people | 20 per 15 min per user; the whole request is refused and nothing from it is saved |
+| ZIP downloads running at once | 16 on the server, 4 per IP (an IPv6 address counts by its /64) |
 
 Over a limit Cairn does not check the password at all: it answers `429` with `Retry-After` and logs
 `http.rate_limited`. A sign-in, link-password or current-password try counts before the password is checked, in the
 same step as the limit check, so tries sent at the same moment cannot all slip past; a right password gives its try
-back, so only failures count. On the OAuth and OIDC starts, which are page navigations, the `429` body is a
-plain-text sentence. The limits are fixed; there is no switch to turn them off.
+back, so only failures count. On the OAuth and OIDC starts and on ZIP downloads, which are page navigations, the
+`429` body is a plain-text sentence. The limits are fixed; there is no switch to turn them off.
+
+Cairn serves at most 512 connections at once, or a third of what the process may have open if that is less; past that a
+connection waits in the listen queue. A JSON body must arrive in full within 30 s, or the request ends with
+`408 body_timeout`. Uploads and text saves have no such time limit. A body is at most 1 MiB, and 64 KiB on the routes
+open to anyone (sign-in and link passwords); past that the answer is `413 too_large`.
 
 They only work when Cairn sees each person's real address. Behind a reverse proxy, set `CAIRN_TRUSTED_PROXIES` to
 the proxy's network. Without it every request seems to come from the proxy: one person mistyping blocks sign-in
 for everyone for 15 minutes, Fail2ban would ban the proxy, and the session cookie loses `Secure`. Cairn logs
-`http.forwarded_ignored` once when it sees `X-Forwarded-For` from a proxy it does not trust.
+`http.forwarded_ignored` once when it sees `X-Forwarded-For` from a proxy it does not trust. Several
+`X-Forwarded-For` lines count as one list, and Cairn reads it from the right, so what a trusted proxy added is always
+seen.
 
 **Fail2ban.** Count only `401` on `POST /api/auth/login` (the `auth.login_failed` log line) and keep Cairn out of
 generic 401/403 jails. Use `maxretry` between 6 and 10 and a `findtime` of at least 15 minutes. A person mistyping
@@ -279,6 +294,8 @@ an internal URL.
 - "Keep me signed in" gives 30 days, sliding: the expiry moves forward when less than half is left. Without it the
   cookie has no `Max-Age` and the server row expires after 12 hours.
 - Changing a password, removing a permission, changing a scope or deleting a user ends that user's other sessions.
+  A change of your own password that meets a reset or removal by an admin yields to it and answers
+  `409 password_changed`.
 - Every state-changing request needs the `X-Cairn` header (any value). Browsers do not send custom headers
   cross-site without a CORS preflight, which Cairn never allows, so this plus `SameSite=Lax` stops CSRF without a
   token dance. The one `POST` that comes from a plain form, the ZIP of chosen items, changes nothing and needs proof
@@ -292,7 +309,9 @@ an internal URL.
 Every path from a client is relative to the user's scope. The server resolves it in one place, `resolve(scope, path)`:
 
 1. Reject NUL bytes, empty segments, `.` and `..` segments, and names longer than 255 bytes.
-2. Join to the scope folder, which is itself inside `CAIRN_ROOT`.
+2. Join to the scope folder, which is itself inside `CAIRN_ROOT`. It must be a real folder: a stored scope is opened
+   from the root without following any symlink, on any part of its path, and if one is there the user gets
+   `scope_missing`. To give someone a folder from elsewhere, use a bind mount.
 3. Open with `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` on Linux, so a symlink cannot lead out of the
    scope even if it is created between the check and the use. Where `openat2` is missing (kernel before 5.6),
    canonicalize and check the prefix, and refuse to follow symlinks at all.
@@ -309,7 +328,9 @@ accepts it, so these files can be opened, downloaded, renamed to a readable name
 contain NUL, so this never collides with one.
 
 Symlinks inside the scope that point inside the scope work. Symlinks that point outside are listed with a "link
-outside your folder" marker and cannot be opened.
+outside your folder" marker and cannot be opened. A relative link means something else in another folder, so moving
+or copying one to where it would lead outside the scope is refused; a folder is moved as it is, with its links. A
+replacing upload and a text save refuse a link (`400 is_link`): write to its target's own path.
 
 Trash folders (section 7.2) are reserved the same way as the data folder: every one of Cairn's `.cairn-trash`
 folders is refused by device and inode, so no listing shows it and no route reaches into it, through a link or
@@ -321,7 +342,7 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
 | Action | Route | Permission |
 | --- | --- | --- |
 | List folder | `GET /api/files/{path}` | read |
-| Download file | `GET /api/raw/{path}` (supports `Range`, `If-None-Match`) | read |
+| Download file | `GET /api/raw/{path}` (supports `Range`, `If-None-Match`; a pipe, socket or device answers `404`) | read |
 | Download folder | `GET /api/zip/{path}` (streamed ZIP, store only, no compression) | read |
 | Download chosen items | `POST /api/zip/{path}` with a form body `item=<name>&item=<name>` (1 to 1000 names inside that folder) | read |
 | Upload | `PUT /api/upload/{path}` | write |
@@ -343,6 +364,11 @@ it. Upload temporaries (`.cairn-upload-*`) are refused as names everywhere.
   extension only (no file sniffing). For admins the listing also carries `space`, the used and total bytes of the
   disk that holds the scope.
 - Search is a filter of the open folder's listing, in the browser. There is no search index and no server search.
+- Names inside a ZIP are readable and unique per folder: a backslash or control character becomes `_`, and names that
+  would read the same get ` (2)`, ` (3)` and so on.
+- A ZIP is written as it is read. If the client takes nothing for 60 s, the download ends with an error, and the
+  same happens at any failure once it has started, so a short archive never looks complete. A paused ZIP download
+  cannot resume. Past the limits of section 4.6 the answer is `429`.
 - Several chosen items download as one ZIP. The list travels in a form body, not the URL, so a long selection never
   hits a proxy's URL length limit. The form is a plain HTML form, so the browser saves the archive as it streams.
 - Uploads stream to a temporary file next to the target (`.cairn-upload-<random>`), then rename into place.
@@ -422,6 +448,8 @@ docker exec -it cairn /cairn user delete guest@example.com
   makes the link work again.
 - A shared folder is opened as a scope of its own, so a symlink inside it reaches only what is beneath that folder,
   never its siblings in the creator's scope.
+- The path of a share link passes no symlink, on any part of it: a share link cannot be made on one, and one whose
+  path becomes one stops working.
 - `hits` counts openings of the public page (each answer of `info`); downloads are not counted.
 - Expired shares are removed lazily, on the next write to the shares table. Deleting a user deletes their shares.
 - Share ids are bearer secrets: they are never logged.
@@ -443,7 +471,7 @@ docker exec -it cairn /cairn user delete guest@example.com
   item itself cannot be renamed, moved or deleted by the recipient; a write grant on a single file changes its
   contents only (text save, upload with replace). A granted folder is opened as a scope of its own, so nothing
   outside it is reachable, symlinks included; a granted file is reached through its folder, limited to that one
-  name.
+  name. As with a share link, the granted path passes no symlink.
 - Deletes inside a grant always go to the trash. The recipient never deletes permanently: the API refuses
   `permanent: true` through a grant, and when the item cannot go to the trash the delete is refused with the
   reason.
@@ -475,13 +503,19 @@ docker exec -it cairn /cairn user delete guest@example.com
   without that marker (a person's own folder, or one from another database) is never used, hidden or cleaned: the
   trash is off on that mount (`trash_taken`), startup logs `startup.trash_folder_taken`, and Server settings says
   to rename it.
-- Each entry is a row in `trash`: id, its trash folder, its original path, name, kind, size, who deleted it, when,
+- Each entry is a row in `trash`: id, its trash folder, its original path (where it really lay, even when the delete
+  came through a symlink, so who may see and restore it follows the real folder), name, kind, size, who deleted it, when,
   and when it goes. The row is written before the rename, so a crash leaves at most a row without a file, which
   reconciliation drops; files in a trash folder that no row names are counted, logged and left alone. Cairn
   never removes anything it did not put in the trash.
 - An entry whose date has come is gone from every list and cannot be restored, even before the hourly purge
   removes it. Reconciliation and the purge wait for moves in flight, so they never drop a row whose item is on its
   way into the trash.
+- While an entry's trash folder cannot be reached, as when its disk is not connected, a permanent delete answers
+  `409 trash_absent` and the purge logs `trash.purge_failed` each hour. The entry stays, and the item is removed once
+  the folder is back. A disk retired for good keeps logging each hour. Only a trash folder removed from the server
+  root's own mount ends its entries, at their next removal: on another mount Cairn cannot tell a removed folder from
+  a different disk at that place, so the entry stays.
 - Each entry keeps the removal date set when it was deleted: changing the days, or setting them to 0, affects later
   deletes only. With 0 nothing new enters; what is there stays until its date. Reconciliation and the purge run at
   start and every hour (`trash.purged` with a count).
@@ -577,8 +611,9 @@ backup) while it runs.
   adds the vendor's hosts to `script-src` and a `frame-src` (section 4.5).
 - Files served from `/api/raw` and `/s/` carry `X-Content-Type-Options: nosniff` and their own strict CSP
   (`default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; sandbox`), so an uploaded HTML or SVG file cannot
-  run script in Cairn's origin. Files and ZIPs from `/s/` also carry `Cache-Control: private, no-cache`, so a shared
-  cache never hands a password-protected file to someone without the cookie.
+  run script in Cairn's origin. Files from `/api/raw` and files and ZIPs from `/s/` also carry
+  `Cache-Control: private, no-cache`: one `/api/raw` URL answers each user from their own folder, and a shared cache
+  must never hand a password-protected file to someone without the cookie.
 - `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`. HSTS is left to the reverse proxy.
 - Request bodies other than uploads are capped at 1 MiB. JSON is parsed into fixed types; unknown fields are
   refused.

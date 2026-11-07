@@ -11,6 +11,7 @@ use crate::fs::path::RelPath;
 use crate::fs::scope::Scope;
 use crate::fs::{FsError, list};
 use crate::http::AppState;
+use crate::http::client::Client;
 use crate::http::current_user::CurrentUser;
 use crate::http::error::ApiError;
 use crate::users::User;
@@ -130,7 +131,7 @@ impl FromRequestParts<AppState> for FileUser {
         }
         let scope =
             Scope::new(&state.config.root, &user.scope, state.reserved()).map_err(|e| match e {
-                FsError::NotFound | FsError::NotAFolder => ApiError::new(
+                FsError::NotFound | FsError::NotAFolder | FsError::Outside => ApiError::new(
                     StatusCode::NOT_FOUND,
                     "scope_missing",
                     "Your folder does not exist on the server. Ask an admin to check your scope.",
@@ -269,7 +270,13 @@ async fn raw_at(
 ) -> Result<axum::response::Response, ApiError> {
     fu.need(true, false)?;
     let path = fu.rel(&raw_path)?;
-    serve_file(fu.scope, path, &headers, q.download.is_some()).await
+    let mut res = serve_file(fu.scope, path, &headers, q.download.is_some()).await?;
+    // One URL answers each user from their own folder, so the browser must ask again before it reuses a copy.
+    res.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(res)
 }
 
 /// One file as a download: `Range`, `If-None-Match`, the strict CSP, inline or as an attachment.
@@ -284,29 +291,30 @@ pub(crate) async fn serve_file(
     use rustix::fs::{FileType, OFlags};
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-    use crate::fs::raw::{ByteRange, encode_filename, etag, parse_range};
+    use crate::fs::raw::{ByteRange, encode_filename, etag, http_date, parse_range};
 
     let name = path
         .name_lossy()
         .map(|n| n.into_owned())
         .unwrap_or_else(|| "download".into());
     let (file, st) = blocking(move || {
-        let fd = scope.open(&path, OFlags::RDONLY)?;
+        // O_NONBLOCK: opening a pipe with no writer would otherwise wait, on a thread nothing can cancel, before its
+        // type could be checked. It changes nothing for a regular file.
+        let fd = scope.open(&path, OFlags::RDONLY | OFlags::NONBLOCK)?;
         let st = rustix::fs::fstat(&fd)?;
-        if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
-            return Err(FsError::IsAFolder);
+        match FileType::from_raw_mode(st.st_mode) {
+            FileType::RegularFile => Ok((std::fs::File::from(fd), st)),
+            FileType::Directory => Err(FsError::IsAFolder),
+            _ => Err(FsError::NotFound),
         }
-        Ok((std::fs::File::from(fd), st))
     })
     .await?;
     let size = st.st_size as u64;
     let tag = etag(&st);
-    let modified =
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(st.st_mtime.max(0) as u64);
     let disposition = if attachment { "attachment" } else { "inline" };
     let common = [
         (header::ETAG, tag.clone()),
-        (header::LAST_MODIFIED, httpdate::fmt_http_date(modified)),
+        (header::LAST_MODIFIED, http_date(st.st_mtime)),
         (header::ACCEPT_RANGES, "bytes".to_string()),
         (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
         (
@@ -629,34 +637,49 @@ async fn save_text_at(
     Ok(([(header::ETAG, tag.clone())], Json(json!({ "etag": tag }))).into_response())
 }
 
-async fn zip_root(fu: FileUser) -> Result<axum::response::Response, ApiError> {
-    zip_at(fu, String::new()).await
+async fn zip_root(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    client: Client,
+    fu: FileUser,
+) -> Result<axum::response::Response, ApiError> {
+    zip_at(s, client, fu, String::new()).await
 }
 
 async fn zip_path(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    client: Client,
     fu: FileUser,
     Path(raw_path): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
-    zip_at(fu, raw_path).await
+    zip_at(s, client, fu, raw_path).await
 }
 
-async fn zip_at(fu: FileUser, raw_path: String) -> Result<axum::response::Response, ApiError> {
-    zip_response(fu, raw_path, None).await
+async fn zip_at(
+    s: AppState,
+    client: Client,
+    fu: FileUser,
+    raw_path: String,
+) -> Result<axum::response::Response, ApiError> {
+    zip_response(s, client, fu, raw_path, None).await
 }
 
 async fn zip_root_items(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    client: Client,
     fu: FileUser,
     body: axum::body::Bytes,
 ) -> Result<axum::response::Response, ApiError> {
-    zip_response(fu, String::new(), Some(zip_items(&body)?)).await
+    zip_response(s, client, fu, String::new(), Some(zip_items(&body)?)).await
 }
 
 async fn zip_path_items(
+    axum::extract::State(s): axum::extract::State<AppState>,
+    client: Client,
     fu: FileUser,
     Path(raw_path): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<axum::response::Response, ApiError> {
-    zip_response(fu, raw_path, Some(zip_items(&body)?)).await
+    zip_response(s, client, fu, raw_path, Some(zip_items(&body)?)).await
 }
 
 /// Most items one ZIP of chosen items takes.
@@ -687,6 +710,8 @@ fn zip_items(body: &[u8]) -> Result<Vec<Vec<u8>>, ApiError> {
 }
 
 async fn zip_response(
+    s: AppState,
+    client: Client,
     fu: FileUser,
     raw_path: String,
     items: Option<Vec<Vec<u8>>>,
@@ -702,11 +727,13 @@ async fn zip_response(
             .unwrap_or_else(|| "files".into()),
         None => "files".into(),
     };
-    serve_zip(fu.scope, path, items, &root_name).await
+    serve_zip(&s.zips, client, fu.scope, path, items, &root_name).await
 }
 
 /// A folder, or chosen items in it, as a streamed ZIP. `root_name` names the archive of the scope's own folder.
 pub(crate) async fn serve_zip(
+    slots: &std::sync::Arc<crate::fs::zip::ZipSlots>,
+    client: Client,
     scope: Scope,
     path: RelPath,
     items: Option<Vec<Vec<u8>>>,
@@ -715,6 +742,22 @@ pub(crate) async fn serve_zip(
     use axum::http::header;
     use axum::response::IntoResponse;
 
+    let Some(slot) = slots.take(client.ip) else {
+        tracing::warn!(event = "http.rate_limited", route = "zip", ip = %client.ip);
+        // A download is a page navigation: the browser shows this sentence.
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                (header::RETRY_AFTER, "60".to_string()),
+            ],
+            "Too many downloads are running. Try again in a minute.",
+        )
+            .into_response());
+    };
     let name = match path.name_lossy() {
         Some(n) => format!("{n}.zip"),
         None => format!("{root_name}.zip"),
@@ -749,5 +792,6 @@ pub(crate) async fn serve_zip(
         ),
         (header::CONTENT_SECURITY_POLICY, RAW_CSP.to_string()),
     ];
-    Ok((headers, crate::fs::zip::stream_zip(scope, path, items)).into_response())
+    let body = crate::fs::zip::stream_zip(scope, path, items, slot, crate::fs::zip::SEND_WAIT);
+    Ok((headers, body).into_response())
 }

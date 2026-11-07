@@ -723,3 +723,79 @@ async fn trash_from_hides_owner_path() {
     owner.sort();
     assert_eq!(owner, vec!["/team/sub", "/team/sub/deep"]);
 }
+
+#[tokio::test]
+async fn zip_through_a_grant_counts_the_real_client() {
+    let w = world(&[]).await;
+    let id = give(&w, "team", "read").await;
+    let peer = "203.0.113.9".parse().unwrap();
+    let _held: Vec<_> = (0..cairn::fs::zip::MAX_ZIPS_PER_CLIENT)
+        .map(|_| w.h.state.zips.take(peer).unwrap())
+        .collect();
+    let url = format!("/api/g/{id}/zip");
+    let res = Req::get(&url)
+        .cookie(&w.bob)
+        .peer("203.0.113.9:4000")
+        .send(&w.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    let res = Req::get(&url)
+        .cookie(&w.bob)
+        .peer("198.51.100.7:4000")
+        .send(&w.h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_grant_cannot_be_made_on_a_symlink() {
+    let w = world(&[]).await;
+    let res = Req::post("/api/grants")
+        .cookie(&w.ana)
+        .json(json!({ "path": "team/up", "emails": ["bob@example.com"], "permission": "read" }))
+        .send(&w.h.app)
+        .await;
+    assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
+}
+
+#[tokio::test]
+async fn grant_replaced_by_a_symlink_is_gone() {
+    let w = world(&[]).await;
+    let root = w.root();
+    let folder = give(&w, "team/sub", "read").await;
+    let file = give(&w, "team/a.txt", "read").await;
+    let below = give(&w, "docs/notes.txt", "read").await;
+
+    std::fs::rename(root.join("team/sub"), root.join("team/sub-old")).unwrap();
+    symlink("../private", root.join("team/sub")).unwrap();
+    let res = get(&w, &w.bob, &format!("/api/g/{folder}/files")).await;
+    assert_eq!(res.code(), "grant_gone", "{}", res.json);
+
+    std::fs::remove_file(root.join("team/a.txt")).unwrap();
+    symlink("sub-old/b.txt", root.join("team/a.txt")).unwrap();
+    let res = get(&w, &w.bob, &format!("/api/g/{file}/raw/a.txt")).await;
+    assert_eq!(res.code(), "grant_gone", "{}", res.json);
+
+    std::fs::rename(root.join("docs"), root.join("docs-old")).unwrap();
+    symlink("private", root.join("docs")).unwrap();
+    std::fs::write(root.join("private/notes.txt"), "other").unwrap();
+    let res = get(&w, &w.bob, &format!("/api/g/{below}/raw/notes.txt")).await;
+    assert_eq!(res.code(), "grant_gone", "{}", res.json);
+}
+
+#[tokio::test]
+async fn links_inside_a_granted_folder_keep_working() {
+    let w = world(&[]).await;
+    symlink("a.txt", w.root().join("team/in")).unwrap();
+    let id = give(&w, "team", "read").await;
+    let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/in")).await;
+    assert_eq!(res.body, b"alpha");
+}
+
+#[tokio::test]
+async fn raw_through_a_grant_is_checked_before_reuse() {
+    let w = world(&[]).await;
+    let id = give(&w, "team", "read").await;
+    let res = get(&w, &w.bob, &format!("/api/g/{id}/raw/a.txt")).await;
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+}

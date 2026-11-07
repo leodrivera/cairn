@@ -52,6 +52,9 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
     {
         return Err(FsError::IntoItself);
     }
+    // A relative link means something else in another folder. It is checked where it lands, so only by being there.
+    let is_link = FileType::from_raw_mode(src_st.st_mode) == FileType::Symlink;
+    let leaves = || is_link && op != Op::Rename && scope.link_leaves(to);
     match op {
         Op::Rename | Op::Move => {
             match rustix::fs::renameat_with(
@@ -61,6 +64,17 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
                 dst.as_os_str(),
                 RenameFlags::NOREPLACE,
             ) {
+                Ok(()) if leaves() => {
+                    let back = rustix::fs::renameat_with(
+                        &dst_dir,
+                        dst.as_os_str(),
+                        &src_dir,
+                        src.as_os_str(),
+                        RenameFlags::NOREPLACE,
+                    );
+                    undone(back);
+                    Err(FsError::Outside)
+                }
                 Ok(()) => Ok(()),
                 Err(Errno::INVAL) => Err(FsError::IntoItself),
                 // Another filesystem (another mount inside the scope): copy, then remove the original, but only
@@ -73,15 +87,41 @@ pub fn apply(scope: &Scope, op: Op, from: &RelPath, to: &RelPath) -> Result<(), 
                             kept: true,
                         });
                     }
+                    if leaves() {
+                        undone(rustix::fs::unlinkat(
+                            &dst_dir,
+                            dst.as_os_str(),
+                            AtFlags::empty(),
+                        ));
+                        return Err(FsError::Outside);
+                    }
                     super::edit::remove(scope, from)
                 }
                 Err(e) => Err(e.into()),
             }
         }
         Op::Copy => match copy_tree(scope, from, &src_dir, &src, &dst_dir, &dst)? {
+            0 if leaves() => {
+                undone(rustix::fs::unlinkat(
+                    &dst_dir,
+                    dst.as_os_str(),
+                    AtFlags::empty(),
+                ));
+                Err(FsError::Skipped {
+                    count: 1,
+                    kept: false,
+                })
+            }
             0 => Ok(()),
             count => Err(FsError::Skipped { count, kept: false }),
         },
+    }
+}
+
+/// A refused link stays refused even if putting it back fails: the client hears why it was refused.
+fn undone(result: rustix::io::Result<()>) {
+    if let Err(e) = result {
+        tracing::warn!(event = "file.link_undo_failed", error = %e);
     }
 }
 

@@ -51,6 +51,10 @@ pub enum FsError {
     TrashDenied(String),
     /// The trash is off (0 days); a delete would be permanent.
     TrashOff,
+    /// A text save or a replacing upload met a link.
+    IsALink,
+    /// The trash folder holding an entry cannot be reached now, as when its disk is not connected.
+    TrashAbsent,
     /// A `.cairn-trash` at the top of this mount (named, like `/photos`) was not made by Cairn.
     TrashTaken(String),
     Io(std::io::Error),
@@ -64,6 +68,8 @@ impl From<std::io::Error> for FsError {
         match e.raw_os_error() {
             Some(code) if code == rustix::io::Errno::NOENT.raw_os_error() => FsError::NotFound,
             Some(code) if code == rustix::io::Errno::EXIST.raw_os_error() => FsError::Exists,
+            // Opening a socket: it is in the folder, but it is nothing a client can read.
+            Some(code) if code == rustix::io::Errno::NXIO.raw_os_error() => FsError::NotFound,
             Some(code) if code == rustix::io::Errno::NOTDIR.raw_os_error() => FsError::NotAFolder,
             Some(code) if code == rustix::io::Errno::ISDIR.raw_os_error() => FsError::IsAFolder,
             // From openat2 with RESOLVE_BENEATH: the path left the scope.
@@ -223,6 +229,17 @@ impl From<FsError> for ApiError {
                 format!(
                     "The trash cannot be made here: Cairn may not write to {top}. Ask an admin, or delete permanently."
                 ),
+            ),
+            FsError::IsALink => (
+                S::BAD_REQUEST,
+                "is_link",
+                "This name is a link. Use the file it points to.".into(),
+            ),
+            FsError::TrashAbsent => (
+                S::CONFLICT,
+                "trash_absent",
+                "This item's disk is not connected, so it cannot be deleted now. Connect the disk, then try again."
+                    .into(),
             ),
             FsError::TrashOff => (
                 S::CONFLICT,

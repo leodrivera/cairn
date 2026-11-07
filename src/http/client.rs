@@ -31,9 +31,9 @@ impl Client {
             };
         };
         let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
-        let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+        let forwarded = headers.get_all("x-forwarded-for");
         if !is_trusted(&peer) {
-            if forwarded.is_some() && !WARNED.swap(true, Ordering::Relaxed) {
+            if forwarded.iter().next().is_some() && !WARNED.swap(true, Ordering::Relaxed) {
                 // Behind a proxy without CAIRN_TRUSTED_PROXIES every client looks like the proxy: one shared
                 // rate limit, Fail2ban banning the proxy, cookies without Secure.
                 tracing::warn!(
@@ -48,12 +48,15 @@ impl Client {
             };
         }
         // Walk from the right, the end our proxies wrote. The first address outside them is the client. An entry that
-        // does not parse stops the walk at the last hop we trust: everything left of it came from the client.
+        // does not parse stops the walk at the last hop we trust: everything left of it came from the client. Several
+        // header lines are one list, in order, and a line is read by bytes so that opaque text at its left cannot hide
+        // what a proxy added at its right.
         let mut ip = peer;
         for entry in forwarded
-            .unwrap_or("")
-            .rsplit(',')
-            .map(str::trim)
+            .iter()
+            .rev()
+            .flat_map(|line| line.as_bytes().rsplit(|b| *b == b','))
+            .map(|entry| std::str::from_utf8(entry).unwrap_or("?").trim())
             .filter(|e| !e.is_empty())
         {
             match parse_hop(entry) {
@@ -156,6 +159,43 @@ mod tests {
     #[test]
     fn garbage_entry() {
         let h = headers(&[("x-forwarded-for", "nonsense")]);
+        let c = Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted());
+        assert_eq!(c.ip, ip("10.0.0.1"));
+    }
+
+    #[test]
+    fn several_lines_read_as_one_list() {
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        h.append("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        let c = Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted());
+        assert_eq!(c.ip, ip("203.0.113.9"));
+    }
+
+    #[test]
+    fn unreadable_bytes_hide_only_what_is_left_of_them() {
+        let mut h = HeaderMap::new();
+        h.append(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff, 203.0.113.9").unwrap(),
+        );
+        let c = Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted());
+        assert_eq!(c.ip, ip("203.0.113.9"));
+
+        let mut h = HeaderMap::new();
+        h.append(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(b"\xff").unwrap(),
+        );
+        h.append("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        let c = Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted());
+        assert_eq!(c.ip, ip("203.0.113.9"));
+
+        let mut h = HeaderMap::new();
+        h.append(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
+        );
         let c = Client::from_parts(Some(ip("10.0.0.1")), &h, &trusted());
         assert_eq!(c.ip, ip("10.0.0.1"));
     }

@@ -62,9 +62,28 @@ pub fn encode_filename(name: &str) -> String {
         .collect()
 }
 
+/// The last second an HTTP date can show, the end of the year 9999. `httpdate` panics past it, and the release build
+/// aborts on a panic.
+const LAST_HTTP_DATE: i64 = 253_402_300_799;
+
+/// A file time as an HTTP date. The filesystem can hold any value, so it is clamped to what the format can show.
+pub fn http_date(mtime: i64) -> String {
+    let secs = mtime.clamp(0, LAST_HTTP_DATE) as u64;
+    httpdate::fmt_http_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_date_covers_every_file_time() {
+        assert_eq!(http_date(-1), "Thu, 01 Jan 1970 00:00:00 GMT");
+        assert_eq!(http_date(0), "Thu, 01 Jan 1970 00:00:00 GMT");
+        assert_eq!(http_date(253_402_300_799), "Fri, 31 Dec 9999 23:59:59 GMT");
+        assert_eq!(http_date(253_402_300_800), "Fri, 31 Dec 9999 23:59:59 GMT");
+        assert_eq!(http_date(i64::MAX), "Fri, 31 Dec 9999 23:59:59 GMT");
+    }
 
     #[test]
     fn ranges() {

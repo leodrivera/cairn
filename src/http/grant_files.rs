@@ -10,6 +10,7 @@ use serde_json::json;
 use tower::ServiceExt;
 
 use crate::http::AppState;
+use crate::http::client::Peer;
 use crate::http::current_user::{self, CurrentUser};
 use crate::http::error::ApiError;
 use crate::http::files_routes::{self, GrantCall, grant_gone};
@@ -74,6 +75,9 @@ async fn forward(inner: Router, Path((id, _)): Path<(String, String)>, req: Requ
     *fresh.version_mut() = parts.version;
     *fresh.headers_mut() = parts.headers;
     current_user::carry(&parts.extensions, fresh.extensions_mut());
+    if let Some(peer) = parts.extensions.get::<Peer>() {
+        fresh.extensions_mut().insert(*peer);
+    }
     fresh.extensions_mut().insert(GrantCall(id));
     match inner.oneshot(fresh).await {
         Ok(res) => res,

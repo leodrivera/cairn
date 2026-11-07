@@ -1,6 +1,6 @@
 //! Sign-in and profile: `/api/config`, `/api/auth/login`, `/api/auth/logout`, `/api/me`, `/api/me/password`.
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -14,14 +14,17 @@ use crate::auth::session::{self, Method};
 use crate::http::client::Client;
 use crate::http::current_user::{CurrentUser, MaybeUser, clear_cookie, set_cookie};
 use crate::http::error::ApiError;
-use crate::http::json::{StrictJson, some};
+use crate::http::json::{ANONYMOUS_BODY, StrictJson, some};
 use crate::http::{AppState, sso_routes};
 use crate::users::{self, UserPatch};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/config", get(config))
-        .route("/auth/login", post(login))
+        .route(
+            "/auth/login",
+            post(login).layer(DefaultBodyLimit::max(ANONYMOUS_BODY)),
+        )
         .route("/auth/logout", post(logout))
         .route("/me", get(me).patch(patch_me))
         .route("/me/password", put(change_password))
@@ -113,11 +116,22 @@ async fn login(
         tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %typed);
         return Err(ApiError::too_many(wait));
     }
-    if let Some(captcha) = &s.captcha
-        && let Err(f) = captcha.verify(b.captcha_token.as_deref(), client.ip).await
-    {
-        tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
-        return Err(captcha_error(f));
+    if let Some(captcha) = &s.captcha {
+        // An answer costs a call to the vendor, so it counts before that call. One accepted, or one the vendor never
+        // judged because it could not be reached, is given back.
+        let answered = b.captcha_token.as_deref().is_some_and(|t| !t.is_empty());
+        if answered && let Some(wait) = s.limiters.captcha.try_count(client.ip, "", now) {
+            tracing::warn!(event = "http.rate_limited", route = "captcha", ip = %client.ip, email = %typed);
+            return Err(ApiError::too_many(wait));
+        }
+        let verdict = captcha.verify(b.captcha_token.as_deref(), client.ip).await;
+        if answered && matches!(verdict, Ok(()) | Err(CaptchaFailure::Unreachable)) {
+            s.limiters.captcha.undo(client.ip, "");
+        }
+        if let Err(f) = verdict {
+            tracing::warn!(event = "auth.captcha_failed", ip = %client.ip, email = %typed, reason = f.reason());
+            return Err(captcha_error(f));
+        }
     }
     let found = match &email {
         Some(e) => users::by_email(&s.db, e)?,
@@ -143,24 +157,30 @@ async fn login(
         tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason);
         return Err(wrong_credentials());
     };
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let session = session::create_verified(
+        &s.db,
+        user.id,
+        &user.email,
+        hash.as_deref().unwrap_or_default(),
+        b.keep,
+        &session::label_from_user_agent(ua),
+        now,
+    )?;
+    let Some(token) = session else {
+        // The password that matched was replaced or removed during the check: it is no longer right.
+        tracing::warn!(event = "auth.login_failed", ip = %client.ip, email = %typed, reason = "bad_password");
+        return Err(wrong_credentials());
+    };
     s.limiters.login.undo(client.ip, &key);
     s.limiters.login.succeeded(&key);
     // The browser gets a new session; whatever it held before ends here.
     if let Some(old) = previous {
         session::delete(&s.db, &old.token)?;
     }
-    let ua = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let token = session::create(
-        &s.db,
-        user.id,
-        Method::Password,
-        b.keep,
-        &session::label_from_user_agent(ua),
-        now,
-    )?;
     tracing::info!(event = "auth.login", user = user.id, email = %user.email, ip = %client.ip, method = "password");
     Ok((
         [(header::SET_COOKIE, set_cookie(&token, b.keep, client.https))],
@@ -294,7 +314,7 @@ async fn change_password(
         tracing::warn!(event = "http.rate_limited", route = "me_password", user = user.id, ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
-    if b.current.chars().count() > 256 || !s.hasher.verify(b.current, Some(stored)).await {
+    if b.current.chars().count() > 256 || !s.hasher.verify(b.current, Some(stored.clone())).await {
         // 400, not 401: a slip inside the app must not feed Fail2ban.
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -312,7 +332,12 @@ async fn change_password(
     }
     limiter.succeeded(&key);
     let hash = s.hasher.hash(b.next).await;
-    users::set_password(&s.db, user.id, Some(hash))?;
+    if !users::replace_password(&s.db, user.id, &stored, &hash)? {
+        return Err(ApiError::conflict(
+            "password_changed",
+            "Your password was changed while this was saving. Sign in again.",
+        ));
+    }
     session::delete_for_user(&s.db, user.id, Some(&current.token))?;
     tracing::info!(event = "auth.password_changed", user = user.id);
     Ok(Json(json!({ "ok": true })))

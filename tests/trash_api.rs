@@ -716,7 +716,7 @@ async fn trash_folder_appears_whole() {
 }
 
 #[tokio::test]
-async fn scope_linked_outside_root_gets_no_trash() {
+async fn scope_that_is_a_link_is_missing() {
     let (h, dir) = harness_with_root(&[]);
     let root = dir.path().join("srv");
     let elsewhere = dir.path().join("elsewhere");
@@ -725,10 +725,153 @@ async fn scope_linked_outside_root_gets_no_trash() {
     h.add_user_scoped("bob@example.com", PW, "/out", ALL);
     let c = h.login("bob@example.com", PW).await;
     let res = delete(&h, &c, &["a.txt"], None).await;
-    // Its mount top would lie outside the server root: no trash there, a permanent delete is offered instead.
-    assert_eq!(res.json["failed"][0]["error"], "other_disk", "{}", res.json);
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::NOT_FOUND, "scope_missing")
+    );
     assert!(elsewhere.join("a.txt").exists());
-    assert!(!elsewhere.join(".cairn-trash").exists());
-    assert!(!dir.path().join(".cairn-trash").exists());
+    assert_eq!(rows(&h), 0);
+}
+
+/// Ana (scope `/`) deletes through a link in Bo's folder; the file itself lies outside Bo's reach.
+async fn deleted_through_a_link(h: &Harness, root: &std::path::Path) -> (String, String, String) {
+    put(root, "team/hr/pay.txt", "pay");
+    put(root, "team/bo/own.txt", "own");
+    std::os::unix::fs::symlink("../hr", root.join("team/bo/link")).unwrap();
+    h.add_user_scoped("ana@example.com", PW, "/", ALL);
+    h.add_user_scoped("bo@example.com", PW, "/team/bo", ALL);
+    let ana = h.login("ana@example.com", PW).await;
+    let bo = h.login("bo@example.com", PW).await;
+    let res = delete(h, &ana, &["team/bo/link/pay.txt"], None).await;
+    assert_eq!(rows(h), 1, "{}", res.json);
+    let id = trash_list(h, &ana).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (ana, bo, id)
+}
+
+#[tokio::test]
+async fn entry_belongs_to_the_folder_the_file_was_in() {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let (ana, bo, id) = deleted_through_a_link(&h, &root).await;
+    assert!(trash_list(&h, &bo).await.is_empty());
+    let res = restore(&h, &bo, &[&id]).await;
+    assert_eq!(res.json["restored"], json!([]), "{}", res.json);
+    assert_eq!(rows(&h), 1);
+    let res = restore(&h, &ana, &[&id]).await;
+    assert_eq!(rows(&h), 0, "{}", res.json);
+    assert_eq!(
+        std::fs::read_to_string(root.join("team/hr/pay.txt")).unwrap(),
+        "pay"
+    );
+}
+
+#[tokio::test]
+async fn entry_of_another_folder_cannot_be_deleted_for_good() {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let (_, bo, id) = deleted_through_a_link(&h, &root).await;
+    let res = Req::delete("/api/trash")
+        .cookie(&bo)
+        .json(json!({ "ids": [id] }))
+        .send(&h.app)
+        .await;
+    assert_ne!(res.json["deleted"], 1, "{}", res.json);
+    assert_eq!(rows(&h), 1);
+}
+
+/// `srv/vol` stands for a disk mounted inside the root, with `file.txt` in its trash.
+async fn disk_with_an_entry(mnt: u64) -> (Harness, tempfile::TempDir, String, String) {
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    put(&root, "vol/file.txt", "f");
+    cairn::fs::mount::fake_mount_id(dir.path(), mnt);
+    cairn::fs::mount::fake_mount_id(&root, mnt + 1);
+    cairn::fs::mount::fake_mount_id(&root.join("vol"), mnt + 2);
+    let (c, _) = root_user(&h, &dir).await;
+    delete(&h, &c, &["vol/file.txt"], None).await;
+    let id = trash_list(&h, &c).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(root.join("vol/.cairn-trash").exists());
+    (h, dir, c, id)
+}
+
+async fn delete_for_good(h: &Harness, c: &str, id: &str) -> common::Res {
+    Req::delete("/api/trash")
+        .cookie(c)
+        .json(json!({ "ids": [id] }))
+        .send(&h.app)
+        .await
+}
+
+#[tokio::test]
+async fn entry_stays_while_its_disk_is_absent() {
+    let (h, dir, c, id) = disk_with_an_entry(9100).await;
+    let (vol, offline) = (dir.path().join("srv/vol"), dir.path().join("offline"));
+    // Unplugged: an empty folder on the root's own mount is left at the mount point.
+    std::fs::rename(&vol, &offline).unwrap();
+    std::fs::create_dir(&vol).unwrap();
+    cairn::fs::mount::fake_mount_id(&vol, 9101);
+
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(res.json["deleted"], 0, "{}", res.json);
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_absent",
+        "{}",
+        res.json
+    );
+    assert_eq!(rows(&h), 1);
+    let later = cairn::now() + 365 * 86_400;
+    assert_eq!(
+        cairn::trash::ops::purge(&h.state.trash, &h.state.db, later),
+        0
+    );
+    assert_eq!(rows(&h), 1);
+
+    std::fs::remove_dir(&vol).unwrap();
+    std::fs::rename(&offline, &vol).unwrap();
+    cairn::fs::mount::fake_mount_id(&vol, 9102);
+    assert_eq!(
+        cairn::trash::ops::purge(&h.state.trash, &h.state.db, later),
+        1
+    );
+    assert_eq!(rows(&h), 0);
+    assert_eq!(
+        std::fs::read_dir(vol.join(".cairn-trash")).unwrap().count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn entry_stays_when_another_disk_takes_the_place_of_its_own() {
+    let (h, dir, c, id) = disk_with_an_entry(9200).await;
+    // Mounted at the same place, with no trash folder: the entry's item is still on the disk that left.
+    std::fs::remove_dir_all(dir.path().join("srv/vol/.cairn-trash")).unwrap();
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_absent",
+        "{}",
+        res.json
+    );
+    assert_eq!(rows(&h), 1);
+}
+
+#[tokio::test]
+async fn trash_folder_removed_from_the_root_ends_its_entries() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, root) = root_user(&h, &dir).await;
+    put(&root, "a.txt", "a");
+    delete(&h, &c, &["a.txt"], None).await;
+    let id = trash_list(&h, &c).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::fs::remove_dir_all(root.join(".cairn-trash")).unwrap();
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(res.json["deleted"], 1, "{}", res.json);
     assert_eq!(rows(&h), 0);
 }

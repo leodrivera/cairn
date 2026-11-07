@@ -118,6 +118,11 @@ pub fn normalize_email(raw: &str) -> Option<String> {
     ok.then_some(email)
 }
 
+/// Whether `normalize_email` changes `raw` only by trimming ASCII spaces and lower-casing ASCII letters.
+pub fn normalizes_plainly(raw: &str) -> bool {
+    normalize_email(raw).is_some_and(|email| email == raw.trim_ascii().to_ascii_lowercase())
+}
+
 fn clean_name(raw: &str) -> Result<String, UserError> {
     let name = raw.trim();
     if name.is_empty() || name.chars().count() > 200 {
@@ -232,35 +237,52 @@ fn admins(db: &Db) -> Result<i64, UserError> {
 }
 
 pub fn update(db: &Db, id: i64, patch: UserPatch) -> Result<User, UserError> {
-    let mut u = by_id(db, id)?.ok_or(UserError::NotFound)?;
-    if let Some(email) = &patch.email {
-        u.email = normalize_email(email).ok_or(UserError::Invalid(BAD_EMAIL))?;
+    let email = match &patch.email {
+        Some(e) => Some(normalize_email(e).ok_or(UserError::Invalid(BAD_EMAIL))?),
+        None => None,
+    };
+    let name = patch.name.as_deref().map(clean_name).transpose()?;
+    let scope = patch.scope.as_deref().map(clean_scope).transpose()?;
+    let perms = patch.perms.map(|p| p.normalized());
+    if let Some(lang) = &patch.lang {
+        check_choice(lang, &["en", "pt-BR"], "Language must be en or pt-BR.")?;
     }
-    if let Some(name) = &patch.name {
-        u.name = clean_name(name)?;
+    if let Some(theme) = &patch.theme {
+        check_choice(theme, &["dark", "light"], "Theme must be dark or light.")?;
     }
-    if let Some(scope) = &patch.scope {
-        u.scope = clean_scope(scope)?;
+    if let Some(view) = &patch.view {
+        check_choice(view, &["list", "gallery"], "View must be list or gallery.")?;
     }
-    if let Some(perms) = patch.perms {
-        let perms = perms.normalized();
-        u.perms = perms;
-    }
-    if let Some(lang) = patch.lang {
-        check_choice(&lang, &["en", "pt-BR"], "Language must be en or pt-BR.")?;
-        u.lang = lang;
-    }
-    if let Some(theme) = patch.theme {
-        check_choice(&theme, &["dark", "light"], "Theme must be dark or light.")?;
-        u.theme = theme;
-    }
-    if let Some(view) = patch.view {
-        check_choice(&view, &["list", "gallery"], "View must be list or gallery.")?;
-        u.view = view;
-    }
-    let p = u.perms;
+    let select = format!("SELECT {COLUMNS} FROM users WHERE id = ?1");
     let outcome = db.with(|c| {
+        // The row is read under the write lock: a field the patch does not name keeps its current value, even when
+        // another change committed a moment ago.
         immediate(c, || {
+            let Some((mut u, _)) = c.query_row(&select, [id], from_row).optional()? else {
+                return Ok(Outcome::NotFound);
+            };
+            if let Some(v) = email {
+                u.email = v;
+            }
+            if let Some(v) = name {
+                u.name = v;
+            }
+            if let Some(v) = scope {
+                u.scope = v;
+            }
+            if let Some(v) = perms {
+                u.perms = v;
+            }
+            if let Some(v) = patch.lang {
+                u.lang = v;
+            }
+            if let Some(v) = patch.theme {
+                u.theme = v;
+            }
+            if let Some(v) = patch.view {
+                u.view = v;
+            }
+            let p = u.perms;
             if !p.admin && removes_last_admin(c, id)? {
                 return Ok(Outcome::LastAdmin);
             }
@@ -272,10 +294,11 @@ pub fn update(db: &Db, id: i64, patch: UserPatch) -> Result<User, UserError> {
             Ok(Outcome::Done)
         })
     })?;
-    if outcome == Outcome::LastAdmin {
-        return Err(UserError::LastAdmin);
+    match outcome {
+        Outcome::Done => by_id(db, id)?.ok_or(UserError::NotFound),
+        Outcome::NotFound => Err(UserError::NotFound),
+        Outcome::LastAdmin => Err(UserError::LastAdmin),
     }
-    by_id(db, id)?.ok_or(UserError::NotFound)
 }
 
 pub fn set_password(db: &Db, id: i64, hash: Option<String>) -> Result<(), UserError> {
@@ -290,6 +313,18 @@ pub fn set_password(db: &Db, id: i64, hash: Option<String>) -> Result<(), UserEr
     } else {
         Ok(())
     }
+}
+
+/// Sets the password only if `verified` is still the stored hash, in one statement. `false` when it no longer is: a
+/// reset or a removal landed during the slow check, and it stands.
+pub fn replace_password(db: &Db, id: i64, verified: &str, hash: &str) -> Result<bool, UserError> {
+    let n = db.with(|c| {
+        c.execute(
+            "UPDATE users SET password_hash = ?3 WHERE id = ?1 AND password_hash = ?2",
+            params![id, verified, hash],
+        )
+    })?;
+    Ok(n == 1)
 }
 
 pub fn delete(db: &Db, id: i64) -> Result<(), UserError> {
@@ -504,6 +539,40 @@ mod tests {
             },
         );
         assert!(matches!(bad, Err(UserError::Invalid(_))));
+    }
+
+    #[test]
+    fn profile_save_keeps_a_concurrent_admin_change() {
+        let db = Db::open_in_memory();
+        create(&db, new("admin@example.com", ALL), 0).unwrap();
+        let id = create(&db, new("ana@example.com", ALL), 0).unwrap().id;
+        for _ in 0..2000 {
+            let restore = UserPatch {
+                perms: Some(ALL),
+                ..UserPatch::default()
+            };
+            update(&db, id, restore).unwrap();
+            let done = std::sync::atomic::AtomicBool::new(false);
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                        let save = UserPatch {
+                            theme: Some(Some("dark".into())),
+                            ..UserPatch::default()
+                        };
+                        update(&db, id, save).unwrap();
+                    }
+                });
+                std::thread::yield_now();
+                let change = UserPatch {
+                    perms: Some(READ),
+                    ..UserPatch::default()
+                };
+                update(&db, id, change).unwrap();
+                done.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            assert!(!by_id(&db, id).unwrap().unwrap().perms.admin);
+        }
     }
 
     #[test]

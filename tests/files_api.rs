@@ -6,6 +6,8 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use axum::http::StatusCode;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cairn::users::Perms;
 use common::{Harness, Req, enc, harness_with_root};
 use serde_json::{Value, json};
@@ -1466,4 +1468,290 @@ async fn zip_form_cross_site_fetch_metadata_refused() {
         .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(res.code(), "csrf");
+}
+
+#[tokio::test]
+async fn pipe_answers_at_once() {
+    let (h, dir) = harness_with_root(&[]);
+    let pipe = dir.path().join("srv/pipe");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &pipe,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o644),
+        0,
+    )
+    .unwrap();
+    h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let read = Req::get("/api/raw/pipe").cookie(&c).send(&h.app);
+    let res = tokio::time::timeout(std::time::Duration::from_secs(5), read).await;
+    // Opened by a writer, a stuck reader lets go, so a failure here cannot hang the test's runtime.
+    let _writer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&pipe)
+        .unwrap();
+    assert_eq!(res.expect("no answer").status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn socket_answers_404() {
+    let (h, dir) = harness_with_root(&[]);
+    let _socket = std::os::unix::net::UnixListener::bind(dir.path().join("srv/sock")).unwrap();
+    h.add_user("ana@example.com", Some(PW), false);
+    let c = h.login("ana@example.com", PW).await;
+    let res = Req::get("/api/raw/sock").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+/// `team/b` is Bo's scope inside Ana's; `team/out` is a link to `private`, outside both.
+async fn nested_scopes(h: &Harness, dir: &tempfile::TempDir) -> (String, String) {
+    let srv = dir.path().join("srv");
+    touch(&srv.join("private/secret.txt"), "secret");
+    touch(&srv.join("team/b/mine.txt"), "mine");
+    symlink("../private", srv.join("team/out")).unwrap();
+    h.add_user_scoped("ana@example.com", PW, "/team", RW);
+    h.add_user_scoped("bo@example.com", PW, "/team/b", RW);
+    (
+        h.login("ana@example.com", PW).await,
+        h.login("bo@example.com", PW).await,
+    )
+}
+
+async fn scope_replaced_by_a_link(h: Harness, dir: tempfile::TempDir) {
+    let (ana, bo) = nested_scopes(&h, &dir).await;
+    let list = json!([
+        { "op": "rename", "from": "b", "to": "b-old" },
+        { "op": "rename", "from": "out", "to": "b" },
+    ]);
+    assert_eq!(ops(&h, &ana, list).await.json["done"], 2);
+    let res = Req::get("/api/raw/secret.txt")
+        .cookie(&bo)
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::NOT_FOUND, "scope_missing")
+    );
+    let res = Req::put("/api/upload/new.txt")
+        .cookie(&bo)
+        .bytes(b"x")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::NOT_FOUND, "scope_missing")
+    );
+    assert!(!dir.path().join("srv/private/new.txt").exists());
+}
+
+#[tokio::test]
+async fn scope_replaced_by_a_link_is_missing() {
+    let (h, dir) = harness_with_root(&[]);
+    scope_replaced_by_a_link(h, dir).await;
+}
+
+#[tokio::test]
+async fn scope_replaced_by_a_link_is_missing_without_openat2() {
+    let (h, dir) = harness_with_root(&[]);
+    scope_replaced_by_a_link(h.with_fallback(), dir).await;
+}
+
+#[tokio::test]
+async fn nested_scope_keeps_working() {
+    let (h, dir) = harness_with_root(&[]);
+    let (_, bo) = nested_scopes(&h, &dir).await;
+    let res = Req::get("/api/raw/mine.txt").cookie(&bo).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn move_refuses_a_link_that_would_lead_outside() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&dir.path().join("srv/hr/pay.txt"), "pay");
+    touch(&s.join("a/hr/mine.txt"), "m");
+    std::fs::create_dir_all(s.join("a/b")).unwrap();
+    symlink("../hr", s.join("a/b/k")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "move", "from": "a/b/k", "to": "k" }]),
+    )
+    .await;
+    assert_eq!(res.json["failed"][0]["error"], "outside", "{}", res.json);
+    assert!(std::fs::symlink_metadata(s.join("a/b/k")).is_ok());
+    assert!(std::fs::symlink_metadata(s.join("k")).is_err());
+}
+
+#[tokio::test]
+async fn copy_leaves_out_a_link_that_would_lead_outside() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&dir.path().join("srv/hr/pay.txt"), "pay");
+    touch(&s.join("a/hr/mine.txt"), "m");
+    std::fs::create_dir_all(s.join("a/b")).unwrap();
+    symlink("../hr", s.join("a/b/k")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "copy", "from": "a/b/k", "to": "k" }]),
+    )
+    .await;
+    assert_eq!(res.json["failed"][0]["error"], "skipped", "{}", res.json);
+    assert!(std::fs::symlink_metadata(s.join("k")).is_err());
+}
+
+#[tokio::test]
+async fn move_keeps_links_that_stay_inside_or_lead_nowhere() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("d/y.txt"), "y");
+    touch(&s.join("e/y.txt"), "y");
+    symlink("y.txt", s.join("d/in")).unwrap();
+    symlink("missing.txt", s.join("dangling")).unwrap();
+    let list = json!([
+        { "op": "move", "from": "d/in", "to": "e/in" },
+        { "op": "move", "from": "dangling", "to": "d/dangling" },
+    ]);
+    let res = ops(&h, &c, list).await;
+    assert_eq!(res.json["done"], 2, "{}", res.json);
+}
+
+#[tokio::test]
+async fn renaming_a_link_leaves_it_as_it_is() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    symlink("/etc", s.join("etc")).unwrap();
+    let res = ops(
+        &h,
+        &c,
+        json!([{ "op": "rename", "from": "etc", "to": "system" }]),
+    )
+    .await;
+    assert_eq!(res.json["done"], 1, "{}", res.json);
+}
+
+#[tokio::test]
+async fn replacing_upload_refuses_a_link() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("target.txt"), "old");
+    symlink("target.txt", s.join("link")).unwrap();
+    let res = Req::put("/api/upload/link?replace=1")
+        .cookie(&c)
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "is_link")
+    );
+    assert!(
+        std::fs::symlink_metadata(s.join("link"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.join("target.txt")).unwrap(),
+        "old"
+    );
+}
+
+#[tokio::test]
+async fn raw_answers_are_checked_with_the_server_before_reuse() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("a.txt"), "alpha");
+    let res = Req::get("/api/raw/a.txt").cookie(&c).send(&h.app).await;
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+    let tag = res.header("etag").to_string();
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("if-none-match", &tag)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+    let res = Req::get("/api/raw/a.txt")
+        .cookie(&c)
+        .header("range", "bytes=0-1")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(res.header("cache-control"), "private, no-cache");
+}
+
+fn raw_name(dir: &Path, bytes: &[u8]) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    dir.join(std::ffi::OsStr::from_bytes(bytes))
+}
+
+fn contains(body: &[u8], name: &str) -> bool {
+    body.windows(name.len()).any(|w| w == name.as_bytes())
+}
+
+#[tokio::test]
+async fn zip_keeps_names_that_read_the_same() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&raw_name(&s, b"a\xff.txt"), "one");
+    touch(&raw_name(&s, b"a\xfe.txt"), "two");
+    touch(&s.join("a\u{FFFD}.txt"), "three");
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    for name in ["a\u{FFFD}.txt", "a\u{FFFD} (2).txt", "a\u{FFFD} (3).txt"] {
+        assert!(contains(&res.body, name), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn zip_names_never_carry_a_backslash() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("..\\..\\up.txt"), "one");
+    touch(&s.join("a\\b.txt"), "two");
+    touch(&s.join("a_b.txt"), "three");
+    let res = Req::get("/api/zip").cookie(&c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert!(!res.body.contains(&b'\\'));
+    assert!(contains(&res.body, ".._.._up.txt"));
+    assert!(contains(&res.body, "a_b.txt"));
+    assert!(contains(&res.body, "a_b (2).txt"));
+}
+
+#[tokio::test]
+async fn zip_of_chosen_items_keeps_names_that_read_the_same() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&raw_name(&s, b"a\xff"), "one");
+    touch(&raw_name(&s, b"a\xfe"), "two");
+    let segment = |raw: &[u8]| enc(&format!("\0{}", URL_SAFE_NO_PAD.encode(raw)));
+    let form = format!("item={}&item={}", segment(b"a\xff"), segment(b"a\xfe"));
+    let res = zip_form("/api/zip", &form, &c).send(&h.app).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert!(contains(&res.body, "a\u{FFFD} (2)"));
+}
+
+#[tokio::test]
+async fn text_save_refuses_a_link() {
+    let (h, dir) = harness_with_root(&[]);
+    let (c, s) = maria(&h, &dir, RW).await;
+    touch(&s.join("target.txt"), "old");
+    symlink("target.txt", s.join("link")).unwrap();
+    let res = Req::put("/api/text/link")
+        .cookie(&c)
+        .header("if-match", "\"any\"")
+        .bytes(b"new")
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::BAD_REQUEST, "is_link")
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.join("target.txt")).unwrap(),
+        "old"
+    );
 }

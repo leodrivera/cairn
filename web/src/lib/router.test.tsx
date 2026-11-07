@@ -96,6 +96,18 @@ test("trash route", () => {
   assert.equal(href({ name: "trash" }), "/trash");
 });
 
+test("a share page only takes paths beneath its link", () => {
+  const id = "a".repeat(22);
+  for (const key of ["file", "path"]) {
+    for (const bad of ["..", ".", "../..", "a/../b", "a/./b", "a//b", "/a", "a/.."]) {
+      assert.deepEqual(parseRoute(`/s/${id}`, `?${key}=${encodeURIComponent(bad)}`), { name: "missing" }, bad);
+    }
+  }
+  assert.deepEqual(parseRoute(`/s/${id}`, "?file=%2e%2e%2fb"), { name: "missing" });
+  assert.deepEqual(parseRoute(`/s/${id}`, "?path=..a%2F.b"), { name: "share", id, path: "..a/.b", file: false });
+  assert.deepEqual(parseRoute(`/s/${id}`, "?path=a%2F"), { name: "share", id, path: "a", file: false });
+});
+
 test("shared routes", () => {
   const id = "AbCdEfGhIjKlMnOpQrSt-_";
   assert.deepEqual(parseRoute("/shared", ""), { name: "shared" });

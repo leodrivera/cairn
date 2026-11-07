@@ -97,7 +97,7 @@ pub async fn save_text(
             match FileType::from_raw_mode(st.st_mode) {
                 FileType::Directory => return Err(FsError::IsAFolder),
                 // Saving would replace the link with a file; links are edited through their target's own path.
-                FileType::Symlink => return Err(FsError::InvalidPath),
+                FileType::Symlink => return Err(FsError::IsALink),
                 _ => {}
             }
             if *tag != super::raw::etag(st) {

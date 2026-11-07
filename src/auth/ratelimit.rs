@@ -154,6 +154,8 @@ pub struct Limiters {
     pub login: FailureLimiter,
     /// Wrong current password on "Change password": 5 per user in 15 minutes.
     pub password_change: FailureLimiter,
+    /// Refused CAPTCHA answers, each a call to the vendor: 30 per IP in 15 minutes.
+    pub captcha: FailureLimiter,
     /// Broker and OIDC sign-in starts, counted together: 20 per IP in 10 minutes.
     pub sso_start: FailureLimiter,
     /// Wrong share link passwords: 10 per link and IP together in 15 minutes.
@@ -173,6 +175,7 @@ impl Limiters {
         Limiters {
             login: FailureLimiter::new(10, 5, 15 * 60, 10_000),
             password_change: FailureLimiter::new(0, 5, 15 * 60, 10_000),
+            captcha: FailureLimiter::new(30, 0, 15 * 60, 10_000),
             sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
             share_password: FailureLimiter::new(0, 10, 15 * 60, 10_000),
             grant_lookup: FailureLimiter::new(0, 20, 15 * 60, 10_000),

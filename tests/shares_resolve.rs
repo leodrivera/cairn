@@ -240,3 +240,41 @@ fn data_folder_never_shared() {
         assert!(f.resolve_at(&id, NOW, data_id).is_none(), "{path}");
     }
 }
+
+#[test]
+fn link_on_a_symlink_is_gone() {
+    let f = fx();
+    let root = f.dir.path();
+    symlink("photos/notes.txt", root.join("to-file")).unwrap();
+    symlink("photos", root.join("to-folder")).unwrap();
+    for path in ["/to-file", "/to-folder", "/to-folder/notes.txt"] {
+        let id = f.share(path, None);
+        assert!(f.resolve(&id).is_none(), "{path}");
+    }
+}
+
+#[test]
+fn file_replaced_after_the_link_opened_is_refused() {
+    let f = fx();
+    let root = f.dir.path();
+    std::fs::write(root.join("docs/other.txt"), "other").unwrap();
+    let id = f.share("/photos/notes.txt", None);
+    let live = f.resolve(&id).expect("live");
+    std::fs::remove_file(root.join("photos/notes.txt")).unwrap();
+    symlink("../docs/other.txt", root.join("photos/notes.txt")).unwrap();
+    match live.target {
+        Target::File { scope, path } => assert!(read(&scope, &path.to_string()).is_err()),
+        Target::Folder { .. } => panic!("a file"),
+    }
+}
+
+#[test]
+fn links_inside_a_shared_folder_keep_working() {
+    let f = fx();
+    symlink("notes.txt", f.dir.path().join("photos/to-notes")).unwrap();
+    let id = f.share("/photos", None);
+    match f.resolve(&id).expect("live").target {
+        Target::Folder { scope } => assert_eq!(read(&scope, "to-notes").unwrap(), "notes"),
+        Target::File { .. } => panic!("a folder"),
+    }
+}

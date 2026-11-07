@@ -765,3 +765,48 @@ async fn parallel_tries_cannot_pass_the_limit() {
         .count();
     assert_eq!((checked, limited), (10, 5));
 }
+
+#[tokio::test]
+async fn zip_past_the_limit_answers_429_in_plain_text() {
+    let f = fx().await;
+    let id = f
+        .share(json!({ "path": "/photos", "download": true }))
+        .await;
+    let me = "127.0.0.1".parse().unwrap();
+    let held: Vec<_> = (0..cairn::fs::zip::MAX_ZIPS_PER_CLIENT)
+        .map(|_| f.h.state.zips.take(me).unwrap())
+        .collect();
+    let res = f.get(&format!("/s/{id}/zip")).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(res.header("retry-after"), "60");
+    assert!(res.header("content-type").starts_with("text/plain"));
+    assert_eq!(f.get(&format!("/s/{id}/info")).await.status, StatusCode::OK);
+    drop(held);
+    assert_eq!(f.get(&format!("/s/{id}/zip")).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_link_cannot_be_made_on_a_symlink() {
+    let f = fx().await;
+    let srv = f.dir.path().join("srv");
+    std::os::unix::fs::symlink("photos/notes.txt", srv.join("via")).unwrap();
+    let res = Req::post("/api/shares")
+        .cookie(&f.admin)
+        .json(json!({ "path": "via", "download": true }))
+        .send(&f.h.app)
+        .await;
+    assert_eq!((res.status, res.code()), (StatusCode::FORBIDDEN, "outside"));
+}
+
+#[tokio::test]
+async fn link_password_body_has_its_own_small_limit() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    let sized = |n: usize| {
+        Req::post(&format!("/s/{id}/unlock"))
+            .json(json!({ "password": "x".repeat(n) }))
+            .send(&f.h.app)
+    };
+    assert_eq!(sized(70 * 1024).await.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(sized(60 * 1024).await.status, StatusCode::FORBIDDEN);
+}

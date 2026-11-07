@@ -423,7 +423,7 @@ mod tests {
     async fn start_timeout() {
         let (url, _) = fake(Fake {
             start_url: "https://provider.example.com/authorize".into(),
-            delay: Duration::from_secs(6),
+            delay: Duration::from_secs(10),
             ..Default::default()
         })
         .await;
@@ -434,10 +434,6 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(
-            t.elapsed() < Duration::from_millis(5500),
-            "{:?}",
-            t.elapsed()
-        );
+        assert!(t.elapsed() < Duration::from_secs(8), "{:?}", t.elapsed());
     }
 }

@@ -163,7 +163,8 @@ async fn create(
     let expires_at = crate::shares::expiry(b.expires_days, now)
         .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid", m))?;
     let rel = RelPath::parse(&b.path)?;
-    let scope = fu.scope;
+    // Stored paths pass no link.
+    let scope = fu.scope.no_links();
     let check = rel.clone();
     blocking(move || scope.open(&check, rustix::fs::OFlags::PATH).map(|_| ())).await?;
     let path = crate::shares::root_path(&owner.scope, &rel);

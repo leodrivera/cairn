@@ -113,7 +113,7 @@ pub fn to_trash(
     crate::fs::mount::refuse_mounts_inside(&dir, name.as_os_str())?;
     let st = rustix::fs::statat(&dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)?;
     let top = mount_top(&open_root(trashes)?, &dir)?;
-    // A scope that is a link to a folder outside the server root has no trash of ours: never make one out there.
+    // Never make a trash folder outside the server root.
     let inside = std::fs::read_link(format!(
         "/proc/self/fd/{}",
         rustix::fd::AsRawFd::as_raw_fd(&top)
@@ -122,6 +122,9 @@ pub fn to_trash(
     if !inside {
         return Err(FsError::OtherDisk(name.to_string_lossy().into_owned()));
     }
+    // Where the item really lies, not the path the client sent: a link on the way must not put the entry, and with it
+    // who may see and restore it, under another folder.
+    let real = scope.real_path(&dir)?.join_bytes(name.as_bytes())?;
     let (trash, trash_dir) = trashes.for_dir(db, &top)?;
     let size = size_of(&dir, name.as_os_str(), 0);
     let kind = if FileType::from_raw_mode(st.st_mode) == FileType::Directory {
@@ -132,7 +135,7 @@ pub fn to_trash(
     let entry = Entry {
         id: crate::shares::new_id(),
         trash_dir,
-        path: crate::shares::root_path(base, rel),
+        path: crate::shares::root_path(base, &real),
         name: name.as_bytes().to_vec(),
         kind: kind.into(),
         size: size as i64,
@@ -179,6 +182,16 @@ fn trash_scope(trashes: &Trashes, entry: &Entry) -> Result<Scope, FsError> {
         return Err(FsError::NotFound);
     }
     Scope::new(trashes.root(), &entry.trash_dir, Reserved::default())
+}
+
+/// Whether `entry`'s trash folder was removed from the server root, and the item with it. A mount says less: a folder
+/// missing there may mean another disk now sits at that place, with the item still on the one that left.
+fn trash_removed(trashes: &Trashes, entry: &Entry) -> bool {
+    entry.trash_dir == format!("/{}", crate::fs::scope::TRASH_NAME)
+        && matches!(
+            Scope::new(trashes.root(), &entry.trash_dir, Reserved::default()),
+            Err(FsError::NotFound)
+        )
 }
 
 /// `name (restored).ext` for files, `name (restored)` for folders; `n` above 1 adds the number.
@@ -265,10 +278,15 @@ pub fn remove(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> 
 }
 
 fn remove_held(trashes: &Trashes, db: &Db, entry: &Entry) -> Result<(), FsError> {
-    match trash_scope(trashes, entry)
-        .and_then(|s| crate::fs::edit::remove(&s, &RelPath::parse(&entry.id)?))
-    {
-        Ok(()) | Err(FsError::NotFound) => {}
+    // Only inside a trash folder that can be reached does "not found" mean the item is gone. An absent folder, like an
+    // unplugged disk, still holds it: the row stays, so the deletion happens when the folder is back.
+    match trash_scope(trashes, entry) {
+        Ok(holder) => match crate::fs::edit::remove(&holder, &RelPath::parse(&entry.id)?) {
+            Ok(()) | Err(FsError::NotFound) => {}
+            Err(e) => return Err(e),
+        },
+        Err(FsError::NotFound) if trash_removed(trashes, entry) => {}
+        Err(FsError::NotFound) => return Err(FsError::TrashAbsent),
         Err(e) => return Err(e),
     }
     super::delete_row(db, &entry.id).map_err(db_err)?;

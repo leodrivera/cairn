@@ -540,3 +540,18 @@ async fn other_methods_on_auth_are_404() {
         }
     }
 }
+
+#[tokio::test]
+async fn several_remote_emails_are_refused() {
+    let b = FakeBroker::start(google()).await;
+    let h = oauth(&b, &[]);
+    h.add_user("ana@example.com", None, false);
+    h.add_user("admin@example.com", None, true);
+    let res = sso("admin@example.com", Some(SECRET))
+        .header("remote-email", "ana@example.com")
+        .send(&h.app)
+        .await;
+    assert_eq!(res.header("location"), "/login?error=sso");
+    let set = cookie_named(&res, "cairn_session").unwrap_or_default();
+    assert!(set.is_empty() || set.contains("Max-Age=0"), "{set}");
+}

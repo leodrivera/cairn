@@ -54,6 +54,8 @@ pub struct AppState {
     pub root_id: Option<(u64, u64)>,
     /// The trash folders under the root.
     pub trash: Arc<crate::trash::folder::Trashes>,
+    /// The ZIP downloads running now.
+    pub zips: Arc<crate::fs::zip::ZipSlots>,
 }
 
 impl AppState {
@@ -79,6 +81,7 @@ impl AppState {
             trash,
             share_key,
             force_fallback: false,
+            zips: Arc::default(),
             config: Arc::new(config),
             db: Arc::new(db),
             hasher: Arc::new(Hasher::new()),

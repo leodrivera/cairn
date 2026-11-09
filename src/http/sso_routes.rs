@@ -401,7 +401,8 @@ async fn oidc_callback(
     let state_ok = pending
         .as_ref()
         .is_some_and(|p| crate::config::ct_eq(p.state.as_bytes(), sent_state.as_bytes()));
-    let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, now)) else {
+    let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, p.created, now))
+    else {
         oidc_failed(&id, client.ip, "state");
         return with_cleared(sign_in_failed(), https, &sent_state);
     };

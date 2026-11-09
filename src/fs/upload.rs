@@ -110,11 +110,18 @@ pub async fn upload(
     // Writes run in the background: only this reports a failed last write, and `into_std` would drop that error.
     file.flush().await?;
     let file = file.into_std().await;
-    if let Some(old) = &existing {
-        keep_owner_and_mode(&file, old)?;
-    }
-    file.sync_all()?;
-    drop(file);
+    // The final fsync waits for the disk, which on a slow one takes seconds: on the blocking pool, so the runtime keeps
+    // serving everyone else meanwhile.
+    let old = existing;
+    tokio::task::spawn_blocking(move || -> Result<(), FsError> {
+        if let Some(old) = &old {
+            keep_owner_and_mode(&file, old)?;
+        }
+        file.sync_all()?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| FsError::Io(std::io::Error::other(e)))??;
 
     let how = if replace {
         RenameFlags::empty()

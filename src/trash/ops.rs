@@ -177,11 +177,18 @@ pub fn to_trash(
 }
 
 /// The folder holding `entry`'s trash folder, as a scope that may reach inside it.
+/// The folder now at the stored path must be one we checked by its marker, not one made there since: the mount point of
+/// a disk that left is a plain folder that a user may write in. Otherwise the entry is treated as on an absent disk.
 fn trash_scope(trashes: &Trashes, entry: &Entry) -> Result<Scope, FsError> {
-    if !trashes.ours().contains(&entry.trash_dir) {
+    let ids = trashes.ids_of(&entry.trash_dir);
+    if ids.is_empty() {
         return Err(FsError::NotFound);
     }
-    Scope::new(trashes.root(), &entry.trash_dir, Reserved::default())
+    let scope = Scope::new(trashes.root(), &entry.trash_dir, Reserved::default())?;
+    if !ids.contains(&scope.root_id()?) {
+        return Err(FsError::NotFound);
+    }
+    Ok(scope)
 }
 
 /// Whether `entry`'s trash folder was removed from the server root, and the item with it. A mount says less: a folder

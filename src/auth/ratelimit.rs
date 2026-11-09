@@ -28,10 +28,13 @@ pub struct FailureLimiter {
 }
 
 /// `order` lists windows oldest first; an entry whose start no longer matches the map is stale and skipped.
+/// `kept` holds key windows of real accounts (`try_count_kept`). Their number is bounded by the accounts, so they
+/// are never dropped to make room: filling `map` with throwaway keys must not reset an account's count.
 #[derive(Default)]
 struct Windows {
     map: HashMap<String, (i64, u32)>,
     order: VecDeque<(String, i64)>,
+    kept: HashMap<String, (i64, u32)>,
 }
 
 impl FailureLimiter {
@@ -59,7 +62,7 @@ impl FailureLimiter {
 
     fn wait(&self, w: &Windows, ip: IpAddr, key: &str, now: i64) -> Option<i64> {
         let wait = |id: String, limit: u32| -> i64 {
-            match w.map.get(&id) {
+            match w.kept.get(&id).or_else(|| w.map.get(&id)) {
                 Some(&(start, count))
                     if limit > 0 && count >= limit && now - start < self.window =>
                 {
@@ -87,6 +90,26 @@ impl FailureLimiter {
         None
     }
 
+    /// `try_count` for a key that names a real account (an existing e-mail, a user id). Its window is kept outside
+    /// the capped map until its period ends.
+    pub fn try_count_kept(&self, ip: IpAddr, key: &str, now: i64) -> Option<i64> {
+        let mut w = self.lock();
+        if let Some(wait) = self.wait(&w, ip, key, now) {
+            return Some(wait);
+        }
+        let id = format!("key:{key}");
+        let window = self.window;
+        w.kept.retain(|_, e| now - e.0 < window);
+        // A window started before the account existed moves over; its `order` entry goes stale.
+        let moved = w.map.remove(&id).filter(|e| now - e.0 < window);
+        let entry = w.kept.entry(id).or_insert(moved.unwrap_or((now, 0)));
+        entry.1 += 1;
+        if self.per_ip > 0 {
+            self.record_ids(&mut w, vec![ip_key(ip)], now);
+        }
+        None
+    }
+
     /// Takes back one try counted by `try_count`: only failures count against an address.
     pub fn undo(&self, ip: IpAddr, key: &str) {
         let mut w = self.lock();
@@ -95,13 +118,22 @@ impl FailureLimiter {
             ids.push(ip_key(ip));
         }
         for id in ids {
-            if let Some(entry) = w.map.get_mut(&id) {
+            let w = &mut *w;
+            if let Some(entry) = w.kept.get_mut(&id).or_else(|| w.map.get_mut(&id)) {
                 entry.1 = entry.1.saturating_sub(1);
             }
         }
     }
 
     fn record(&self, w: &mut Windows, ip: IpAddr, key: &str, now: i64) {
+        let mut ids = vec![format!("key:{key}")];
+        if self.per_ip > 0 {
+            ids.push(ip_key(ip));
+        }
+        self.record_ids(w, ids, now);
+    }
+
+    fn record_ids(&self, w: &mut Windows, ids: Vec<String>, now: i64) {
         while let Some((id, start)) = w.order.front().cloned() {
             let current = w.map.get(&id).map(|e| e.0);
             if current == Some(start) && now - start < self.window {
@@ -112,11 +144,11 @@ impl FailureLimiter {
                 w.map.remove(&id);
             }
         }
-        let mut ids = vec![format!("key:{key}")];
-        if self.per_ip > 0 {
-            ids.push(ip_key(ip));
-        }
         for id in ids {
+            if let Some(entry) = w.kept.get_mut(&id).filter(|e| now - e.0 < self.window) {
+                entry.1 += 1;
+                continue;
+            }
             match w.map.get_mut(&id) {
                 Some(entry) if now - entry.0 < self.window => entry.1 += 1,
                 _ => {
@@ -136,11 +168,15 @@ impl FailureLimiter {
     }
 
     pub fn succeeded(&self, key: &str) {
-        self.lock().map.remove(&format!("key:{key}"));
+        let mut w = self.lock();
+        let id = format!("key:{key}");
+        w.map.remove(&id);
+        w.kept.remove(&id);
     }
 
     pub fn len(&self) -> usize {
-        self.lock().map.len()
+        let w = self.lock();
+        w.map.len() + w.kept.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -160,6 +196,8 @@ pub struct Limiters {
     pub sso_start: FailureLimiter,
     /// Wrong share link passwords: 10 per link and IP together in 15 minutes.
     pub share_password: FailureLimiter,
+    /// Wrong share link passwords from all addresses together: 100 per link in 15 minutes.
+    pub share_link: FailureLimiter,
     /// E-mails without an account asked for when granting: 20 per person in 15 minutes.
     pub grant_lookup: FailureLimiter,
 }
@@ -178,6 +216,7 @@ impl Limiters {
             captcha: FailureLimiter::new(30, 0, 15 * 60, 10_000),
             sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
             share_password: FailureLimiter::new(0, 10, 15 * 60, 10_000),
+            share_link: FailureLimiter::new(0, 100, 15 * 60, 10_000),
             grant_lookup: FailureLimiter::new(0, 20, 15 * 60, 10_000),
         }
     }
@@ -270,6 +309,54 @@ mod tests {
         }
         assert_eq!(l.try_count(ip(1), "ana@example.com", 0), Some(900));
         assert_eq!(l.blocked(ip(1), "ana@example.com", 0), Some(900));
+    }
+
+    fn v6(n: u16) -> IpAddr {
+        IpAddr::from([0x2001, 0xdb8, 1, n, 0, 0, 0, 1])
+    }
+
+    #[test]
+    fn a_full_map_does_not_end_an_account_window() {
+        let l = FailureLimiter::new(10, 5, 900, 100);
+        for _ in 0..5 {
+            assert_eq!(l.try_count_kept(ip(1), "ana@example.com", 0), None);
+        }
+        // Throwaway addresses and e-mails from many /64s, none over any limit, more than the cap holds.
+        for p in 0..200u16 {
+            for i in 0..5 {
+                assert_eq!(
+                    l.try_count(v6(p), &format!("x{p}-{i}@example.com"), 30),
+                    None
+                );
+            }
+        }
+        assert_eq!(l.blocked(ip(2), "ana@example.com", 30), Some(870));
+        assert!(l.len() <= 100 + 1, "{}", l.len());
+    }
+
+    #[test]
+    fn kept_windows_end_with_their_period() {
+        let l = FailureLimiter::new(10, 5, 900, 100);
+        for i in 0..50 {
+            assert_eq!(l.try_count_kept(ip(i), &format!("user:{i}"), 0), None);
+        }
+        assert_eq!(l.len(), 100);
+        l.try_count_kept(ip(2), "user:new", 900);
+        assert_eq!(l.len(), 2);
+    }
+
+    #[test]
+    fn success_and_undo_reach_kept_windows() {
+        let l = FailureLimiter::new(10, 5, 900, 100);
+        for _ in 0..5 {
+            l.try_count_kept(ip(1), "ana@example.com", 0);
+        }
+        l.undo(ip(1), "ana@example.com");
+        assert_eq!(l.blocked(ip(1), "ana@example.com", 0), None);
+        l.try_count_kept(ip(1), "ana@example.com", 0);
+        assert!(l.blocked(ip(1), "ana@example.com", 0).is_some());
+        l.succeeded("ana@example.com");
+        assert_eq!(l.blocked(ip(1), "ana@example.com", 0), None);
     }
 
     #[test]

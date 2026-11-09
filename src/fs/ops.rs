@@ -238,21 +238,9 @@ fn copy_at(
             Ok(())
         }
         FileType::RegularFile => {
-            let src_fd = rustix::fs::openat(
-                src_dir,
-                src,
-                OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::empty(),
-            )?;
-            let create = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC;
-            let dst_fd = rustix::fs::openat(
-                dst_dir,
-                dst,
-                create,
-                Mode::from_raw_mode(st.st_mode & 0o7777),
-            )?;
-            let (mut r, mut w) = (std::fs::File::from(src_fd), std::fs::File::from(dst_fd));
-            std::io::copy(&mut r, &mut w)?;
+            if !copy_file(src_dir, src, dst_dir, dst, st.st_mode & 0o7777)? {
+                ctx.skipped += 1;
+            }
             Ok(())
         }
         // Devices, sockets and pipes are not copied.
@@ -260,5 +248,63 @@ fn copy_at(
             ctx.skipped += 1;
             Ok(())
         }
+    }
+}
+
+/// Copies the regular file `src` to a new `dst`. `false` when `src` is no longer a regular file.
+fn copy_file(
+    src_dir: &OwnedFd,
+    src: &OsStr,
+    dst_dir: &OwnedFd,
+    dst: &OsStr,
+    mode: u32,
+) -> Result<bool, FsError> {
+    // The name may no longer be the file statat saw. O_NONBLOCK keeps a pipe from making the open wait for a writer on
+    // a thread nothing can cancel, and the check leaves anything but a regular file out (as serve_file and zip do).
+    let src_fd = rustix::fs::openat(
+        src_dir,
+        src,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    if FileType::from_raw_mode(rustix::fs::fstat(&src_fd)?.st_mode) != FileType::RegularFile {
+        return Ok(false);
+    }
+    let create = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC;
+    let dst_fd = rustix::fs::openat(dst_dir, dst, create, Mode::from_raw_mode(mode))?;
+    let (mut r, mut w) = (std::fs::File::from(src_fd), std::fs::File::from(dst_fd));
+    std::io::copy(&mut r, &mut w)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(path: &std::path::Path) -> OwnedFd {
+        rustix::fs::open(
+            path,
+            OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap()
+    }
+
+    /// A name that became a pipe after it was seen as a file: the copy must leave it out, not wait for a writer.
+    #[test]
+    fn a_file_swapped_for_a_pipe_is_left_out_without_waiting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = dir(tmp.path());
+        rustix::fs::mknodat(&d, "f", FileType::Fifo, Mode::from_raw_mode(0o600), 0).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = copy_file(&d, OsStr::new("f"), &d, OsStr::new("copy"), 0o600);
+            tx.send(r.map_err(|e| format!("{e:?}"))).ok();
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("copy waited on the pipe");
+        assert_eq!(got, Ok(false));
+        assert!(!tmp.path().join("copy").exists());
     }
 }

@@ -473,6 +473,41 @@ async fn dev_user_unknown_is_signed_out() {
 }
 
 #[tokio::test]
+async fn a_flood_of_other_addresses_does_not_reset_an_account_limit() {
+    let h = harness(&[]);
+    h.add_user("ana@example.com", Some(PW), false);
+    for _ in 0..5 {
+        let res = Req::post("/api/auth/login")
+            .json(login_body("ana@example.com", "Wrong1!x"))
+            .send(&h.app)
+            .await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    }
+    // Failed sign-ins with throwaway e-mails from 2000 /64s, 10 each: none over a limit, twice what the map holds.
+    let now = cairn::now();
+    for p in 0..2000u16 {
+        let ip = std::net::IpAddr::from([0x2001, 0xdb8, 1, p, 0, 0, 0, 1]);
+        for i in 0..10 {
+            assert_eq!(
+                h.state
+                    .limiters
+                    .login
+                    .try_count(ip, &format!("x{p}-{i}@example.com"), now),
+                None
+            );
+        }
+    }
+    let res = Req::post("/api/auth/login")
+        .json(login_body("ana@example.com", PW))
+        .send(&h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::TOO_MANY_REQUESTS, "too_many")
+    );
+}
+
+#[tokio::test]
 async fn parallel_logins_cannot_pass_the_limit() {
     let h = harness(&[]);
     h.add_user("ana@example.com", Some(PW), false);

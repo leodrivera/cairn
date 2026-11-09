@@ -196,6 +196,8 @@ pub struct Limiters {
     pub sso_start: FailureLimiter,
     /// Wrong share link passwords: 10 per link and IP together in 15 minutes.
     pub share_password: FailureLimiter,
+    /// Wrong share link passwords from all addresses together: 100 per link in 15 minutes.
+    pub share_link: FailureLimiter,
     /// E-mails without an account asked for when granting: 20 per person in 15 minutes.
     pub grant_lookup: FailureLimiter,
 }
@@ -214,6 +216,7 @@ impl Limiters {
             captcha: FailureLimiter::new(30, 0, 15 * 60, 10_000),
             sso_start: FailureLimiter::new(20, 0, 10 * 60, 10_000),
             share_password: FailureLimiter::new(0, 10, 15 * 60, 10_000),
+            share_link: FailureLimiter::new(0, 100, 15 * 60, 10_000),
             grant_lookup: FailureLimiter::new(0, 20, 15 * 60, 10_000),
         }
     }

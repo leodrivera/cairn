@@ -237,8 +237,9 @@ notice in Server settings: "Sign-in has no CAPTCHA. Turn one on before you open 
 
 ### 4.6 Rate limits
 
-In memory, fixed windows, bounded maps (oldest entries dropped past 10 000). The process is single, so no shared
-store is needed; a restart clears them, which is acceptable.
+In memory, fixed windows, bounded maps (oldest entries dropped past 10 000). The window of an e-mail that has an
+account is kept apart and never dropped before it ends, so filling the map with other addresses cannot reset it. The
+process is single, so no shared store is needed; a restart clears them, which is acceptable.
 
 | What | Limit |
 | --- | --- |
@@ -247,6 +248,7 @@ store is needed; a restart clears them, which is acceptable.
 | Refused CAPTCHA answers per IP | 30 per 15 min; an accepted or empty one does not count, nor one the vendor never answered |
 | OAuth and OIDC starts per IP | 20 per 10 min |
 | Wrong share password, per share and IP together | 10 per 15 min |
+| Wrong share password, per share from all addresses | 100 per 15 min |
 | Wrong current password on "Change password" | 5 per 15 min per user, answered `400`, not `401` |
 | E-mails without an account asked for when sharing with people | 20 per 15 min per user; the whole request is refused and nothing from it is saved |
 | ZIP downloads running at once | 16 on the server, 4 per IP (an IPv6 address counts by its /64) |

@@ -1,5 +1,7 @@
 CREATE TABLE users (
-  id            INTEGER PRIMARY KEY,
+  -- AUTOINCREMENT: a deleted user's id is never given to a new account, so a request still running for the deleted
+  -- user cannot write to whoever is created next.
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
   email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
   name          TEXT NOT NULL,
   password_hash TEXT,

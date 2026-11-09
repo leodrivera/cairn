@@ -257,15 +257,20 @@ pub(crate) async fn finish(
         return res;
     };
     end_previous(s, previous);
-    let token = match session::create(
+    // Bound to the vouched address: an admin may move the account to another one while this request runs.
+    let token = match session::create_for_email(
         &s.db,
         user.id,
+        &email,
         method,
-        false,
         &session::label_from_user_agent(user_agent),
         crate::now(),
     ) {
-        Ok(t) => t,
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            tracing::warn!(event = "auth.sso_failed", ip = %client.ip, method = method.as_str(), reason = "email_changed");
+            return failed(s, client, None);
+        }
         Err(e) => {
             tracing::error!(event = "db.error", error = %e);
             return failed(s, client, None);
@@ -396,7 +401,8 @@ async fn oidc_callback(
     let state_ok = pending
         .as_ref()
         .is_some_and(|p| crate::config::ct_eq(p.state.as_bytes(), sent_state.as_bytes()));
-    let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, now)) else {
+    let Some(pending) = pending.filter(|p| state_ok && s.oidc.first_use(&p.state, p.created, now))
+    else {
         oidc_failed(&id, client.ip, "state");
         return with_cleared(sign_in_failed(), https, &sent_state);
     };

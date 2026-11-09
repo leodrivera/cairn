@@ -347,3 +347,69 @@ async fn own_invalid_email_says_invalid() {
     );
     assert_eq!(res.json["message"], "Enter a valid e-mail address.");
 }
+
+#[tokio::test]
+async fn a_deleted_users_id_is_not_given_to_a_new_account() {
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let first = create(&h, &a, "maria@example.com", Some(PW)).await["user"]["id"]
+        .as_i64()
+        .unwrap();
+    let res = Req::delete(&format!("/api/users/{first}"))
+        .cookie(&a)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let next = create(&h, &a, "nina@example.com", Some(PW)).await["user"]["id"]
+        .as_i64()
+        .unwrap();
+    assert!(next > first, "{next} reuses or precedes {first}");
+}
+
+/// A request still running for a deleted user must not land on whoever is created next.
+#[tokio::test]
+async fn a_deleted_users_profile_change_in_flight_changes_no_other_account() {
+    use axum::body::{Body, Bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let h = harness(&[]);
+    let a = admin(&h).await;
+    let x = h.add_user("old@example.com", Some(PW), false);
+    let x_cookie = h.session_for(&x);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    });
+    let req = Request::builder()
+        .method("PATCH")
+        .uri("/api/me")
+        .header("x-cairn", "1")
+        .header("content-type", "application/json")
+        .header("cookie", &x_cookie)
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let app = h.app.clone();
+    let pending = tokio::spawn(async move { app.oneshot(req).await.unwrap() });
+    tx.send(Ok(Bytes::from_static(b"{\"name\":")))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let res = Req::delete(&format!("/api/users/{}", x.id))
+        .cookie(&a)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let made = create(&h, &a, "new@example.com", Some(PW)).await["user"]["id"]
+        .as_i64()
+        .unwrap();
+
+    tx.send(Ok(Bytes::from_static(b"\"Set by old\"}")))
+        .await
+        .unwrap();
+    drop(tx);
+    pending.await.unwrap();
+    let after = cairn::users::by_id(&h.state.db, made).unwrap().unwrap();
+    assert_eq!(after.name, "Maria");
+}

@@ -302,8 +302,17 @@ impl Provider {
 pub struct Oidc {
     providers: Vec<Arc<Provider>>,
     pub(crate) mac_key: [u8; 32],
-    /// `state` values already used, with when: a pending cookie works once even if a browser sends it again.
-    used: Mutex<std::collections::VecDeque<(String, i64)>>,
+    /// `state` values already used, with when their cookie was made: a pending cookie works once even if a browser
+    /// sends it again.
+    used: Mutex<Used>,
+}
+
+#[derive(Default)]
+struct Used {
+    list: std::collections::VecDeque<(String, i64)>,
+    /// Newest cookie time among states dropped for room while their cookie still worked. A cookie made at or before
+    /// it may be one of them, so it is refused: the list is capped, but a state never works twice.
+    floor: Option<i64>,
 }
 
 impl Oidc {
@@ -317,21 +326,26 @@ impl Oidc {
         }
     }
 
-    /// Marks `state` used; false when it already was. Entries leave after the cookie's lifetime, and the list is
-    /// capped, so it stays small.
-    pub fn first_use(&self, state: &str, now: i64) -> bool {
+    /// Marks `state`, from a cookie made at `created`, used; false when it already was or may have been. Entries
+    /// leave after the cookie's lifetime, and the list is capped, so it stays small.
+    pub fn first_use(&self, state: &str, created: i64, now: i64) -> bool {
+        let max_age = crate::auth::oidc::flow::MAX_AGE;
         let mut used = self.used.lock().unwrap_or_else(|p| p.into_inner());
-        while used
-            .front()
-            .is_some_and(|(_, t)| now - t > crate::auth::oidc::flow::MAX_AGE)
-            || used.len() >= 10_000
-        {
-            used.pop_front();
+        let used = &mut *used;
+        while let Some(&(_, t)) = used.list.front() {
+            if now - t > max_age {
+                used.list.pop_front();
+            } else if used.list.len() >= 10_000 {
+                used.list.pop_front();
+                used.floor = used.floor.max(Some(t));
+            } else {
+                break;
+            }
         }
-        if used.iter().any(|(s, _)| s == state) {
+        if used.floor.is_some_and(|f| created <= f) || used.list.iter().any(|(s, _)| s == state) {
             return false;
         }
-        used.push_back((state.to_string(), now));
+        used.list.push_back((state.to_string(), created));
         true
     }
 
@@ -389,6 +403,21 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::routing::get;
+
+    /// A used state stays used for the whole life of its cookie, however many other sign-ins come after it.
+    #[test]
+    fn a_used_state_stays_used_past_the_list_cap() {
+        let oidc = super::Oidc::new(&[]);
+        assert!(oidc.first_use("victim", 0, 0));
+        for i in 0..10_000 {
+            assert!(oidc.first_use(&format!("other-{i}"), 1, 1));
+        }
+        assert!(!oidc.first_use("victim", 0, 2));
+        // A cookie made after every dropped state still works once.
+        assert!(oidc.first_use("new", 5, 5));
+        assert!(!oidc.first_use("new", 5, 6));
+    }
+
     use serde_json::{Value, json};
 
     use super::*;

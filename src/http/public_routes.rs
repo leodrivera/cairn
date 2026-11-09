@@ -137,8 +137,15 @@ async fn unlock(
     let now = crate::now();
     let key = format!("{}|{}", at.id, ip_key(client.ip));
     let limiter = &s.limiters.share_password;
+    // The cap per link holds whatever the number of addresses. Links are few, so its windows are kept until they end.
+    let per_link = &s.limiters.share_link;
     // Counted before the slow check, so tries sent in parallel cannot all pass it; a right password clears it.
+    if let Some(wait) = per_link.try_count_kept(client.ip, &at.id, now) {
+        tracing::warn!(event = "http.rate_limited", route = "share_password", ip = %client.ip);
+        return Err(ApiError::too_many(wait));
+    }
     if let Some(wait) = limiter.try_count(client.ip, &key, now) {
+        per_link.undo(client.ip, &at.id);
         tracing::warn!(event = "http.rate_limited", route = "share_password", ip = %client.ip);
         return Err(ApiError::too_many(wait));
     }
@@ -151,6 +158,7 @@ async fn unlock(
         ));
     }
     limiter.succeeded(&key);
+    per_link.undo(client.ip, &at.id);
     let cookie = shares::unlock_cookie(&at.id, &hash, &s.share_key, now, client.https);
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response())
 }

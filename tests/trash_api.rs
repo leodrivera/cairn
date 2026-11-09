@@ -847,6 +847,64 @@ async fn entry_stays_while_its_disk_is_absent() {
 }
 
 #[tokio::test]
+async fn a_folder_made_where_an_absent_disks_trash_was_is_not_trusted() {
+    let (h, dir, c, id) = disk_with_an_entry(9400).await;
+    let (vol, offline) = (dir.path().join("srv/vol"), dir.path().join("offline"));
+    std::fs::rename(&vol, &offline).unwrap();
+    std::fs::create_dir(&vol).unwrap();
+    cairn::fs::mount::fake_mount_id(&vol, 9401);
+    // While the disk is away, a user with write there makes a plain folder with the trash folder's name.
+    h.add_user_scoped("bob@example.com", PW, "/vol", ALL);
+    let bob = h.login("bob@example.com", PW).await;
+    let res = Req::post("/api/folders/.cairn-trash")
+        .cookie(&bob)
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.json);
+
+    assert_eq!(
+        cairn::trash::ops::reconcile(&h.state.trash, &h.state.db).0,
+        0
+    );
+    assert_eq!(rows(&h), 1);
+    let res = delete_for_good(&h, &c, &id).await;
+    assert_eq!(
+        res.json["failed"][0]["error"], "trash_absent",
+        "{}",
+        res.json
+    );
+    assert_eq!(rows(&h), 1);
+}
+
+#[tokio::test]
+async fn trash_on_a_disk_whose_name_is_not_utf8_works() {
+    use std::os::unix::ffi::OsStrExt;
+    let (h, dir) = harness_with_root(&[]);
+    let root = dir.path().join("srv");
+    let vol = root.join(std::ffi::OsStr::from_bytes(b"vol\xff"));
+    std::fs::create_dir_all(&vol).unwrap();
+    std::fs::write(vol.join("notes.txt"), "n").unwrap();
+    cairn::fs::mount::fake_mount_id(dir.path(), 9500);
+    cairn::fs::mount::fake_mount_id(&root, 9501);
+    cairn::fs::mount::fake_mount_id(&vol, 9502);
+    let (c, _) = root_user(&h, &dir).await;
+    let seg = cairn::fs::path::RelPath::segment_for(b"vol\xff");
+    delete(&h, &c, &[&format!("{seg}/notes.txt")], None).await;
+    assert!(!vol.join("notes.txt").exists());
+    let id = trash_list(&h, &c).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let res = Req::post("/api/trash/restore")
+        .cookie(&c)
+        .json(json!({ "ids": [id] }))
+        .send(&h.app)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    assert!(vol.join("notes.txt").exists(), "{}", res.json);
+}
+
+#[tokio::test]
 async fn entry_stays_when_another_disk_takes_the_place_of_its_own() {
     let (h, dir, c, id) = disk_with_an_entry(9200).await;
     // Mounted at the same place, with no trash folder: the entry's item is still on the disk that left.

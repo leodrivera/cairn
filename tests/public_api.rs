@@ -536,6 +536,30 @@ async fn unlock_wrong_is_403() {
 }
 
 #[tokio::test]
+async fn wrong_link_passwords_from_many_addresses_hit_a_cap_per_link() {
+    let f = fx().await;
+    let id = locked_link(&f).await;
+    // 10 addresses, each under its own limit of 10, use up the 100 the link allows in total.
+    for n in 0..10 {
+        for _ in 0..10 {
+            let res = unlock(&id, "nope-wrong")
+                .peer(&format!("198.51.100.{n}:4000"))
+                .send(&f.h.app)
+                .await;
+            assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.json);
+        }
+    }
+    let res = unlock(&id, "s3cret-pass")
+        .peer("198.51.100.200:4000")
+        .send(&f.h.app)
+        .await;
+    assert_eq!(
+        (res.status, res.code()),
+        (StatusCode::TOO_MANY_REQUESTS, "too_many")
+    );
+}
+
+#[tokio::test]
 async fn unlock_needs_x_cairn() {
     let f = fx().await;
     let id = locked_link(&f).await;

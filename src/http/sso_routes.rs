@@ -257,15 +257,20 @@ pub(crate) async fn finish(
         return res;
     };
     end_previous(s, previous);
-    let token = match session::create(
+    // Bound to the vouched address: an admin may move the account to another one while this request runs.
+    let token = match session::create_for_email(
         &s.db,
         user.id,
+        &email,
         method,
-        false,
         &session::label_from_user_agent(user_agent),
         crate::now(),
     ) {
-        Ok(t) => t,
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            tracing::warn!(event = "auth.sso_failed", ip = %client.ip, method = method.as_str(), reason = "email_changed");
+            return failed(s, client, None);
+        }
         Err(e) => {
             tracing::error!(event = "db.error", error = %e);
             return failed(s, client, None);

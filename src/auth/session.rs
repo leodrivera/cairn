@@ -73,6 +73,38 @@ pub fn create(
     Ok(token)
 }
 
+/// Starts a broker or OIDC session, but only while the account still has the address the provider vouched for. One
+/// statement, as in `create_verified`: an address change either comes first and nothing is made, or comes after and
+/// its purge of the user's sessions removes this one. `None` when nothing was made.
+pub fn create_for_email(
+    db: &Db,
+    user_id: i64,
+    email: &str,
+    method: Method,
+    label: &str,
+    now: i64,
+) -> rusqlite::Result<Option<String>> {
+    let token = new_token();
+    let expires = now + SHORT_SECS;
+    let made = db.with(|c| {
+        c.execute("DELETE FROM sessions WHERE expires_at <= ?1", [now])?;
+        c.execute(
+            "INSERT INTO sessions (id, user_id, method, keep, label, created_at, expires_at)
+             SELECT ?1, id, ?2, 0, ?3, ?4, ?5 FROM users WHERE id = ?6 AND email = ?7",
+            params![
+                digest(&token),
+                method.as_str(),
+                label,
+                now,
+                expires,
+                user_id,
+                email
+            ],
+        )
+    })?;
+    Ok((made == 1).then_some(token))
+}
+
 fn new_token() -> String {
     let mut raw = [0u8; 32];
     getrandom::fill(&mut raw).expect("system random source");
@@ -236,6 +268,25 @@ mod tests {
     }
 
     const T0: i64 = 1_000_000;
+
+    #[test]
+    fn provider_session_needs_the_vouched_address() {
+        let (db, id) = setup();
+        // An admin moved the account to another address after the provider vouched for the old one.
+        db.with(|c| {
+            c.execute(
+                "UPDATE users SET email = 'new@example.com' WHERE id = ?1",
+                [id],
+            )
+        })
+        .unwrap();
+        let made = create_for_email(&db, id, "u@example.com", Method::Oidc, "x", T0).unwrap();
+        assert_eq!(made, None);
+        assert_eq!(rows(&db), 0);
+        let made = create_for_email(&db, id, "new@example.com", Method::Oidc, "x", T0).unwrap();
+        assert!(made.is_some());
+        assert_eq!(rows(&db), 1);
+    }
 
     #[test]
     fn token_shape() {

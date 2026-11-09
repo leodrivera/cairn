@@ -137,8 +137,14 @@ async fn login(
         Some(e) => users::by_email(&s.db, e)?,
         None => None,
     };
-    // Counted before the slow check, so tries sent together cannot all pass; a right password gives it back.
-    if let Some(wait) = s.limiters.login.try_count(client.ip, &key, now) {
+    // Counted before the slow check, so tries sent together cannot all pass; a right password gives it back. An
+    // existing account's window is kept apart, so a flood of throwaway e-mails cannot push it out.
+    let counted = if found.is_some() {
+        s.limiters.login.try_count_kept(client.ip, &key, now)
+    } else {
+        s.limiters.login.try_count(client.ip, &key, now)
+    };
+    if let Some(wait) = counted {
         tracing::warn!(event = "http.rate_limited", route = "login", ip = %client.ip, email = %typed);
         return Err(ApiError::too_many(wait));
     }

@@ -237,8 +237,9 @@ notice in Server settings: "Sign-in has no CAPTCHA. Turn one on before you open 
 
 ### 4.6 Rate limits
 
-In memory, fixed windows, bounded maps (oldest entries dropped past 10 000). The process is single, so no shared
-store is needed; a restart clears them, which is acceptable.
+In memory, fixed windows, bounded maps (oldest entries dropped past 10 000). The window of an e-mail that has an
+account is kept apart and never dropped before it ends, so filling the map with other addresses cannot reset it. The
+process is single, so no shared store is needed; a restart clears them, which is acceptable.
 
 | What | Limit |
 | --- | --- |

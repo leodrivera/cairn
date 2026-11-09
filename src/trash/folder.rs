@@ -12,6 +12,7 @@ use rustix::io::Errno;
 use crate::db::Db;
 use crate::fs::FsError;
 use crate::fs::mount::{mount_id, mount_points};
+use crate::fs::path::RelPath;
 use crate::fs::scope::TRASH_NAME;
 
 /// The marker file inside each trash folder of ours: one line, `cairn-trash <token>`.
@@ -214,7 +215,9 @@ impl Trashes {
             let Ok(found) = inspect(&fd, token.as_deref()) else {
                 continue;
             };
-            let stored = self.stored(&fd);
+            let Some(stored) = self.stored(&fd) else {
+                continue;
+            };
             match found {
                 Found::Ours(id) => self.record(&stored, id),
                 Found::Taken => self.mark_taken(&stored),
@@ -223,12 +226,17 @@ impl Trashes {
         }
     }
 
-    /// `top` as stored: `/` for the root, `/photos` below it.
-    fn stored(&self, top: &OwnedFd) -> String {
-        let rel = fd_path(top)
-            .and_then(|p| p.strip_prefix(&self.root).ok().map(Path::to_path_buf))
-            .unwrap_or_default();
-        format!("/{}", rel.to_string_lossy())
+    /// `top` as stored: `/` for the root, `/photos` below it, in the path encoding (NUL plus base64url for a name
+    /// that is not UTF-8), so it reopens the same folder. `None` when it cannot be written that way.
+    fn stored(&self, top: &OwnedFd) -> Option<String> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = fd_path(top)?;
+        let rel = path.strip_prefix(&self.root).ok()?;
+        let mut out = RelPath::parse("").ok()?;
+        for seg in rel.iter() {
+            out = out.join_bytes(seg.as_bytes()).ok()?;
+        }
+        Some(format!("/{out}"))
     }
 
     fn trash_path(top: &str) -> String {
@@ -259,7 +267,7 @@ impl Trashes {
 
     /// The trash folder of the mount whose top is `top`, made with its marker on first use, and its stored path.
     pub fn for_dir(&self, db: &Db, top: &OwnedFd) -> Result<(OwnedFd, String), FsError> {
-        let stored = self.stored(top);
+        let stored = self.stored(top).ok_or(FsError::InvalidPath)?;
         for _ in 0..2 {
             let token = crate::trash::marker_token(db)
                 .map_err(|e| FsError::Io(std::io::Error::other(e)))?;
@@ -291,6 +299,17 @@ impl Trashes {
     }
 
     /// Stored paths of every trash folder of ours.
+    /// Device and inode of every trash folder of ours recorded at `path`: a disk that comes back may have new ones.
+    pub fn ids_of(&self, path: &str) -> Vec<(u64, u64)> {
+        let inner = self.inner.lock().expect("trashes");
+        inner
+            .ours
+            .iter()
+            .filter(|(p, _)| p == path)
+            .map(|(_, i)| *i)
+            .collect()
+    }
+
     pub fn ours(&self) -> Vec<String> {
         self.inner
             .lock()

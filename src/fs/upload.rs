@@ -22,7 +22,7 @@ fn db_err(e: rusqlite::Error) -> FsError {
 struct Temp {
     dir: OwnedFd,
     name: String,
-    abs: String,
+    abs: Vec<u8>,
     db: Arc<Db>,
     armed: bool,
 }
@@ -36,6 +36,14 @@ impl Drop for Temp {
             .db
             .with(|c| c.execute("DELETE FROM uploads WHERE path = ?1", [&self.abs]));
     }
+}
+
+/// The absolute path of `name` in `dir`, as recorded in `uploads` for the startup cleanup: its exact bytes, since a
+/// folder name need not be UTF-8.
+fn stored_path(dir: &OwnedFd, name: &str) -> std::io::Result<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    let folder = std::fs::read_link(format!("/proc/self/fd/{}", dir.as_raw_fd()))?;
+    Ok(folder.join(name).as_os_str().as_bytes().to_vec())
 }
 
 /// Streams `body` into `path`. Returns the new file's stat and whether it replaced one.
@@ -76,8 +84,7 @@ pub async fn upload(
     let temp_name = format!("{TEMP_PREFIX}{:016x}", u64::from_le_bytes(random));
     let flags = OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC;
     let fd = rustix::fs::openat(&dir, temp_name.as_str(), flags, Mode::from_raw_mode(0o644))?;
-    let folder = std::fs::read_link(format!("/proc/self/fd/{}", dir.as_raw_fd()))?;
-    let abs = folder.join(&temp_name).to_string_lossy().into_owned();
+    let abs = stored_path(&dir, &temp_name)?;
     let temp = Temp {
         dir,
         name: temp_name,
@@ -159,15 +166,16 @@ fn keep_owner_and_mode(file: &std::fs::File, old: &rustix::fs::Stat) -> Result<(
 
 /// At startup no upload is running, so every recorded temporary file is a leftover from a crash.
 pub fn cleanup_leftovers(db: &Db) {
-    let paths: Vec<String> = db
+    use std::os::unix::ffi::OsStrExt;
+    let paths: Vec<Vec<u8>> = db
         .with(|c| {
-            let mut q = c.prepare("SELECT path FROM uploads")?;
+            let mut q = c.prepare("SELECT CAST(path AS BLOB) FROM uploads")?;
             q.query_map([], |r| r.get(0))?.collect()
         })
         .unwrap_or_default();
     for p in &paths {
-        if std::path::Path::new(p)
-            .file_name()
+        let p = std::path::Path::new(std::ffi::OsStr::from_bytes(p));
+        if p.file_name()
             .is_some_and(|n| n.to_string_lossy().starts_with(TEMP_PREFIX))
         {
             let _ = std::fs::remove_file(p);
@@ -184,6 +192,34 @@ pub fn cleanup_leftovers(db: &Db) {
 
 #[cfg(test)]
 mod tests {
+    /// A crash leaves the temporary file and its row; startup removes it, whatever bytes its folder's name has.
+    #[test]
+    fn leftover_in_a_folder_whose_name_is_not_utf8_is_removed() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join(std::ffi::OsStr::from_bytes(b"up\xff"));
+        std::fs::create_dir(&folder).unwrap();
+        let name = format!("{TEMP_PREFIX}0000000000000001");
+        std::fs::write(folder.join(&name), "partial").unwrap();
+        let dir = rustix::fs::open(
+            &folder,
+            OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap();
+        let db = Db::open_in_memory();
+        let path = stored_path(&dir, &name).unwrap();
+        db.with(|c| {
+            c.execute(
+                "INSERT INTO uploads (path, started_at) VALUES (?1, 0)",
+                rusqlite::params![path],
+            )
+        })
+        .unwrap();
+        cleanup_leftovers(&db);
+        assert!(!folder.join(&name).exists());
+    }
+
     use std::sync::Arc;
 
     use super::*;

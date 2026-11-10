@@ -146,7 +146,15 @@ export function Login({ error: from }: { error?: LoginError }) {
                   onInput={setPassword}
                 />
               </div>
-              {config.captcha && <div class="captcha" ref={captchaBox} aria-label={t("login.captcha")} />}
+              {config.captcha && (
+                <div
+                  class="captcha"
+                  data-provider={config.captcha.provider}
+                  data-theme={effectiveTheme()}
+                  ref={captchaBox}
+                  aria-label={t("login.captcha")}
+                />
+              )}
               <label class="check">
                 <input id="login-keep" type="checkbox" checked={keep} onChange={(e) => setKeep(e.currentTarget.checked)} />
                 <span>{t("login.keep")}</span>

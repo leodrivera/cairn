@@ -589,6 +589,19 @@ code {
   min-height: 65px;
 }
 
+/* The dark reCAPTCHA frame draws its own light 2 px edge inside the iframe; clip it. */
+.captcha[data-provider="recaptcha"][data-theme="dark"] {
+  width: 300px;
+  max-width: 100%;
+  height: 74px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.captcha[data-provider="recaptcha"][data-theme="dark"] > div {
+  margin: -2px;
+}
+
 .small {
   font-size: var(--cairn-text-small);
 }

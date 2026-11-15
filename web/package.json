@@ -9,7 +9,7 @@
     "test": "node test.mjs"
   },
   "dependencies": {
-    "preact": "^11.1.1"
+    "preact": "^11.2.0"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^21.0.4",

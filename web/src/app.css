@@ -1835,6 +1835,10 @@ fieldset.perms {
   min-width: 0;
 }
 
+.share-create {
+  align-self: flex-start;
+}
+
 .dialog-buttons .share-delete {
   margin-right: auto;
 }

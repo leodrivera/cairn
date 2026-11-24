@@ -1,8 +1,9 @@
-// Share one file or folder: choose expiry, password and downloads, create the link, then copy, change or delete it.
+// Share one file or folder: with people who have an account here, or by a link (expiry, password, downloads) that can
+// be copied, changed or deleted. The link is made only by its own button: e-mails typed and not added never make one.
 import { useState } from "preact/hooks";
 import { ApiFailure, offline } from "../lib/api";
 import { displayPath, displaySegment, segments } from "../lib/paths";
-import { copyText, createShare, deleteShare, shareUrl, updateShare, type Expiry, type ShareOptions } from "../lib/shares";
+import { copyText, createShare, deleteShare, fullDate, shareUrl, updateShare, type Expiry, type ShareOptions } from "../lib/shares";
 import { createGrants, splitEmails } from "../lib/grants";
 import { errorText, t } from "../i18n/index";
 import { Dialog } from "./dialogs";
@@ -15,8 +16,13 @@ type Props = {
   kind: "file" | "folder";
   /** Whether the person may write here, so "Can edit" may be given. */
   canWrite?: boolean;
+  /** An existing link to change: the dialog opens on it, without the People part. */
+  link?: Share;
   onClose(): void;
 };
+
+/** A link's expiry choice: a number of days from now, never, or the date it already has. */
+type Choice = Expiry | "keep";
 
 const choices: { value: string; days: Expiry; label: "share.in1" | "share.in7" | "share.in30" | "share.never" }[] = [
   { value: "1", days: 1, label: "share.in1" },
@@ -25,17 +31,20 @@ const choices: { value: string; days: Expiry; label: "share.in1" | "share.in7" |
   { value: "never", days: null, label: "share.never" },
 ];
 
-export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props) {
-  const name = displaySegment(segments(entryPath).at(-1) ?? "");
-  const [share, setShare] = useState<Share | null>(null);
+export function ShareDialog({ entryPath, kind, canWrite = true, link, onClose }: Props) {
+  const name = link ? link.name : displaySegment(segments(entryPath).at(-1) ?? "");
+  const [share, setShare] = useState<Share | null>(link ?? null);
   // The expiry the link was made with: Done sends it again only when the choice changed.
-  const [savedDays, setSavedDays] = useState<Expiry>(7);
-  const [days, setDays] = useState<Expiry>(7);
-  const [locked, setLocked] = useState(false);
+  const [savedDays, setSavedDays] = useState<Choice>(link ? "keep" : 7);
+  const [days, setDays] = useState<Choice>(link ? "keep" : 7);
+  const [locked, setLocked] = useState(link?.hasPassword ?? false);
   const [password, setPassword] = useState("");
-  const [download, setDownload] = useState(true);
+  const [download, setDownload] = useState(link?.download ?? true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The People field lives here so the dialog's own buttons can see e-mails that were typed but not added.
+  const [emails, setEmails] = useState("");
+  const [pendingWarn, setPendingWarn] = useState(false);
 
   // A new password of at least 8 characters is needed, unless the link already has one and the field is left empty.
   const keeping = password === "" && !!share?.hasPassword;
@@ -53,19 +62,34 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
     setBusy(false);
   };
 
+  /** E-mails left in the field stop Create link and Done: the person meant to share with someone, not to move on. */
+  const pending = () => {
+    if (splitEmails(emails).length === 0) return false;
+    setPendingWarn(true);
+    document.getElementById("people-emails")?.focus();
+    return true;
+  };
+
   const create = () =>
+    !pending() &&
     run(async () => {
-      const s = await createShare(entryPath, { expiresDays: days, password: locked ? password : null, download });
+      const s = await createShare(entryPath, {
+        expiresDays: days === "keep" ? 7 : days,
+        password: locked ? password : null,
+        download,
+      });
       setShare(s);
       setSavedDays(days);
       setPassword("");
     });
 
   const done = () =>
+    !pending() &&
     run(async () => {
-      const s = share!;
+      const s = share;
+      if (!s) return onClose();
       const patch: Partial<ShareOptions> = {};
-      if (days !== savedDays) patch.expiresDays = days;
+      if (days !== savedDays && days !== "keep") patch.expiresDays = days;
       if (download !== s.download) patch.download = download;
       if (!locked && s.hasPassword) patch.password = null;
       if (locked && password !== "") patch.password = password;
@@ -85,23 +109,36 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
   };
 
   return (
-    <Dialog title={t("share.title", { name })} onClose={onClose}>
+    <Dialog title={t(link ? "links.editTitle" : "share.title", { name })} onClose={onClose}>
       <form
         class="dialog-form share-form"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
+          if (needsPassword) return;
           if (share) done();
-          else if (!needsPassword) create();
+          else create();
         }}
       >
         <p class="mono share-path">{displayPath(entryPath)}</p>
-        <People entryPath={entryPath} name={name} canWrite={canWrite} />
-        <h3 class="share-heading">{t("share.linkTitle")}</h3>
+        {!link && (
+          <People
+            entryPath={entryPath}
+            name={name}
+            canWrite={canWrite}
+            emails={emails}
+            setEmails={(v) => {
+              setEmails(v);
+              setPendingWarn(false);
+            }}
+            warn={pendingWarn}
+          />
+        )}
+        {!link && <h3 class="share-heading">{t("share.linkTitle")}</h3>}
         {share && (
           <div class="field">
             <label class="field-label" for="share-link">
-              {t(kind === "folder" ? "share.leadFolder" : "share.leadFile")}
+              {link ? t("share.linkTitle") : t(kind === "folder" ? "share.leadFolder" : "share.leadFile")}
             </label>
             <div class="share-link">
               <input id="share-link" class="input mono" readOnly value={shareUrl(share)} onFocus={(e) => e.currentTarget.select()} />
@@ -119,12 +156,18 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
           <select
             id="share-expires"
             class="input"
-            value={choices.find((c) => c.days === days)!.value}
-            onChange={(e) => setDays(choices.find((c) => c.value === e.currentTarget.value)!.days)}
+            value={days === "keep" ? "keep" : choices.find((c) => c.days === days)!.value}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setDays(v === "keep" ? "keep" : choices.find((c) => c.value === v)!.days);
+            }}
           >
-            {choices.map((c) => (
-              <option value={c.value}>{t(c.label)}</option>
-            ))}
+            {link && <option value="keep">{keepLabel(link.expiresAt)}</option>}
+            {choices
+              .filter((c) => !(link && c.days === null && link.expiresAt === null))
+              .map((c) => (
+                <option value={c.value}>{t(c.label)}</option>
+              ))}
           </select>
         </div>
         <div class="field switch-field">
@@ -177,6 +220,11 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
             {t("share.note")}
           </p>
         </div>
+        {!share && (
+          <button type="submit" class="button share-create" disabled={busy || needsPassword}>
+            {t("share.create")}
+          </button>
+        )}
         {error && (
           <p class="error-line" role="alert">
             {error}
@@ -193,14 +241,9 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
               </button>
             </>
           ) : (
-            <>
-              <button type="button" class="button" onClick={onClose}>
-                {t("dialog.cancel")}
-              </button>
-              <button type="submit" class="button primary" disabled={busy || needsPassword}>
-                {t("share.create")}
-              </button>
-            </>
+            <button type="button" class="button primary" disabled={busy} onClick={done}>
+              {t("share.done")}
+            </button>
           )}
         </div>
       </form>
@@ -208,11 +251,25 @@ export function ShareDialog({ entryPath, kind, canWrite = true, onClose }: Props
   );
 }
 
+/** The expiry a link already has, as the first choice when changing it. */
+function keepLabel(expiresAt: number | null): string {
+  return expiresAt === null ? t("share.never") : t("grants.until", { date: fullDate(expiresAt) });
+}
+
 type Line = { email: string; text: string; ok: boolean };
 
 /** Sharing with people who have an account here: e-mails, view or edit, and how long. */
-function People({ entryPath, name, canWrite }: { entryPath: string; name: string; canWrite: boolean }) {
-  const [emails, setEmails] = useState("");
+type PeopleProps = {
+  entryPath: string;
+  name: string;
+  canWrite: boolean;
+  emails: string;
+  setEmails(v: string): void;
+  /** The dialog was asked to go on while e-mails were still in the field. */
+  warn: boolean;
+};
+
+function People({ entryPath, name, canWrite, emails, setEmails, warn }: PeopleProps) {
   const [permission, setPermission] = useState<"read" | "write">("read");
   const [days, setDays] = useState<Expiry>(null);
   const [lines, setLines] = useState<Line[]>([]);
@@ -258,12 +315,18 @@ function People({ entryPath, name, canWrite }: { entryPath: string; name: string
           autocomplete="off"
           spellcheck={false}
           value={emails}
-          aria-describedby="people-emails-hint"
+          aria-describedby={warn ? "people-emails-hint people-pending" : "people-emails-hint"}
+          aria-invalid={warn || undefined}
           onInput={(e) => setEmails(e.currentTarget.value)}
         />
         <p id="people-emails-hint" class="hint">
           {t("people.emailsHint")}
         </p>
+        {warn && (
+          <p id="people-pending" class="error-line" role="alert">
+            {t("people.pending")}
+          </p>
+        )}
       </div>
       <div class="people-row">
         <div class="field">

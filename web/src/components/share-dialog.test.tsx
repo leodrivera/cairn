@@ -294,3 +294,91 @@ test("people_can_edit_only_with_write", async () => {
   assert.equal(edit.disabled, true);
   assert.equal(access.value, "read");
 });
+
+test("typed e-mails that were not added stop Create link", async () => {
+  const log = stubFetch({ "POST /api/shares": () => json({ share }, 201) });
+  const el = open();
+  setValue(byLabel<HTMLTextAreaElement>(el, "E-mail addresses"), "sdfsdfds");
+  await flush();
+  buttonNamed(el, "Create link").click();
+  await waitFor(() => assert.match(el.textContent!, /These e-mails were not added\. Choose Add, or clear the field\./));
+  assert.equal(log.length, 0);
+  assert.equal(linkInput(el), null);
+  assert.equal(document.activeElement, byLabel(el, "E-mail addresses"));
+  setValue(byLabel<HTMLTextAreaElement>(el, "E-mail addresses"), "");
+  await flush();
+  assert.doesNotMatch(el.textContent!, /were not added/);
+  await created(el);
+  assert.equal(log.length, 1);
+});
+
+test("typed e-mails that were not added stop Done", async () => {
+  stubFetch({});
+  let closed = 0;
+  const el = open("file", () => closed++);
+  setValue(byLabel<HTMLTextAreaElement>(el, "E-mail addresses"), "bob@example.com");
+  await flush();
+  buttonNamed(el, "Done").click();
+  await waitFor(() => assert.match(el.textContent!, /were not added/));
+  assert.equal(closed, 0);
+});
+
+test("without a link, Done closes and makes nothing", async () => {
+  const log = stubFetch({});
+  let closed = 0;
+  const el = open("file", () => closed++);
+  buttonNamed(el, "Done").click();
+  await flush();
+  assert.equal(closed, 1);
+  assert.equal(log.length, 0);
+});
+
+test("an existing link opens on its settings, without People", async () => {
+  const log = stubFetch({
+    "PATCH /api/shares/k7Qw3nTzAbCdEfGhIjKl-_": () => json({ share }),
+  });
+  let closed = 0;
+  const el = render(
+    <ShareDialog
+      entryPath="/photos/2026/trail-ridge.jpg"
+      kind="file"
+      link={{ ...share, hasPassword: true, download: false }}
+      onClose={() => closed++}
+    />,
+  );
+  assert.match(el.textContent!, /Edit the link to trail-ridge\.jpg/);
+  assert.throws(() => byLabel(el, "E-mail addresses"));
+  assert.equal(linkInput(el)!.value, share.url);
+  assert.equal(byLabel<HTMLInputElement>(el, "Require a password").checked, true);
+  assert.equal(byLabel<HTMLInputElement>(el, "Allow download").checked, false);
+  const select = byLabel<HTMLSelectElement>(el, "Expires");
+  assert.equal(select.value, "keep");
+  assert.match(select.options[0].textContent!, /^Until /);
+  buttonNamed(el, "Done").click();
+  await waitFor(() => assert.equal(closed, 1));
+  assert.equal(log.length, 0, "nothing changed, nothing sent");
+});
+
+test("editing a link sends only what changed", async () => {
+  const log = stubFetch({
+    "PATCH /api/shares/k7Qw3nTzAbCdEfGhIjKl-_": () => json({ share }),
+  });
+  const el = render(<ShareDialog entryPath="/photos/2026/trail-ridge.jpg" kind="file" link={share} onClose={() => {}} />);
+  setValue(byLabel<HTMLSelectElement>(el, "Expires"), "30");
+  byLabel(el, "Allow download").click();
+  await flush();
+  buttonNamed(el, "Done").click();
+  await waitFor(() => assert.equal(log.length, 1));
+  assert.deepEqual(await log[0].json(), { expiresDays: 30, download: false });
+});
+
+test("a link that never expires does not list Never twice", async () => {
+  stubFetch({});
+  const el = render(
+    <ShareDialog entryPath="/photos/2026/trail-ridge.jpg" kind="file" link={{ ...share, expiresAt: null }} onClose={() => {}} />,
+  );
+  assert.deepEqual(
+    [...byLabel<HTMLSelectElement>(el, "Expires").options].map((o) => o.textContent),
+    ["Never", "In 24 hours", "In 7 days", "In 30 days"],
+  );
+});

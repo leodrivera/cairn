@@ -1,6 +1,6 @@
 // Share links: the management API and the address of a link.
 import { api } from "./api";
-import { t } from "../i18n/index";
+import { lang, t } from "../i18n/index";
 import type { Share } from "./types";
 
 export type Expiry = 1 | 7 | 30 | null;
@@ -35,6 +35,11 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** A day with its year, like "Mar 14, 2027": the date something ends, told apart from the "In 7 days" choices. */
+export function fullDate(sec: number): string {
+  return new Intl.DateTimeFormat(lang(), { day: "numeric", month: "short", year: "numeric" }).format(new Date(sec * 1000));
 }
 
 /** "Today", "Tomorrow", "In 5 days" or "Never", and whether it ends within two days. */

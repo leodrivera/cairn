@@ -150,8 +150,13 @@ test("the selection toolbar counts and downloads several", async () => {
   click(el.querySelector('button[aria-label="Select notes.txt"]')!);
   await flush();
   assert.match(el.querySelector(".selection-bar")!.textContent!, /1 selected/);
+  assert.ok(button(el, "Share"), "Share shown for one item");
   click(el.querySelector('button[aria-label="Select trail-ridge.jpg"]')!);
   await waitFor(() => assert.match(el.querySelector(".selection-bar")!.textContent!, /2 selected/));
+  assert.ok(
+    ![...el.querySelectorAll(".selection-bar button")].some((b) => b.textContent!.trim() === "Share"),
+    "a link holds one item: no Share for two",
+  );
   assert.equal(button(el, "Download").disabled, false);
   assert.equal(
     el.querySelector('button[aria-label="Select notes.txt"]')!.getAttribute("aria-pressed"),
@@ -496,7 +501,7 @@ test("phone: a long press starts selection mode; Select all; close", async (t) =
   assert.ok(bar);
   assert.deepEqual(
     [...bar.querySelectorAll("button")].map((b) => b.textContent!.trim()),
-    ["Download", "Move", "Delete"],
+    ["Download", "Share", "Move", "Delete"],
   );
   button(el, "Select all").click();
   await waitFor(() => assert.match(el.textContent!, /6 selected/));

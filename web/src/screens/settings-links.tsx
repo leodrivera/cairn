@@ -1,11 +1,12 @@
-// Share links: every active link (an admin sees everyone's), with copy and delete.
+// Share links: every active link (an admin sees everyone's), with copy, edit and delete.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ApiFailure, offline } from "../lib/api";
 import { displayPath } from "../lib/paths";
-import { copyText, deleteShare, expiryText, listShares, shareUrl, type Expiry } from "../lib/shares";
+import { copyText, deleteShare, expiryText, fullDate, listShares, shareUrl, type Expiry } from "../lib/shares";
 import { deleteGrant, listGiven, updateGrant } from "../lib/grants";
-import { errorText, lang, t, tn } from "../i18n/index";
+import { errorText, t, tn } from "../i18n/index";
 import { Dialog } from "../components/dialogs";
+import { ShareDialog } from "../components/share-dialog";
 import { Icon } from "../components/icons";
 import { useNarrow } from "../components/shell";
 import { StatePanel } from "../components/states";
@@ -25,6 +26,7 @@ export function Links() {
   const [shares, setShares] = useState<Share[] | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [deleting, setDeleting] = useState<Share | null>(null);
+  const [editing, setEditing] = useState<Share | null>(null);
 
   const load = async () => {
     try {
@@ -68,6 +70,9 @@ export function Links() {
         <span class="row-actions">
           <button type="button" class="icon-button" aria-label={t("links.copyFor", { name: s.name })} onClick={() => copy(s)}>
             <Icon name="copy" />
+          </button>
+          <button type="button" class="icon-button" aria-label={t("links.editFor", { name: s.name })} onClick={() => setEditing(s)}>
+            <Icon name="edit" />
           </button>
           <button
             type="button"
@@ -153,6 +158,17 @@ export function Links() {
         </div>
       )}
       <Grants />
+      {editing && (
+        <ShareDialog
+          entryPath={editing.path}
+          kind="file"
+          link={editing}
+          onClose={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
       {deleting && (
         <DeleteLink
           share={deleting}
@@ -209,11 +225,6 @@ const expiries: { value: string; days: Expiry; label: "share.in1" | "share.in7" 
   { value: "30", days: 30, label: "share.in30" },
   { value: "never", days: null, label: "share.never" },
 ];
-
-/** A day with its year, like "Mar 14, 2027": the date a grant ends, told apart from the "In 7 days" choices. */
-function fullDate(sec: number): string {
-  return new Intl.DateTimeFormat(lang(), { day: "numeric", month: "short", year: "numeric" }).format(new Date(sec * 1000));
-}
 
 /** Grants given: who may open what, with access, expiry and Stop sharing. An admin sees everyone's. */
 function Grants() {

@@ -82,6 +82,23 @@ test("copy button", async () => {
   restore();
 });
 
+test("edit opens the link's settings and saves", async () => {
+  const { el, log } = await screen([link()], admin, {
+    "PATCH /api/shares/k7Qw3nTzAbCdEfGhIjKl-_": () => json({ share: link({ hasPassword: false, download: false }) }),
+  });
+  await waitFor(() => assert.ok(el.querySelector('[aria-label="Edit link for trail-ridge.jpg"]')));
+  el.querySelector<HTMLButtonElement>('[aria-label="Edit link for trail-ridge.jpg"]')!.click();
+  await waitFor(() => assert.match(el.querySelector('[role="dialog"]')!.textContent!, /Edit the link to trail-ridge\.jpg/));
+  const dialog = el.querySelector<HTMLElement>('[role="dialog"]')!;
+  dialog.querySelector<HTMLInputElement>("#share-download")!.click();
+  await waitFor(() => assert.equal(dialog.querySelector<HTMLInputElement>("#share-download")!.checked, false));
+  buttonNamed(dialog, "Done").click();
+  await waitFor(() => assert.ok(!el.querySelector('[role="dialog"]')));
+  const patch = log.find((r) => r.method === "PATCH")!;
+  assert.deepEqual(await patch.json(), { download: false });
+  assert.equal(log.filter((r) => r.method === "GET" && r.url.endsWith("/api/shares")).length, 2, "list reloaded");
+});
+
 test("delete asks first", async () => {
   let list = [link(), backup];
   const { el, log } = await screen(() => json({ shares: list }), admin, {

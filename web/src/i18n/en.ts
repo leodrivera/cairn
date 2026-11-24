@@ -148,6 +148,7 @@ export const en = {
   "explorer.selected": { one: "{n} selected", other: "{n} selected" },
   "explorer.selectionTools": "Selected items",
   "explorer.download": "Download",
+  "explorer.share": "Share",
   "explorer.move": "Move",
   "explorer.copy": "Copy",
   "explorer.delete": "Delete",

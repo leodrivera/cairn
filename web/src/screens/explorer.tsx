@@ -581,6 +581,11 @@ function Folder({ path, where }: { path: string; where: Where }) {
             <button type="button" class="button quiet" onClick={download}>
               {t("explorer.download")}
             </button>
+            {canShare && chosen.length === 1 && (
+              <button type="button" class="button quiet" onClick={() => setDialog({ kind: "share", entry: chosen[0] })}>
+                {t("explorer.share")}
+              </button>
+            )}
             {canWrite && (
               <>
                 <button type="button" class="button quiet" onClick={() => setDialog({ kind: "move", items: chosen })}>
@@ -619,6 +624,12 @@ function Folder({ path, where }: { path: string; where: Where }) {
             <Icon name="download" />
             <span>{t("explorer.download")}</span>
           </button>
+          {canShare && chosen.length === 1 && (
+            <button type="button" class="bar-button" onClick={() => setDialog({ kind: "share", entry: chosen[0] })}>
+              <Icon name="link" />
+              <span>{t("explorer.share")}</span>
+            </button>
+          )}
           {canWrite && (
             <>
               <button type="button" class="bar-button" onClick={() => setDialog({ kind: "move", items: chosen })}>

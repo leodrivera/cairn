@@ -150,6 +150,7 @@ export const ptBR: Table = {
   "explorer.selected": { one: "{n} selecionado", other: "{n} selecionados" },
   "explorer.selectionTools": "Itens selecionados",
   "explorer.download": "Baixar",
+  "explorer.share": "Compartilhar",
   "explorer.move": "Mover",
   "explorer.copy": "Copiar",
   "explorer.delete": "Excluir",
